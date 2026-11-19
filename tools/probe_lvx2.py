@@ -50,6 +50,10 @@ def fail(message):
     sys.exit("probe_lvx2: " + message)
 
 
+def finite(value):
+    return value if math.isfinite(value) else None
+
+
 def decode(data_type, payload):
     """Return range_m, azimuth_rad, elevation_rad, zero_range flag, reflectivity, tag."""
     pts = np.frombuffer(payload, dtype=POINT_DTYPES[data_type])
@@ -79,7 +83,7 @@ class Stats:
         self.tag_hist = np.zeros(256, dtype=np.int64)
         self.range_hist = np.zeros(1002, dtype=np.int64)  # 1 m bins, last bin = overflow
         self.range_min = math.inf
-        self.range_max = 0.0
+        self.range_max = -math.inf
         self.el_min = math.inf
         self.el_max = -math.inf
         self.windows = {}
@@ -132,7 +136,7 @@ def read_file(path, window_ms):
     report = {"file": path, "version": version, "frame_duration_ms": frame_ms, "devices": devices}
     frames = packages = 0
     data_types, time_types, lidar_types = set(), set(), set()
-    counters, stamps_all, per_frame = [], [], []
+    per_lidar, per_frame = {}, []
     pending = {}
     while offset + FRAME_HEADER.size <= size:
         current, nxt, _index = FRAME_HEADER.unpack_from(buf, offset)
@@ -144,7 +148,7 @@ def read_file(path, window_ms):
         pos, frame_points = offset + FRAME_HEADER.size, 0
         while pos + PACKAGE_HEADER.size <= end:
             fields = PACKAGE_HEADER.unpack_from(buf, pos)
-            _v, _lid, ltype, ttype, ts, udp, dtype, length, _fc = fields
+            _v, lidar_id, ltype, ttype, ts, udp, dtype, length, _fc = fields
             body = pos + PACKAGE_HEADER.size
             if body + length > end:
                 fail("package overruns its frame at %d" % pos)
@@ -152,8 +156,9 @@ def read_file(path, window_ms):
             data_types.add(dtype)
             time_types.add(ttype)
             lidar_types.add(ltype)
-            counters.append(udp)
-            stamps_all.append(ts)
+            seen = per_lidar.setdefault(lidar_id, ([], []))
+            seen[0].append(udp)
+            seen[1].append(ts)
             if dtype in POINT_DTYPES:
                 item = POINT_DTYPES[dtype].itemsize
                 if length % item:
@@ -166,6 +171,8 @@ def read_file(path, window_ms):
                 if len(entry[0]) >= FLUSH_PACKAGES:
                     stats.add(dtype, *pending.pop(dtype))
             pos = body + length
+        if pos != end:
+            fail("%d unconsumed bytes after the last package: truncated file" % (end - pos))
         per_frame.append(frame_points)
         frames += 1
         if not nxt:
@@ -175,23 +182,36 @@ def read_file(path, window_ms):
         stats.add(dtype, *entry)
     report.update(frames=frames, packages=packages, data_types=sorted(data_types),
                   time_types=sorted(time_types), lidar_types=sorted(lidar_types))
-    udp_gaps = int((np.diff(np.asarray(counters, dtype=np.int64)) % 65536 != 1).sum())
-    deltas = np.diff(np.asarray(stamps_all, dtype=np.int64))
+    packets = {}
+    for lidar_id, (counters, stamps) in sorted(per_lidar.items()):
+        deltas = np.diff(np.asarray(stamps, dtype=np.int64))
+        gaps = int((np.diff(np.asarray(counters, dtype=np.int64)) % 65536 != 1).sum())
+        packets[str(lidar_id)] = {
+            "packages": len(counters), "udp_counter_gaps": gaps,
+            "timestamp_delta_ns": {
+                "min": int(deltas.min()) if len(deltas) else None,
+                "median": int(np.median(deltas)) if len(deltas) else None,
+                "max": int(deltas.max()) if len(deltas) else None,
+                "backward_steps": int((deltas < 0).sum())}}
     report.update(
-        udp_counter_gaps=udp_gaps,
-        timestamp_delta_ns={"min": int(deltas.min()), "median": int(np.median(deltas)),
-                            "max": int(deltas.max()), "backward_steps": int((deltas < 0).sum())},
+        per_lidar=packets,
         points=stats.points, zero_range_points=stats.zero_points,
         zero_range_fraction=stats.zero_points / stats.points if stats.points else None,
         zero_reflectivity_points=stats.zero_reflectivity,
         points_per_frame={"min": min(per_frame), "median": int(np.median(per_frame)),
                           "max": max(per_frame)},
         tag_histogram={str(t): int(c) for t, c in enumerate(stats.tag_hist) if c},
-        range_m={"min": stats.range_min, "max": stats.range_max,
+        range_m={"min": finite(stats.range_min), "max": finite(stats.range_max),
                  "p50_approx": stats.range_percentile(0.5),
                  "p95_approx": stats.range_percentile(0.95)},
-        elevation_deg={"min": math.degrees(stats.el_min), "max": math.degrees(stats.el_max)})
-    complete = [row for _w, row in sorted(stats.windows.items())][1:-1]
+        elevation_deg={"min": finite(math.degrees(stats.el_min)),
+                       "max": finite(math.degrees(stats.el_max))})
+    zero_row = np.zeros(SECTORS, dtype=np.int64)
+    if stats.windows:
+        span = range(min(stats.windows), max(stats.windows) + 1)
+        complete = [stats.windows.get(w, zero_row) for w in span][1:-1]
+    else:
+        complete = []
     if complete:
         cells = np.concatenate(complete)
         report["rays_per_sector_per_window"] = {
@@ -226,14 +246,27 @@ def selftest():
         handle.flush()
         report = read_file(handle.name, 1.0)
     expected = {"frames": 3, "packages": 6, "points": 24, "zero_range_points": 6,
-                "udp_counter_gaps": 0, "zero_reflectivity_points": 6}
+                "zero_reflectivity_points": 6}
     for key, value in expected.items():
         if report[key] != value:
             fail("selftest %s: got %r, expected %r" % (key, report[key], value))
+    if report["per_lidar"]["1"]["udp_counter_gaps"] != 0:
+        fail("selftest udp counter gaps")
+    if report["per_lidar"]["1"]["timestamp_delta_ns"]["backward_steps"] != 0:
+        fail("selftest timestamp steps")
     if report["tag_histogram"] != {"0": 18, "4": 6}:
         fail("selftest tag histogram %r" % report["tag_histogram"])
     if abs(report["range_m"]["max"] - 1.0) > 1e-9 or abs(report["elevation_deg"]["max"]) > 1e-9:
         fail("selftest range or elevation")
+    with tempfile.NamedTemporaryFile(suffix=".lvx2") as handle:
+        handle.write(blob + bytes(5))
+        handle.flush()
+        try:
+            read_file(handle.name, 1.0)
+        except SystemExit:
+            pass
+        else:
+            fail("selftest: truncated file was accepted")
     print("selftest ok")
 
 
