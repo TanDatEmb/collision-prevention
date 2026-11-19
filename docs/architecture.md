@@ -124,7 +124,7 @@ flowchart LR
 
 | Component | Status | Owns | Does not own | Reqs |
 | --- | --- | --- | --- | --- |
-| `livox_ray_source` | Not implemented | Raw spherical samples: direction, depth, per-sample time, packet continuity; deskew (ADR 0015); sensor tag and confidence filtering | Clear decisions, speed limits | SYS-CP-011, 016 |
+| `livox_ray_source` | Not implemented | Raw spherical samples: direction, depth, per-sample time, packet continuity; deskew (ADR 0015); static self-mask (ADR 0006), setting `RaySample.masked`; sensor tag and confidence filtering | Clear decisions, speed limits | SYS-CP-011, 016 |
 | `obstacle_sector_map` (pure C++) | Reference impl | Validation, masked/return-kind handling, sector classification, nearest projected range; no ROS or PX4 types | Frames, units, safety policy, sensor tags | SYS-CP-004, 011, 015 |
 | `px4_obstacle_bridge` | Reference impl | FLU/CCW to BODY_FRD/CW, cm conversion, fail-closed encoding | Filtering to improve results | SYS-CP-002, NFR-CP-002 |
 | Orin node | Not implemented | One process composing source, map, bridge; publishes `/fmu/in/obstacle_distance` | Safety policy | SYS-CP-016, NFR-CP-003 |
