@@ -138,6 +138,7 @@ def read_file(path, window_ms):
     data_types, time_types, lidar_types = set(), set(), set()
     per_lidar, per_frame = {}, []
     pending = {}
+    finished = False
     while offset + FRAME_HEADER.size <= size:
         current, nxt, _index = FRAME_HEADER.unpack_from(buf, offset)
         if current != offset:
@@ -176,8 +177,11 @@ def read_file(path, window_ms):
         per_frame.append(frame_points)
         frames += 1
         if not nxt:
+            finished = True
             break
         offset = nxt
+    if not finished and offset != size:
+        fail("truncated file: %d bytes remain after the last frame" % (size - offset))
     for dtype, entry in pending.items():
         stats.add(dtype, *entry)
     report.update(frames=frames, packages=packages, data_types=sorted(data_types),
@@ -267,6 +271,16 @@ def selftest():
             pass
         else:
             fail("selftest: truncated file was accepted")
+    cut = blob[:-(len(frames[-1]) - 10)]
+    with tempfile.NamedTemporaryFile(suffix=".lvx2") as handle:
+        handle.write(cut)
+        handle.flush()
+        try:
+            read_file(handle.name, 1.0)
+        except SystemExit:
+            pass
+        else:
+            fail("selftest: file cut inside a frame header was accepted")
     print("selftest ok")
 
 
