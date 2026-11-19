@@ -6,3 +6,6 @@
 	path = ros2_ws/src/px4_msgs
 	url = https://github.com/PX4/px4_msgs.git
 	branch = release/1.17
+[submodule "ros2_ws/third_party/Livox-SDK2"]
+	path = ros2_ws/third_party/Livox-SDK2
+	url = https://github.com/Livox-SDK/Livox-SDK2.git
