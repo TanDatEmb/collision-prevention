@@ -137,10 +137,10 @@ flowchart LR
 Operational states (reason flags carry the cause): `DISABLED`, `OBSERVER_ONLY`, `NOT_READY`,
 `ACTIVE_CLEAR`, `BRAKING`, `SAFE_STOP`. `SAFE_STOP` leaves only through pilot acknowledgement and
 revalidation, or a logged override. Persistent blockage stays `BRAKING`; persistent invalid data
-stays `SAFE_STOP`. `UNQUALIFIED` is a reason flag, not a state. `SAFE_STOP` means zero horizontal velocity with the
-horizontal feed-forward cleared, no position hold. The operator is told through the PX4 log and
-event channel; the pilot acknowledges with a MAVLink command handled by `cp_brake` (command id
-fixed at detailed design); leaving needs that acknowledgement and a successful revalidation
+stays `SAFE_STOP`. `UNQUALIFIED` is a reason flag, not a state. `SAFE_STOP` means zero
+horizontal velocity with the horizontal feed-forward cleared, no position hold. The operator is
+told through the PX4 log and event channel; the pilot acknowledges with a MAVLink command handled
+by `cp_brake` (command id fixed at detailed design). The exit rules are the ones stated above
 (owner, 2026-11-19).
 
 Directional limiting (ADR 0008): each sector is a half-plane on the horizontal setpoint; a side
@@ -243,10 +243,12 @@ source: ADR 0004.
   change (`MulticopterPositionControl.cpp`); `obstacle_distance` has three publishers: DDS
   (`dds_topics.yaml`), MAVLink (`mavlink_receiver.cpp`) and the Gazebo bridge
   (`gz_bridge/GZBridge.cpp`, enabled by `SIM_GZ_EN_LIDAR`, default 1); DDS input clamps a later
-  timestamp to the receive time (`Tools/msg/templates/ucdr/msg.h.em`), so on the hardware profile
-  `cp_brake` judges the sync from `timesync_status` (estimated offset and round-trip time; the
-  message has no convergence flag) and rejects a map when the sync is not valid or its age is
-  negative; the numeric limits are OPEN-033, measured at G5 (owner, 2026-11-19).
+  timestamp to the receive time (`Tools/msg/templates/ucdr/msg.h.em`), so PX4 cannot
+  see a per-map clamp and `ObstacleDistance` has no spare field for it (ADR 0002). Therefore the
+  Orin node must not publish a map whose sample time is later than its own clock (negative age),
+  and on the hardware profile `cp_brake` judges the sync from `timesync_status` (estimated offset
+  and round-trip time; the message has no convergence flag) and rejects maps while the sync is not
+  valid. The numeric limits are OPEN-033, measured at G5 (owner, 2026-11-19).
 - Enforcement scope (owner, 2026-11-19): the hook enforces in Position and Mission (the ODD); in
   any other nav state it is transparent and the status carries a reason flag. `NOT_READY` is an
   indication only and does not block arming (ADR 0007). `cp_brake` sends `cp_brake_constraints`
@@ -361,7 +363,7 @@ SITL fidelity gaps:
 | OPEN-030 | Measured rate and latency of `VehicleOdometry` for deskew and the interpolation scheme (source: ADR 0018) | Perception + PX4 | TBD | G3 |
 | OPEN-031 | Clear evidence when the ray origin moves during a scan: origin-aware evidence in the map, or a conservative filter in acquisition (chosen, ADR 0018); its threshold value | Perception + SE | TBD | G3 |
 | OPEN-032 | Staleness threshold and publish rate of the `cp_brake_constraints` output; heading history source and depth; sentinel until the G4 SITL measurements | PX4 + Controls | TBD | G4 |
-| OPEN-033 | Numeric limits for judging the sync from `timesync_status` and for a negative or excessive map age at PX4 (structure decided) | PX4 + Software Integration | TBD | G5 |
+| OPEN-033 | Numeric limits for judging the sync from `timesync_status` at PX4 and for an excessive map age; the Orin-side rejection of a negative age is implemented in a separate issue (structure decided) | PX4 + Software Integration | TBD | G5 |
 | OPEN-035 | Hook interaction with FlightTask feedback of the published setpoint, the XY velocity integrator and the tilt limit | Controls + PX4 | TBD | G4 |
 | OPEN-036 | Vertical collision envelope as a height band: how a no-return ray, which has no endpoint, is tested against it; builder change from the elevation band | Perception + SE | TBD | G3 |
 
