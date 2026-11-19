@@ -55,13 +55,17 @@ def finite(value):
 
 
 def decode(data_type, payload):
-    """Return range_m, azimuth_rad, elevation_rad, zero_range flag, reflectivity, tag."""
+    """Return range_m, azimuth_rad, elevation_rad, zero_range, has_direction, reflectivity, tag.
+
+    A Cartesian zero sample has no direction; a spherical one keeps theta and phi at zero depth.
+    """
     pts = np.frombuffer(payload, dtype=POINT_DTYPES[data_type])
     if data_type == 3:
         rng = pts["d"].astype(np.float64) / 1000.0
         az = np.deg2rad(pts["phi"].astype(np.float64) * 0.01)
         el = np.deg2rad(90.0 - pts["theta"].astype(np.float64) * 0.01)
         zero = pts["d"] == 0
+        has_dir = np.ones(len(zero), dtype=bool)
     else:
         scale = 1.0 if data_type == 1 else 10.0
         x = pts["x"].astype(np.float64) * scale
@@ -71,7 +75,8 @@ def decode(data_type, payload):
         az = np.arctan2(y, x)
         el = np.arctan2(z, np.hypot(x, y))
         zero = (pts["x"] == 0) & (pts["y"] == 0) & (pts["z"] == 0)
-    return rng, az, el, zero, pts["r"], pts["t"]
+        has_dir = ~zero
+    return rng, az, el, zero, has_dir, pts["r"], pts["t"]
 
 
 class Stats:
@@ -79,6 +84,7 @@ class Stats:
         self.window_ns = window_ns
         self.points = 0
         self.zero_points = 0
+        self.directional_zero_points = 0
         self.zero_reflectivity = 0
         self.tag_hist = np.zeros(256, dtype=np.int64)
         self.range_hist = np.zeros(1002, dtype=np.int64)  # 1 m bins, last bin = overflow
@@ -90,21 +96,24 @@ class Stats:
         self.ts0 = None
 
     def add(self, data_type, payloads, stamps, counts):
-        rng, az, el, zero, refl, tag = decode(data_type, b"".join(payloads))
+        rng, az, el, zero, has_dir, refl, tag = decode(data_type, b"".join(payloads))
         ts = np.repeat(np.asarray(stamps, dtype=np.int64), counts)
         self.points += len(rng)
         self.zero_points += int(zero.sum())
+        self.directional_zero_points += int((zero & has_dir).sum())
         self.zero_reflectivity += int((refl == 0).sum())
         self.tag_hist += np.bincount(tag, minlength=256)
         ok = ~zero
-        if not ok.any():
+        if ok.any():
+            self.range_min = min(self.range_min, float(rng[ok].min()))
+            self.range_max = max(self.range_max, float(rng[ok].max()))
+            self.el_min = min(self.el_min, float(el[ok].min()))
+            self.el_max = max(self.el_max, float(el[ok].max()))
+            hist = np.bincount(np.minimum(rng[ok], 1001).astype(np.int64), minlength=1002)
+            self.range_hist += hist
+        if not has_dir.any():
             return
-        rng, az, el, ts = rng[ok], az[ok], el[ok], ts[ok]
-        self.range_min = min(self.range_min, float(rng.min()))
-        self.range_max = max(self.range_max, float(rng.max()))
-        self.el_min = min(self.el_min, float(el.min()))
-        self.el_max = max(self.el_max, float(el.max()))
-        self.range_hist += np.bincount(np.minimum(rng, 1001).astype(np.int64), minlength=1002)
+        az, ts = az[has_dir], ts[has_dir]
         if self.ts0 is None:
             self.ts0 = int(ts.min())
         step = 2.0 * math.pi / SECTORS
@@ -208,6 +217,7 @@ def read_file(path, window_ms):
     report.update(
         per_lidar=packets,
         points=stats.points, zero_range_points=stats.zero_points,
+        zero_range_points_with_direction=stats.directional_zero_points,
         zero_range_fraction=stats.zero_points / stats.points if stats.points else None,
         zero_reflectivity_points=stats.zero_reflectivity,
         points_per_frame={"min": min(per_frame), "median": int(np.median(per_frame)),
@@ -290,6 +300,13 @@ def selftest():
     bad_type[data_type_offset] = 7
     two_devices = bytearray(blob)
     two_devices[PUBLIC_HEADER + 4] = 2
+    spherical = Stats(1_000_000)
+    zero_depth = struct.pack("<IHHBB", 0, 9000, 0, 0, 0)  # depth 0, theta 90 deg, phi 0
+    spherical.add(3, [zero_depth], [0], [1])
+    if spherical.zero_points != 1 or spherical.directional_zero_points != 1:
+        fail("selftest: spherical zero-depth sample not counted")
+    if sum(int(row.sum()) for row in spherical.windows.values()) != 1:
+        fail("selftest: spherical zero-depth sample missing from the sector tally")
     cases = {"trailing bytes": blob + bytes(5), "cut frame header": cut,
              "unknown data type": bytes(bad_type), "two devices": bytes(two_devices)}
     for name, data in cases.items():
