@@ -154,12 +154,13 @@ collision envelope. PX4 uses `MAV_FRAME_BODY_FRD`; only `px4_obstacle_bridge` co
 | ICD-CP-01 sensor geometry | Mid-360S, 360 deg horizontal, -7 to 52 deg vertical; CAD self-mask; `livox_frame -> base_link` repeatability <= 5 mm, <= 0.5 deg | Out of tolerance: recalibrate, new mask revision |
 | ICD-CP-02 time | Hardware PTPv2 or sim `/clock` (ADR 0003); three runtime timestamps: sample, constraint, status; `sample_age = status - sample`; sync residual <= 2 ms; integer microseconds | Zero or unconvertible: unknown sectors; regression or age > 0.5 s: safe-stop |
 | ICD-CP-03 `ObstacleDistance` | `/fmu/in/obstacle_distance`; frame 12, sensor LASER (0); 72 x 5 deg, `angle_offset=0`; cm; 10 Hz nominal, no bursts; QoS best-effort, volatile, keep-last 2 (OPEN-011); `min_distance=10`, `max_distance=4000`; `0` too close, `max_distance+1` clear, `UINT16_MAX` unknown; timestamp = acquisition time | Missing, invalid or stale: no velocity toward affected sectors; never inferred clear |
-| ICD-CP-04 PX4 constraint | `cp_brake` messages and limiter hook: proposed design below (ADR 0014) | Non-finite, stale or malformed constraint: zero velocity toward the affected direction plus a reason |
+| ICD-CP-04 PX4 constraint | `cp_brake` messages and limiter hook: approved design below (ADR 0014) | Non-finite, stale or malformed constraint: zero velocity toward the affected direction plus a reason |
 | ICD-CP-05 logging | Each intervention reconstructs sample, constraint, hook, response, recovery; status 10 Hz plus every transition; Orin diagnostics 1 Hz; raw clouds only in a debug profile; raw ULog, rosbag, MCAP stay out of Git (manifests and hashes only) | Run verdict `PASS`, `FAIL` or `INVALID`; incomplete evidence is never `PASS` |
 | ICD-CP-06 ray batch | `livox_ray_source` to `obstacle_sector_map`, in one process with no ROS hop: proposed design below (ADR 0004, 0006, 0015) | A ray without a valid time or direction is `kInvalid`; a frame without continuity gives no clear evidence |
 
 ICD-CP-01, 02, 03 and 05 are approved by the owner (2026-11-19) as sole safety approver.
-ICD-CP-04 and ICD-CP-06 are not approved: the designs below are proposed and await the owner.
+ICD-CP-04 is approved by the owner (2026-11-19) with its open items (OPEN-032, 033, 034, 035).
+ICD-CP-06 is not approved: the design below is proposed and awaits the owner.
 Orin parameters (versioned, logged): `qualified_range_m` 40, `sector_map_rate_hz` 10, `coverage_window_ms` 100, `coverage_min_rays_per_sector` (no default
 until OPEN-023, never tuned after an acceptance run). The sector-boundary tolerance is a fixed
 constant of 2.0e-6 rad in `obstacle_sector_map`, approved by the owner (2026-11-19); it is a
@@ -185,7 +186,7 @@ numerical tolerance, not a safety threshold. Raw point cloud source: ADR 0004.
   height band to an elevation-angle band; how a no-return ray, which has no endpoint, is tested
   against a height band is open (OPEN-036), and the builder still uses an elevation band.
 
-### ICD-CP-04 design (proposed, not approved)
+### ICD-CP-04 design (approved 2026-11-19)
 
 - Inputs of `cp_brake`: uORB `obstacle_distance` (from `/fmu/in/obstacle_distance`),
   `vehicle_local_position`, `vehicle_status` and the takeoff state. Output: it never publishes a
