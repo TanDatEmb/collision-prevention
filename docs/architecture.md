@@ -190,10 +190,10 @@ numerical tolerance, not a safety threshold. Raw point cloud source: ADR 0004.
   state is valid but no heading exists for the sample time, there is no valid transform, so the
   limiter outputs zero horizontal velocity (safe-stop, SYS-CP-007), plus a reason.
 - Limiter rule: ADR 0008 (directional half-plane per sector; no global minimum range).
-- Transparent paths: with `CPB_EN` off, or before `TAKEOFF_STATE_FLIGHT` with a valid inactive
-  constraint, the hook leaves the setpoints unchanged (SYS-CP-006, 014).
-- Invalid constraint (non-finite, malformed, stale): zero velocity toward the affected directions
-  plus a reason. Constraint age is `status - constraint timestamp`; its staleness threshold is
+- Transparent paths: with `CPB_EN` off, or before `TAKEOFF_STATE_FLIGHT` (observer-only, ADR 0009)
+  whether the constraint is valid or not, the hook leaves the setpoints unchanged (SYS-CP-006, 014).
+- Invalid constraint (non-finite, malformed, stale), once `TAKEOFF_STATE_FLIGHT` is reached: zero
+  velocity toward the affected directions plus a reason. Constraint age is `status - constraint timestamp`; its staleness threshold is
   OPEN-032.
 - Parameters (`CPB_`): `EN`; `MAX_V` 12 m/s (PERF-01); `A_BRK` 3 m/s^2 and `JERK` 4 m/s^3 (PERF-02);
   `AGE_STOP` 0.5 s (PERF-04); `CLR_T` 0.3 s and `RISE` 2.0 m/s^2 (PERF-05); `MARGIN` 2.0 m
