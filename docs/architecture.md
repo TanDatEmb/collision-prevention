@@ -153,15 +153,45 @@ collision envelope. PX4 uses `MAV_FRAME_BODY_FRD`; only `px4_obstacle_bridge` co
 | ICD-CP-01 sensor geometry | Mid-360S, 360 deg horizontal, -7 to 52 deg vertical; CAD self-mask; `livox_frame -> base_link` repeatability <= 5 mm, <= 0.5 deg | Out of tolerance: recalibrate, new mask revision |
 | ICD-CP-02 time | Hardware PTPv2 or sim `/clock` (ADR 0003); three runtime timestamps: sample, constraint, status; `sample_age = status - sample`; sync residual <= 2 ms; integer microseconds | Zero or unconvertible: unknown sectors; regression or age > 0.5 s: safe-stop |
 | ICD-CP-03 `ObstacleDistance` | `/fmu/in/obstacle_distance`; frame 12, sensor LASER (0); 72 x 5 deg, `angle_offset=0`; cm; 10 Hz nominal, no bursts; QoS best-effort, volatile, keep-last 2 (OPEN-011); `min_distance=10`, `max_distance=4000`; `0` too close, `max_distance+1` clear, `UINT16_MAX` unknown; timestamp = acquisition time | Missing, invalid or stale: no velocity toward affected sectors; never inferred clear |
-| ICD-CP-04 PX4 constraint | Message and hook definitions are decided at G2 (ADR 0014); they must keep: no mode command, vertical, yaw, attitude and actuator outputs untouched, baseline-equivalent when disabled, transparent before `TAKEOFF_STATE_FLIGHT` | Non-finite, stale or malformed constraint: zero velocity toward the affected direction plus a reason |
+| ICD-CP-04 PX4 constraint | `cp_brake` messages and limiter hook: proposed design below (ADR 0014) | Non-finite, stale or malformed constraint: zero velocity toward the affected direction plus a reason |
 | ICD-CP-05 logging | Each intervention reconstructs sample, constraint, hook, response, recovery; status 10 Hz plus every transition; Orin diagnostics 1 Hz; raw clouds only in a debug profile; raw ULog, rosbag, MCAP stay out of Git (manifests and hashes only) | Run verdict `PASS`, `FAIL` or `INVALID`; incomplete evidence is never `PASS` |
 
 ICD-CP-01, 02, 03 and 05 are approved by the owner (2026-11-19); safety approval is not recorded.
-ICD-CP-04 is not approved: the `cp_brake` message and hook are still to be designed (ADR 0014).
+ICD-CP-04 is not approved: the design below is proposed and awaits the owner (issue #21).
 Orin parameters (versioned, logged): `qualified_range_m` 40, `sector_map_rate_hz` 10, `coverage_window_ms` 100, `coverage_min_rays_per_sector` (no default
 until OPEN-023, never tuned after an acceptance run). The sector-boundary tolerance is a fixed
 constant of 2.0e-6 rad in `obstacle_sector_map`, approved by the owner (2026-11-19); it is a
 numerical tolerance, not a safety threshold. Raw point cloud source: ADR 0004.
+
+### ICD-CP-04 design (proposed, not approved)
+
+- Inputs of `cp_brake`: uORB `obstacle_distance` (from `/fmu/in/obstacle_distance`),
+  `vehicle_local_position`, `vehicle_status` and the takeoff state. Output: it never publishes a
+  vehicle command and never requests a mode.
+- `cp_brake_constraints` (uORB, from `cp_brake` to the limiter): publication `timestamp`;
+  `sample_timestamp` of the source map; `heading_rad` and `heading_valid` at the sample time; 72
+  body-FRD velocity caps in m/s clamped to `[0, CPB_MAX_V]`; `enforcement_active`; `valid`; state;
+  reason flags; counters. `cp_brake_status` (uORB, logging) carries the three timestamps and ages,
+  input and output setpoints, actual velocity, active sector, minimum range, free and stopping
+  distance, state, reasons and counters.
+- Hook (verified in the pinned source): `PositionControl::update()` runs `_positionControl()` and
+  then `_velocityControl(dt)`. The limiter acts between them on `_vel_sp.xy()` and removes
+  horizontal feed-forward acceleration `_acc_sp.xy()` toward an affected sector. `_vel_sp` there
+  already holds the position-error term and the feed-forward, so position-only Mission setpoints
+  are covered. Vertical, yaw, attitude and actuator outputs are not touched; no second control
+  thread.
+- Frames: caps are body FRD at the sample heading. The limiter rotates them to local NED with the
+  `heading_rad` in the constraint, not the current heading. Invalid heading: zero velocity toward
+  the affected directions, plus a reason.
+- Limiter rule: ADR 0008 (directional half-plane per sector; no global minimum range).
+- Transparent paths: with `CPB_EN` off, or before `TAKEOFF_STATE_FLIGHT` with a valid inactive
+  constraint, the hook leaves the setpoints unchanged (SYS-CP-006, 014).
+- Invalid constraint (non-finite, malformed, stale): zero velocity toward the affected directions
+  plus a reason. Constraint age is `status - constraint timestamp`; its staleness threshold is
+  OPEN-032.
+- Parameters (`CPB_`): `EN`; `MAX_V` 12 m/s (PERF-01); `A_BRK` 3 m/s^2 and `JERK` 4 m/s^3 (PERF-02);
+  `AGE_STOP` 0.5 s (PERF-04); `CLR_T` 0.3 s and `RISE` 2.0 m/s^2 (PERF-05); `MARGIN` 2.0 m
+  (SAFE-01); `T_LAT` TBD (OPEN-004). Values are baselines, not qualified limits.
 
 ## 6. Budgets
 
@@ -237,6 +267,7 @@ SITL fidelity gaps:
 | OPEN-029 | X500 SITL model name and lidar mount pose | SE | TBD | G4 |
 | OPEN-030 | Pose source for deskew: rate, latency, frame and interpolation | Perception + PX4 | TBD | G3 |
 | OPEN-031 | Clear evidence when the ray origin moves during a scan: origin-aware evidence in the map, or a conservative filter in acquisition | Perception + SE | TBD | G3 |
+| OPEN-032 | Staleness threshold and publish rate of the `cp_brake_constraints` output | PX4 + Controls | TBD | G2 |
 
 OPEN-022, 023 and 025 block any operational clear-sector claim. OPEN-002 to OPEN-008 block the
 12 m/s claim. Neither blocks the implementation and SITL work that produces the evidence.
