@@ -191,15 +191,17 @@ numerical tolerance, not a safety threshold. Raw point cloud source: ADR 0004.
   `heading_rad` in the constraint, not the current heading. If the PX4 heading or estimator state
   is itself invalid, the claim is `UNQUALIFIED` and the hook takes no action (ADR 0007). If PX4
   state is valid but no heading exists for the sample time, there is no valid transform, so the
-  limiter outputs zero horizontal velocity (safe-stop, SYS-CP-007), plus a reason.
+  limiter outputs zero horizontal velocity and clears the horizontal feed-forward acceleration
+  (safe-stop, SYS-CP-007), plus a reason.
 - Limiter rule: ADR 0008 (directional half-plane per sector; no global minimum range).
 - Transparent paths: with `CPB_EN` off, or before `TAKEOFF_STATE_FLIGHT` (observer-only, ADR 0009)
   whether the constraint is valid or not, the hook leaves the setpoints unchanged (SYS-CP-006, 014).
 - Invalid constraint (non-finite, malformed, stale), once `TAKEOFF_STATE_FLIGHT` is reached: zero
   velocity toward the affected directions plus a reason. If the whole constraint is unusable and
   no valid cap set exists, the affected directions are unknown, so the limiter outputs zero
-  horizontal velocity (`SAFE_STOP`, SYS-CP-007), plus a reason. Constraint age is `status - constraint timestamp`; its staleness threshold is
-  OPEN-032.
+  horizontal velocity and clears the horizontal feed-forward acceleration (`SAFE_STOP`,
+  SYS-CP-007), plus a reason. Constraint age is `status - constraint timestamp`; its staleness
+  threshold is OPEN-032.
 - Parameters (`CPB_`): `EN`; `MAX_V` 12 m/s (PERF-01); `A_BRK` 3 m/s^2 and `JERK` 4 m/s^3 (PERF-02);
   `AGE_STOP` 0.5 s (PERF-04); `CLR_T` 0.3 s and `RISE` 2.0 m/s^2 (PERF-05); `MARGIN` 2.0 m
   (SAFE-01); `T_LAT` TBD (OPEN-004). Values are baselines, not qualified limits.
