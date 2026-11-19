@@ -11,10 +11,11 @@ namespace obstacle_sector_map
 
 inline constexpr std::size_t kSectorCount{72U};
 inline constexpr float kHalfPiRad{1.57079632679489661923F};
-inline constexpr float kMaxSectorBoundaryEpsilonRad{1.0e-3F};
-// Float rounding floor for the boundary test; a configured epsilon may only widen it.
-inline constexpr float kMinSectorBoundaryEpsilonRad{2.0e-6F};
-static_assert(kMinSectorBoundaryEpsilonRad <= kMaxSectorBoundaryEpsilonRad);
+// Float rounding tolerance for the sector-boundary test. Fixed, not a tuning parameter.
+inline constexpr float kSectorBoundaryEpsilonRad{2.0e-6F};
+static_assert(
+  kSectorBoundaryEpsilonRad > 0.0F &&
+  kSectorBoundaryEpsilonRad < kHalfPiRad / static_cast<float>(kSectorCount));
 
 enum class RayReturnKind : uint8_t
 {
@@ -65,17 +66,14 @@ struct SectorMapConfig
   float min_elevation_rad;
   float max_elevation_rad;
   uint32_t coverage_min_rays_per_sector;
-  float sector_boundary_epsilon_rad;
 
   [[nodiscard]] bool isValid() const
   {
     return std::isfinite(min_distance_m) && std::isfinite(max_distance_m) &&
            std::isfinite(min_elevation_rad) && std::isfinite(max_elevation_rad) &&
-           std::isfinite(sector_boundary_epsilon_rad) && min_distance_m > 0.0F &&
-           max_distance_m > min_distance_m && min_elevation_rad >= -kHalfPiRad &&
-           max_elevation_rad <= kHalfPiRad && min_elevation_rad < max_elevation_rad &&
-           coverage_min_rays_per_sector > 0U && sector_boundary_epsilon_rad >= 0.0F &&
-           sector_boundary_epsilon_rad <= kMaxSectorBoundaryEpsilonRad;
+           min_distance_m > 0.0F && max_distance_m > min_distance_m &&
+           min_elevation_rad >= -kHalfPiRad && max_elevation_rad <= kHalfPiRad &&
+           min_elevation_rad < max_elevation_rad && coverage_min_rays_per_sector > 0U;
   }
 };
 

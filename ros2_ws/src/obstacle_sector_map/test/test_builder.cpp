@@ -19,8 +19,7 @@ namespace
 {
 
 constexpr float kDegreesToRadians = 3.14159265358979323846F / 180.0F;
-constexpr SectorMapConfig kConfig{0.1F, 40.0F, -0.2F, 0.4F, 2U, 1.0e-6F};
-constexpr SectorMapConfig kZeroBoundaryEpsilonConfig{0.1F, 40.0F, -0.2F, 0.4F, 2U, 0.0F};
+constexpr SectorMapConfig kConfig{0.1F, 40.0F, -0.2F, 0.4F, 2U};
 
 RaySample makeRay(
   RayReturnKind return_kind, float range_m, float azimuth_rad = 0.0F,
@@ -45,27 +44,24 @@ RaySample makeReturn(float range_m, float azimuth_rad = 0.0F, uint64_t timestamp
 
 TEST(SectorMapConfigTest, AcceptsExplicitQualifiedGeometry)
 {
-  const SectorMapConfig config{0.1F, 40.0F, -0.2F, 0.4F, 8U, 1.0e-6F};
+  const SectorMapConfig config{0.1F, 40.0F, -0.2F, 0.4F, 8U};
   EXPECT_TRUE(config.isValid());
 }
 
 TEST(SectorMapConfigTest, RejectsUnsafeValues)
 {
-  EXPECT_FALSE((SectorMapConfig{0.0F, 40.0F, -0.2F, 0.4F, 8U, 1.0e-6F}).isValid());
-  EXPECT_FALSE((SectorMapConfig{0.1F, 0.1F, -0.2F, 0.4F, 8U, 1.0e-6F}).isValid());
-  EXPECT_FALSE((SectorMapConfig{0.1F, 40.0F, 0.4F, -0.2F, 8U, 1.0e-6F}).isValid());
-  EXPECT_FALSE((SectorMapConfig{0.1F, 40.0F, -1.6F, 0.4F, 8U, 1.0e-6F}).isValid());
-  EXPECT_FALSE((SectorMapConfig{0.1F, 40.0F, -0.2F, 1.6F, 8U, 1.0e-6F}).isValid());
-  EXPECT_FALSE((SectorMapConfig{0.1F, 40.0F, -0.2F, 0.4F, 0U, 1.0e-6F}).isValid());
-  EXPECT_FALSE((SectorMapConfig{0.1F, 40.0F, -0.2F, 0.4F, 8U, -1.0F}).isValid());
-  EXPECT_FALSE((SectorMapConfig{0.1F, 40.0F, -0.2F, 0.4F, 8U, 0.01F}).isValid());
+  EXPECT_FALSE((SectorMapConfig{0.0F, 40.0F, -0.2F, 0.4F, 8U}).isValid());
+  EXPECT_FALSE((SectorMapConfig{0.1F, 0.1F, -0.2F, 0.4F, 8U}).isValid());
+  EXPECT_FALSE((SectorMapConfig{0.1F, 40.0F, 0.4F, -0.2F, 8U}).isValid());
+  EXPECT_FALSE((SectorMapConfig{0.1F, 40.0F, -1.6F, 0.4F, 8U}).isValid());
+  EXPECT_FALSE((SectorMapConfig{0.1F, 40.0F, -0.2F, 1.6F, 8U}).isValid());
+  EXPECT_FALSE((SectorMapConfig{0.1F, 40.0F, -0.2F, 0.4F, 0U}).isValid());
 }
 
 TEST(SectorMapBuilderTest, RejectsInvalidConfiguration)
 {
   EXPECT_THROW(
-    SectorMapBuilder((SectorMapConfig{0.0F, 40.0F, -0.2F, 0.4F, 2U, 1.0e-6F})),
-    std::invalid_argument);
+    SectorMapBuilder((SectorMapConfig{0.0F, 40.0F, -0.2F, 0.4F, 2U})), std::invalid_argument);
 }
 
 TEST(SectorMapBuilderTest, EmptyWindowIsUnknown)
@@ -148,7 +144,7 @@ TEST(SectorMapBuilderTest, RangeBelowMinimumIsTooClose)
 TEST(SectorMapBuilderTest, UsesHorizontalProjectedRangeForClassification)
 {
   constexpr float kSixtyDegreesRad{1.0471975511965976F};
-  const SectorMapConfig wide_elevation_config{0.1F, 40.0F, -1.2F, 1.2F, 1U, 1.0e-6F};
+  const SectorMapConfig wide_elevation_config{0.1F, 40.0F, -1.2F, 1.2F, 1U};
 
   SectorMapBuilder occupied_builder{wide_elevation_config};
   occupied_builder.reset(true);
@@ -257,11 +253,11 @@ TEST(SectorMapBuilderTest, ExactNegativeBoundaryUpdatesBothAdjacentSectors)
   EXPECT_EQ(map.sectors[71].state, SectorState::kOccupied);
 }
 
-TEST(SectorMapBuilderTest, ZeroEpsilonAllPositiveFloatBoundariesUpdateBothAdjacentSectors)
+TEST(SectorMapBuilderTest, AllPositiveFloatBoundariesUpdateBothAdjacentSectors)
 {
   for (std::size_t lower_index = 0U; lower_index < kSectorCount; ++lower_index) {
     SCOPED_TRACE(lower_index);
-    SectorMapBuilder builder{kZeroBoundaryEpsilonConfig};
+    SectorMapBuilder builder{kConfig};
     builder.reset(true);
     const float boundary_deg = 2.5F + 5.0F * static_cast<float>(lower_index);
     builder.addRay(makeReturn(10.0F, boundary_deg * kDegreesToRadians));
@@ -272,11 +268,11 @@ TEST(SectorMapBuilderTest, ZeroEpsilonAllPositiveFloatBoundariesUpdateBothAdjace
   }
 }
 
-TEST(SectorMapBuilderTest, ZeroEpsilonAllNegativeFloatBoundariesUpdateBothAdjacentSectors)
+TEST(SectorMapBuilderTest, AllNegativeFloatBoundariesUpdateBothAdjacentSectors)
 {
   for (std::size_t boundary_number = 0U; boundary_number < kSectorCount; ++boundary_number) {
     SCOPED_TRACE(boundary_number);
-    SectorMapBuilder builder{kZeroBoundaryEpsilonConfig};
+    SectorMapBuilder builder{kConfig};
     builder.reset(true);
     const float boundary_deg = -(2.5F + 5.0F * static_cast<float>(boundary_number));
     builder.addRay(makeReturn(10.0F, boundary_deg * kDegreesToRadians));
@@ -288,19 +284,19 @@ TEST(SectorMapBuilderTest, ZeroEpsilonAllNegativeFloatBoundariesUpdateBothAdjace
   }
 }
 
-TEST(SectorMapBuilderTest, ZeroEpsilonJustOffBoundaryDoesNotDuplicateObstacleEvidence)
+TEST(SectorMapBuilderTest, JustOffBoundaryDoesNotDuplicateObstacleEvidence)
 {
   constexpr float kBoundaryRad = 27.5F * kDegreesToRadians;
   constexpr float kOutsideNumericalToleranceRad = 1.0e-4F;
 
-  SectorMapBuilder lower_builder{kZeroBoundaryEpsilonConfig};
+  SectorMapBuilder lower_builder{kConfig};
   lower_builder.reset(true);
   lower_builder.addRay(makeReturn(10.0F, kBoundaryRad - kOutsideNumericalToleranceRad));
   const auto lower_map = lower_builder.finalize();
   EXPECT_EQ(lower_map.sectors[5].state, SectorState::kOccupied);
   EXPECT_EQ(lower_map.sectors[6].state, SectorState::kUnknown);
 
-  SectorMapBuilder upper_builder{kZeroBoundaryEpsilonConfig};
+  SectorMapBuilder upper_builder{kConfig};
   upper_builder.reset(true);
   upper_builder.addRay(makeReturn(10.0F, kBoundaryRad + kOutsideNumericalToleranceRad));
   const auto upper_map = upper_builder.finalize();
@@ -308,9 +304,9 @@ TEST(SectorMapBuilderTest, ZeroEpsilonJustOffBoundaryDoesNotDuplicateObstacleEvi
   EXPECT_EQ(upper_map.sectors[6].state, SectorState::kOccupied);
 }
 
-TEST(SectorMapBuilderTest, ZeroEpsilonBoundaryNoReturnDoesNotDuplicateClearCoverage)
+TEST(SectorMapBuilderTest, BoundaryNoReturnDoesNotDuplicateClearCoverage)
 {
-  SectorMapBuilder builder{kZeroBoundaryEpsilonConfig};
+  SectorMapBuilder builder{kConfig};
   builder.reset(true);
   builder.addRay(makeNoReturn(2.5F * kDegreesToRadians));
   builder.addRay(makeNoReturn(2.5F * kDegreesToRadians));

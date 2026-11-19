@@ -10,8 +10,8 @@ rays. No ROS or `px4_msgs` dependency. Design rationale: `docs/architecture.md`.
 - classified as `kReturn`, `kQualifiedNoReturn` or `kInvalid`, with self-mask and any sensor
   confidence tags applied (platform-specific filtering stays in acquisition).
 
-`SectorMapConfig` carries range, elevation band, coverage threshold and boundary epsilon.
-Values are supplied by the caller; none is defaulted here.
+`SectorMapConfig` carries range, elevation band and coverage threshold, supplied by the caller
+(none defaulted). The sector-boundary tolerance is a fixed constant, not configuration.
 
 ## Output contract
 `finalize()` returns a `SectorMap` with one `SectorObservation` per sector:
