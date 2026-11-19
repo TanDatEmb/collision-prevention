@@ -15,7 +15,9 @@ LiDAR sector-based collision prevention for PX4 multicopters. Companion-computer
 3. Push the first commit and open the PR (draft is fine) immediately.
 4. Review feedback or CI failure: add commits to the same branch. Never open a parallel or
    replacement branch/PR.
-5. Never push to `main`, never force-push after review started, never approve or merge a PR.
+5. Never push to `main`, never force-push after review started, never approve a PR. Merge a PR
+   only when the owner has said so in chat and the Codex review of the head commit has no
+   unresolved findings. Merging is not design approval: approvals are recorded in a separate PR.
 6. Never abandon a PR: finish it, or close it with a comment stating why.
 Use the `commit` and `pr` skills.
 

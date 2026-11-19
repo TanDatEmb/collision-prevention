@@ -20,4 +20,5 @@ Body follows `.github/pull_request_template.md`:
 - **Risk**: interface, timing and safety impact.
 
 Open the PR (draft is fine) after the first push. Fix review or CI feedback with new commits on
-the same branch. Never approve or merge.
+the same branch. Never approve a PR. Merge only when the owner has said so in chat and the Codex
+review of the head commit has no unresolved findings; merging is not design approval.
