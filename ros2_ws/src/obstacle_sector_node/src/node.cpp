@@ -2,6 +2,7 @@
 
 #include <chrono>
 #include <cmath>
+#include <limits>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -34,18 +35,32 @@ rclcpp::QoS obstacleDistanceQos()
 int64_t mapAgeNs(int64_t now_ns, uint64_t sample_timestamp_us)
 {
   constexpr int64_t kNanosecondsPerMicrosecond{1'000};
+  constexpr uint64_t kLargestSampleUs{
+    static_cast<uint64_t>(std::numeric_limits<int64_t>::max() / kNanosecondsPerMicrosecond)};
+
+  // A time beyond int64 nanoseconds would overflow below and could wrap into an old-looking
+  // sample; report the most negative age instead, so it counts as ahead of the clock.
+  if (sample_timestamp_us > kLargestSampleUs) {
+    return std::numeric_limits<int64_t>::min();
+  }
+
   return now_ns - static_cast<int64_t>(sample_timestamp_us) * kNanosecondsPerMicrosecond;
 }
 
-uint8_t diagnosticLevel(StepStatus last_status, const PipelineStats & stats)
+uint8_t diagnosticLevel(
+  StepStatus last_status, const PipelineStats & stats, uint64_t negative_age_drops,
+  bool latest_map_dropped)
 {
   using diagnostic_msgs::msg::DiagnosticStatus;
 
-  if (last_status == StepStatus::kSourceEnded || last_status == StepStatus::kEncodeFailed) {
+  if (
+    last_status == StepStatus::kSourceEnded || last_status == StepStatus::kEncodeFailed ||
+    latest_map_dropped) {
     return DiagnosticStatus::ERROR;
   }
 
-  return stats.encode_failures > 0U ? DiagnosticStatus::WARN : DiagnosticStatus::OK;
+  return (stats.encode_failures > 0U || negative_age_drops > 0U) ? DiagnosticStatus::WARN
+                                                                 : DiagnosticStatus::OK;
 }
 
 ObstacleSectorNode::ObstacleSectorNode(
@@ -77,11 +92,22 @@ void ObstacleSectorNode::publishNext()
   auto result = _pipeline->step();
 
   _last_status = result.status;
+  _latest_map_dropped = false;
 
-  if (result.status == StepStatus::kMessage) {
-    _latest_sample_us = result.message->timestamp;
-    _distance_pub->publish(*result.message);
+  if (result.status != StepStatus::kMessage) {
+    return;
   }
+
+  // PX4 clamps a later timestamp to the receive time and cannot see it (ICD-CP-04), so a map whose
+  // sample time is ahead of this clock is held back. No limit on a large age is applied (OPEN-033).
+  if (mapAgeNs(now().nanoseconds(), result.message->timestamp) < 0) {
+    ++_negative_age_drops;
+    _latest_map_dropped = true;
+    return;
+  }
+
+  _latest_sample_us = result.message->timestamp;
+  _distance_pub->publish(*result.message);
 }
 
 void ObstacleSectorNode::publishDiagnostics()
@@ -89,10 +115,12 @@ void ObstacleSectorNode::publishDiagnostics()
   diagnostic_msgs::msg::DiagnosticStatus status;
   status.name = "obstacle_sector_node";
   status.hardware_id = "obstacle_sector_node";
-  status.level = diagnosticLevel(_last_status, _pipeline->stats());
+  status.level =
+    diagnosticLevel(_last_status, _pipeline->stats(), _negative_age_drops, _latest_map_dropped);
   status.message = _last_status == StepStatus::kSourceEnded    ? "source ended"
                    : _last_status == StepStatus::kEncodeFailed ? "latest frame did not encode"
-                                                               : "running";
+                   : _latest_map_dropped ? "latest map dropped: sample time ahead of the node clock"
+                                         : "running";
   diagnostic_msgs::msg::KeyValue age;
   age.key = "latest_map_age_ms";
   age.value = _latest_sample_us.has_value()
@@ -102,6 +130,7 @@ void ObstacleSectorNode::publishDiagnostics()
   status.values.push_back(keyValue("frames", _pipeline->stats().frames));
   status.values.push_back(keyValue("messages", _pipeline->stats().messages));
   status.values.push_back(keyValue("encode_failures", _pipeline->stats().encode_failures));
+  status.values.push_back(keyValue("negative_age_drops", _negative_age_drops));
 
   diagnostic_msgs::msg::DiagnosticArray array;
   array.header.stamp = now();
