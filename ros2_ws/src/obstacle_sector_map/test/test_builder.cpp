@@ -94,6 +94,7 @@ TEST(SectorMapBuilderTest, QualifiedNoReturnCoverageProducesObservedClear)
 
   EXPECT_EQ(map.sectors[0].state, SectorState::kObservedClear);
   EXPECT_EQ(map.sectors[0].contributing_ray_count, 2U);
+  EXPECT_EQ(map.sectors[0].clear_ray_count, 2U);
   EXPECT_EQ(map.sample_timestamp_ns, 1'000U);
 }
 
@@ -168,14 +169,32 @@ TEST(SectorMapBuilderTest, UsesHorizontalProjectedRangeForClassification)
   EXPECT_EQ(too_close_builder.finalize().sectors[0].state, SectorState::kTooClose);
 }
 
-TEST(SectorMapBuilderTest, ReturnBeyondQualifiedRangeContributesClearEvidence)
+TEST(SectorMapBuilderTest, ReturnBeyondQualifiedRangeIsNotClearEvidence)
 {
   SectorMapBuilder builder{kConfig};
   builder.reset(true);
   builder.addRay(makeReturn(50.0F));
   builder.addRay(makeReturn(60.0F));
 
-  EXPECT_EQ(builder.finalize().sectors[0].state, SectorState::kObservedClear);
+  const auto sector = builder.finalize().sectors[0];
+  EXPECT_EQ(sector.state, SectorState::kUnknown);
+  EXPECT_EQ(sector.contributing_ray_count, 2U);
+  EXPECT_EQ(sector.clear_ray_count, 0U);
+}
+
+TEST(SectorMapBuilderTest, OnlyQualifiedNoReturnCountsTowardClearCoverage)
+{
+  SectorMapBuilder builder{kConfig};
+  builder.reset(true);
+  builder.addRay(makeNoReturn());
+  builder.addRay(makeReturn(50.0F));
+  EXPECT_EQ(builder.finalize().sectors[0].state, SectorState::kUnknown);
+
+  builder.addRay(makeNoReturn());
+  const auto sector = builder.finalize().sectors[0];
+  EXPECT_EQ(sector.state, SectorState::kObservedClear);
+  EXPECT_EQ(sector.clear_ray_count, 2U);
+  EXPECT_EQ(sector.contributing_ray_count, 3U);
 }
 
 TEST(SectorMapBuilderTest, RejectsNonFiniteInvalidMaskedAndVerticalOutliers)

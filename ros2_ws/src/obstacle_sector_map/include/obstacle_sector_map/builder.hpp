@@ -22,6 +22,7 @@ private:
   struct SectorAccumulator
   {
     uint32_t contributing_ray_count{0U};
+    uint32_t clear_ray_count{0U};
     bool too_close{false};
     float minimum_obstacle_distance_m{std::numeric_limits<float>::infinity()};
   };

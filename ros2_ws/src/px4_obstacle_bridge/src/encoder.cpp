@@ -77,7 +77,7 @@ std::optional<px4_msgs::msg::ObstacleDistance> encodeObstacleDistance(
       case SectorState::kObservedClear:
         if (
           !sector_map.packet_continuity_valid ||
-          sector.contributing_ray_count < config.coverage_min_rays_per_sector) {
+          sector.clear_ray_count < config.coverage_min_rays_per_sector) {
           return std::nullopt;
         }
 
