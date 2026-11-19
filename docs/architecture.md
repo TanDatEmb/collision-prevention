@@ -344,10 +344,9 @@ SITL fidelity gaps:
 | OPEN-015 | Pin Micro XRCE-DDS Agent and target runtime versions | Software Integration | TBD | G5 |
 | OPEN-016 | Record FMU V6X hardware revision, bootloader, baseline | Hardware + Test | TBD | G5 |
 | OPEN-020 | Pilot enable, disable and override procedure; HZ-CP-009 has no requirement | SE + Operations | TBD | G6 (accepted G1 exception) |
-| OPEN-022 | Pin Livox SDK2 and firmware; per-point timestamps, zero-depth, too-close, tag and packet-loss semantics; the rule that classifies a sample as a qualified no-return | Perception + Test | TBD | G3 |
+| OPEN-022 | Pin the Mid-360S firmware (SDK2 pin: ADR 0016); per-point timestamps, zero-depth, too-close, tag and packet-loss semantics; the rule that classifies a sample as a qualified no-return | Perception + Test | TBD | G3 |
 | OPEN-023 | Freeze the ray-coverage rule and `coverage_min_rays_per_sector` | Perception + SE + Test | TBD | G4 |
 | OPEN-024 | Qualify dwell 0.3 s and rise 2.0 m/s^2 | Controls + Operations | TBD | G4, G6 |
-| OPEN-025 | Raw-ray path: embed Livox SDK2 or patch `livox_ros_driver2` | Perception + SE | TBD | G3 |
 | OPEN-028 | Orin and FMU CPU, memory and thermal budgets | Orin Lead + PX4 | TBD | G5 |
 | OPEN-029 | X500 SITL model name and lidar mount pose | SE | TBD | G4 |
 | OPEN-030 | Pose source for deskew: rate, latency, frame and interpolation | Perception + PX4 | TBD | G3 |
@@ -358,5 +357,5 @@ SITL fidelity gaps:
 | OPEN-035 | Hook interaction with FlightTask feedback of the published setpoint, the XY velocity integrator and the tilt limit | Controls + PX4 | TBD | G4 |
 | OPEN-036 | Vertical collision envelope as a height band: how a no-return ray, which has no endpoint, is tested against it; builder change from the elevation band | Perception + SE | TBD | G3 |
 
-OPEN-022, 023 and 025 block any operational clear-sector claim. OPEN-002 to OPEN-008 block the
+OPEN-022 and 023 block any operational clear-sector claim. OPEN-002 to OPEN-008 block the
 12 m/s claim. Neither blocks the implementation and SITL work that produces the evidence.

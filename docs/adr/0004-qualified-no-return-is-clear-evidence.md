@@ -17,4 +17,4 @@ Everything else is unknown. Raw rays come from `livox_ray_source`, built on SDK2
 - Missing points, lost packets and discarded samples encode `UINT16_MAX`.
 - The coverage threshold is configuration, not a default; it stays open as OPEN-023.
 - Whether Mid-360S sends zero-depth samples at all is unverified (OPEN-022).
-- Embedding SDK2 or patching `livox_ros_driver2` to publish spherical samples is open (OPEN-025).
+- Embedding SDK2 is decided in ADR 0016 (closes OPEN-025).
