@@ -10,13 +10,12 @@ It is the only place that changes frame, direction and unit conventions.
 ## Output contract
 `encodeObstacleDistance()` returns `std::optional<ObstacleDistance>`:
 - `MAV_FRAME_BODY_FRD`, laser sensor, 72 sectors of 5 degrees, clockwise from forward;
-- distances in centimetres (floored); `0` = too close, `max_distance + 1` = observed clear,
-  `UINT16_MAX` = unknown;
+- `min_distance` 10 and `max_distance` 4000 cm (fixed, ICD-CP-03); distances in centimetres
+  (floored); `0` = too close, `max_distance + 1` = observed clear, `UINT16_MAX` = unknown;
 - `timestamp` is the map acquisition time in microseconds.
 
 It returns `std::nullopt` (fail closed) for an invalid config, zero or sub-microsecond timestamp,
-occupied distance outside the configured range, clear sectors without continuity or coverage, and
-ranges that would alias reserved wire values.
+occupied distance outside the fixed range, and clear sectors without continuity or coverage.
 
 ## Usage
 ```cpp

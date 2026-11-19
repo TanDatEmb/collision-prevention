@@ -19,7 +19,7 @@ namespace
 {
 
 constexpr float kDegreesToRadians = 3.14159265358979323846F / 180.0F;
-constexpr SectorMapConfig kConfig{0.1F, 40.0F, -0.2F, 0.4F, 2U};
+constexpr SectorMapConfig kConfig{-0.2F, 0.4F, 2U};
 
 RaySample makeRay(
   RayReturnKind return_kind, float range_m, float azimuth_rad = 0.0F,
@@ -44,28 +44,23 @@ RaySample makeReturn(float range_m, float azimuth_rad = 0.0F, uint64_t timestamp
 
 TEST(SectorMapConfigTest, AcceptsExplicitQualifiedGeometry)
 {
-  const SectorMapConfig config{0.1F, 40.0F, -0.2F, 0.4F, 8U};
+  const SectorMapConfig config{-0.2F, 0.4F, 8U};
   EXPECT_TRUE(config.isValid());
 }
 
 TEST(SectorMapConfigTest, RejectsUnsafeValues)
 {
-  EXPECT_FALSE((SectorMapConfig{0.0F, 40.0F, -0.2F, 0.4F, 8U}).isValid());
-  EXPECT_FALSE((SectorMapConfig{0.1F, 0.1F, -0.2F, 0.4F, 8U}).isValid());
-  EXPECT_FALSE((SectorMapConfig{0.1F, 40.0F, 0.4F, -0.2F, 8U}).isValid());
-  EXPECT_FALSE((SectorMapConfig{0.1F, 40.0F, -1.6F, 0.4F, 8U}).isValid());
-  EXPECT_FALSE((SectorMapConfig{0.1F, 40.0F, -0.2F, 1.6F, 8U}).isValid());
-  EXPECT_FALSE(
-    (SectorMapConfig{0.1F, 40.0F, -obstacle_sector_map::kHalfPiRad, 0.4F, 8U}).isValid());
-  EXPECT_FALSE(
-    (SectorMapConfig{0.1F, 40.0F, -0.2F, obstacle_sector_map::kHalfPiRad, 8U}).isValid());
-  EXPECT_FALSE((SectorMapConfig{0.1F, 40.0F, -0.2F, 0.4F, 0U}).isValid());
+  EXPECT_FALSE((SectorMapConfig{0.4F, -0.2F, 8U}).isValid());
+  EXPECT_FALSE((SectorMapConfig{-1.6F, 0.4F, 8U}).isValid());
+  EXPECT_FALSE((SectorMapConfig{-0.2F, 1.6F, 8U}).isValid());
+  EXPECT_FALSE((SectorMapConfig{-obstacle_sector_map::kHalfPiRad, 0.4F, 8U}).isValid());
+  EXPECT_FALSE((SectorMapConfig{-0.2F, obstacle_sector_map::kHalfPiRad, 8U}).isValid());
+  EXPECT_FALSE((SectorMapConfig{-0.2F, 0.4F, 0U}).isValid());
 }
 
 TEST(SectorMapBuilderTest, RejectsInvalidConfiguration)
 {
-  EXPECT_THROW(
-    SectorMapBuilder((SectorMapConfig{0.0F, 40.0F, -0.2F, 0.4F, 2U})), std::invalid_argument);
+  EXPECT_THROW(SectorMapBuilder((SectorMapConfig{0.4F, -0.2F, 2U})), std::invalid_argument);
 }
 
 TEST(SectorMapBuilderTest, EmptyWindowIsUnknown)
@@ -148,7 +143,7 @@ TEST(SectorMapBuilderTest, RangeBelowMinimumIsTooClose)
 TEST(SectorMapBuilderTest, UsesHorizontalProjectedRangeForClassification)
 {
   constexpr float kSixtyDegreesRad{1.0471975511965976F};
-  const SectorMapConfig wide_elevation_config{0.1F, 40.0F, -1.2F, 1.2F, 1U};
+  const SectorMapConfig wide_elevation_config{-1.2F, 1.2F, 1U};
 
   SectorMapBuilder occupied_builder{wide_elevation_config};
   occupied_builder.reset(true);

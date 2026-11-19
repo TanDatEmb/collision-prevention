@@ -176,8 +176,9 @@ numerical tolerance, not a safety threshold. Raw point cloud source: ADR 0004.
   the map timestamp (earliest contributing ray, SYS-CP-016).
 - Framing: a window of `coverage_window_ms` by sensor timestamp; the whole frame is buffered, then
   `reset(continuity)`, `addRay` and `finalize` run, so the builder API is unchanged.
-- Distance limits: one pair `min_distance_m` and `max_distance_m` (ICD-CP-03: 10 cm, 4000 cm); the
-  separate name `qualified_range_m` is dropped. The `x500.yaml` entries are aligned in a follow-up.
+- Distance limits: one pair `kMinDistanceM` and `kMaxDistanceM` (ICD-CP-03: 10 cm, 4000 cm), fixed
+  constants in `obstacle_sector_map` and not platform configuration; the separate name
+  `qualified_range_m` is dropped.
 - Self-mask (ADR 0006): `livox_ray_source` sets `masked`. A return is masked when its endpoint is
   inside a cylinder; a no-return is masked when its ray segment up to `max_distance_m` crosses a
   cylinder. A masked ray is neither obstacle nor clear evidence.

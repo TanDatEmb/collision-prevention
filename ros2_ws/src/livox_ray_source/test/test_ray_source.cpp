@@ -23,7 +23,7 @@ namespace
 {
 
 constexpr uint64_t kWindowNs = 1'000U;
-constexpr SectorMapConfig kConfig{0.1F, 40.0F, -0.2F, 0.4F, 2U};
+constexpr SectorMapConfig kConfig{-0.2F, 0.4F, 2U};
 
 StreamSample makeNoReturn(uint64_t timestamp_ns, float azimuth_rad = 0.0F, bool brk = false)
 {

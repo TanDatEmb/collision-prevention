@@ -16,6 +16,12 @@ constexpr float kCentimetresPerMetre{100.0F};
 constexpr float kIncrementDegrees{360.0F / static_cast<float>(kSectorCount)};
 constexpr uint16_t kUnknownDistance{std::numeric_limits<uint16_t>::max()};
 constexpr uint16_t kLargestUnambiguousMaxDistance{kUnknownDistance - 2U};
+constexpr uint16_t kMinDistanceCm{
+  static_cast<uint16_t>(obstacle_sector_map::kMinDistanceM * kCentimetresPerMetre)};
+constexpr uint16_t kMaxDistanceCm{
+  static_cast<uint16_t>(obstacle_sector_map::kMaxDistanceM * kCentimetresPerMetre)};
+static_assert(kMinDistanceCm > 0U && kMinDistanceCm < kMaxDistanceCm);
+static_assert(kMaxDistanceCm <= kLargestUnambiguousMaxDistance);  // max + 1 stays below unknown
 
 std::optional<uint16_t> metresToWireCentimetres(float distance_m)
 {
@@ -46,22 +52,13 @@ std::optional<px4_msgs::msg::ObstacleDistance> encodeObstacleDistance(
     return std::nullopt;
   }
 
-  const auto minimum_cm = metresToWireCentimetres(config.min_distance_m);
-  const auto maximum_cm = metresToWireCentimetres(config.max_distance_m);
-
-  if (
-    !minimum_cm.has_value() || !maximum_cm.has_value() || *minimum_cm == 0U ||
-    *minimum_cm >= *maximum_cm) {
-    return std::nullopt;
-  }
-
   px4_msgs::msg::ObstacleDistance message{};
   message.timestamp = timestamp_us;
   message.frame = px4_msgs::msg::ObstacleDistance::MAV_FRAME_BODY_FRD;
   message.sensor_type = px4_msgs::msg::ObstacleDistance::MAV_DISTANCE_SENSOR_LASER;
   message.increment = kIncrementDegrees;
-  message.min_distance = *minimum_cm;
-  message.max_distance = *maximum_cm;
+  message.min_distance = kMinDistanceCm;
+  message.max_distance = kMaxDistanceCm;
   message.angle_offset = 0.0F;
   message.distances.fill(kUnknownDistance);
 
@@ -81,7 +78,7 @@ std::optional<px4_msgs::msg::ObstacleDistance> encodeObstacleDistance(
           return std::nullopt;
         }
 
-        message.distances[frd_index] = static_cast<uint16_t>(*maximum_cm + 1U);
+        message.distances[frd_index] = static_cast<uint16_t>(kMaxDistanceCm + 1U);
         break;
 
       case SectorState::kTooClose:
@@ -90,8 +87,9 @@ std::optional<px4_msgs::msg::ObstacleDistance> encodeObstacleDistance(
 
       case SectorState::kOccupied: {
         if (
-          !std::isfinite(sector.distance_m) || sector.distance_m < config.min_distance_m ||
-          sector.distance_m > config.max_distance_m) {
+          !std::isfinite(sector.distance_m) ||
+          sector.distance_m < obstacle_sector_map::kMinDistanceM ||
+          sector.distance_m > obstacle_sector_map::kMaxDistanceM) {
           return std::nullopt;
         }
 
