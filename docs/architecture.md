@@ -319,7 +319,7 @@ only host unit tests exist; they are not detection, integration, runtime or qual
 
 | Gate | Pass criteria |
 | --- | --- |
-| G0 Baseline | Repo, CI and branch rules active; submodule pins verified; message parity passes |
+| G0 Baseline | Repo, CI and branch rules active (the CI clause is waived by the owner, 2026-11-19, while the GitHub billing lock keeps the `ci` workflow disabled; it applies again once the lock is lifted and `ci` passes on `main`; until then each PR reports its local build and test results); submodule pins verified; message parity passes |
 | G1 Requirements | ODD, hazards and SYS-CP requirements approved by the owner, who is the sole safety approver until another is named (waiver, 2026-11-19); every hazard traces to a requirement or an OPEN item; every requirement has a verify method |
 | G2 Architecture | OPEN-026 and OPEN-027 closed by ADR 0014 and 0015; ICD-CP-01 to 06 approved (done: 06, the ray-source to map interface, was approved on 2026-11-19); latency and CPU budget allocation and owners approved, values measured and approved at G5 (OPEN-004, OPEN-028); observation core reviewed against the proposed architecture (issue #5) before G2 is approved  Approved by the owner on 2026-11-19. |
 | G3 Core implementation | Build clean with `-Werror`; UT groups for assigned requirements pass; Orin node composes source, map and bridge; no SITL claim |
