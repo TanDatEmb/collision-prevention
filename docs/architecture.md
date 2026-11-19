@@ -233,8 +233,9 @@ numerical tolerance, not a safety threshold. Raw point cloud source: ADR 0004.
   from the position history that also holds the heading. By sector state: unknown or stale gives
   cap 0; `0` (too close) gives cap 0; clear is evaluated at `max_distance` with no special case;
   an occupied sector uses its measured range. `A_BRK` and `JERK` are model inputs, not limits on
-  the setpoint rate; a new obstacle tightens the cap at once (ADR 0008). `T_LAT` is a required
-  input with no default (OPEN-004). Inputs are validated finite and positive first (NFR-CP-002).
+  the setpoint rate; a new obstacle tightens the cap at once (ADR 0008). `T_LAT` is the lag between the hook
+  output and the vehicle response; the latency from sample to hook is already in the usable range
+  correction, so it is not counted again. It is a required input with no default (OPEN-004). Inputs are validated finite and positive first (NFR-CP-002).
 - Parameters (`CPB_`): `EN`; `MAX_V` 12 m/s (PERF-01); `A_BRK` 3 m/s^2 and `JERK` 4 m/s^3 (PERF-02);
   `AGE_STOP` 0.5 s (PERF-04); `CLR_T` 0.3 s and `RISE` 2.0 m/s^2 (PERF-05); `MARGIN` 2.0 m
   (SAFE-01); `T_LAT` TBD (OPEN-004). Values are baselines, not qualified limits.
