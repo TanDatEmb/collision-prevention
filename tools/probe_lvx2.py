@@ -16,7 +16,7 @@ reader stops with an error when a file does not match it):
            4 reserved bytes) followed by the payload
   payload: data type 1 = int32 x, y, z in mm, reflectivity u8, tag u8; type 2 = int16 x, y, z in
            10 mm; type 3 = depth u32 mm, theta u16 and phi u16 in 0.01 deg, reflectivity, tag.
-Needs Python 3 and numpy.
+Statistics are kept per lidar id (own clock and packet counter). Needs Python 3 and numpy.
 
 Usage: probe_lvx2.py FILE [--window-ms 100] [--json]    |    probe_lvx2.py --selftest
 """
@@ -130,8 +130,22 @@ class Stats:
         return int(np.searchsorted(cumulative, q * cumulative[-1])) + 0.5
 
 
+def window_summary(stats, window_ms):
+    zero_row = np.zeros(SECTORS, dtype=np.int64)
+    complete = []
+    if stats.windows:
+        span = range(min(stats.windows), max(stats.windows) + 1)
+        complete = [stats.windows.get(w, zero_row) for w in span][1:-1]
+    if not complete:
+        return {"window_ms": window_ms, "windows": 0, "min": None, "p5": None, "median": None,
+                "max": None, "empty_cells": None}
+    cells = np.concatenate(complete)
+    return {"window_ms": window_ms, "windows": len(complete), "min": int(cells.min()),
+            "p5": int(np.percentile(cells, 5)), "median": int(np.median(cells)),
+            "max": int(cells.max()), "empty_cells": int((cells == 0).sum())}
+
+
 def read_file(path, window_ms):
-    stats = Stats(int(window_ms * 1e6))
     with open(path, "rb") as handle:
         buf = mmap.mmap(handle.fileno(), 0, access=mmap.ACCESS_READ)
     size = len(buf)
@@ -141,16 +155,15 @@ def read_file(path, window_ms):
     if struct.unpack_from("<I", buf, 20)[0] != MAGIC or version[0] != 2:
         fail("unsupported LVX version or magic code")
     frame_ms, devices = struct.unpack_from("<IB", buf, PUBLIC_HEADER)
-    if devices != 1:
-        fail("only single-device files are supported (found %d devices)" % devices)
     offset = PUBLIC_HEADER + PRIVATE_HEADER + devices * DEVICE_INFO
     report = {"file": path, "version": version, "frame_duration_ms": frame_ms, "devices": devices}
-    frames = packages = 0
+    frames = packages = imu_packages = 0
     data_types, time_types, lidar_types = set(), set(), set()
-    per_lidar, per_frame = {}, []
+    stats = {}  # statistics are kept per lidar id: each lidar has its own clock and counters
+    seen = {}
+    per_frame = []
     pending = {}
     finished = False
-    imu_packages = 0
     while offset + FRAME_HEADER.size <= size:
         current, nxt, _index = FRAME_HEADER.unpack_from(buf, offset)
         if current != offset:
@@ -169,9 +182,9 @@ def read_file(path, window_ms):
             data_types.add(dtype)
             time_types.add(ttype)
             lidar_types.add(ltype)
-            seen = per_lidar.setdefault(lidar_id, ([], []))
-            seen[0].append(udp)
-            seen[1].append(ts)
+            counters = seen.setdefault(lidar_id, ([], []))
+            counters[0].append(udp)
+            counters[1].append(ts)
             if dtype == 0:
                 imu_packages += 1
             elif dtype not in POINT_DTYPES:
@@ -180,13 +193,15 @@ def read_file(path, window_ms):
                 item = POINT_DTYPES[dtype].itemsize
                 if length % item:
                     fail("payload length %d not a multiple of %d at %d" % (length, item, pos))
-                entry = pending.setdefault(dtype, ([], [], []))
+                key = (lidar_id, dtype)
+                entry = pending.setdefault(key, ([], [], []))
                 entry[0].append(bytes(buf[body:body + length]))
                 entry[1].append(ts)
                 entry[2].append(length // item)
                 frame_points += length // item
                 if len(entry[0]) >= FLUSH_PACKAGES:
-                    stats.add(dtype, *pending.pop(dtype))
+                    stats.setdefault(lidar_id, Stats(int(window_ms * 1e6))).add(
+                        dtype, *pending.pop(key))
             pos = body + length
         if pos != end:
             fail("%d unconsumed bytes after the last package: truncated file" % (end - pos))
@@ -196,54 +211,52 @@ def read_file(path, window_ms):
             finished = True
             break
         offset = nxt
+    # A last frame whose next-frame offset equals the file size is valid: the Livox Indoor
+    # sample file ends that way. Any other early end means the file is cut.
     if not finished and offset != size:
         fail("truncated file: %d bytes remain after the last frame" % (size - offset))
-    for dtype, entry in pending.items():
-        stats.add(dtype, *entry)
+    for (lidar_id, dtype), entry in pending.items():
+        stats.setdefault(lidar_id, Stats(int(window_ms * 1e6))).add(dtype, *entry)
     report.update(frames=frames, packages=packages, imu_packages=imu_packages,
-                  data_types=sorted(data_types),
-                  time_types=sorted(time_types), lidar_types=sorted(lidar_types))
-    packets = {}
-    for lidar_id, (counters, stamps) in sorted(per_lidar.items()):
+                  data_types=sorted(data_types), time_types=sorted(time_types),
+                  lidar_types=sorted(lidar_types))
+    per_lidar = {}
+    for lidar_id, (counters, stamps) in sorted(seen.items()):
         deltas = np.diff(np.asarray(stamps, dtype=np.int64))
         gaps = int((np.diff(np.asarray(counters, dtype=np.int64)) % 65536 != 1).sum())
-        packets[str(lidar_id)] = {
+        st = stats.get(lidar_id)
+        per_lidar[str(lidar_id)] = {
             "packages": len(counters), "udp_counter_gaps": gaps,
             "timestamp_delta_ns": {
                 "min": int(deltas.min()) if len(deltas) else None,
                 "median": int(np.median(deltas)) if len(deltas) else None,
                 "max": int(deltas.max()) if len(deltas) else None,
-                "backward_steps": int((deltas < 0).sum())}}
+                "backward_steps": int((deltas < 0).sum())},
+            "points": st.points if st else 0,
+            "zero_range_points": st.zero_points if st else 0,
+            "rays_per_sector_per_window": window_summary(st, window_ms) if st else None}
+    tag_hist = sum((st.tag_hist for st in stats.values()), np.zeros(256, dtype=np.int64))
+    range_hist = sum((st.range_hist for st in stats.values()), np.zeros(1002, dtype=np.int64))
+    merged = Stats(1)
+    merged.range_hist = range_hist
+    el_min = min((st.el_min for st in stats.values()), default=math.inf)
+    el_max = max((st.el_max for st in stats.values()), default=-math.inf)
+    points = sum(st.points for st in stats.values())
+    zero_points = sum(st.zero_points for st in stats.values())
     report.update(
-        per_lidar=packets,
-        points=stats.points, zero_range_points=stats.zero_points,
-        zero_range_points_with_direction=stats.directional_zero_points,
-        zero_range_fraction=stats.zero_points / stats.points if stats.points else None,
-        zero_reflectivity_points=stats.zero_reflectivity,
+        per_lidar=per_lidar,
+        points=points, zero_range_points=zero_points,
+        zero_range_points_with_direction=sum(st.directional_zero_points for st in stats.values()),
+        zero_range_fraction=zero_points / points if points else None,
+        zero_reflectivity_points=sum(st.zero_reflectivity for st in stats.values()),
         points_per_frame={"min": min(per_frame), "median": int(np.median(per_frame)),
                           "max": max(per_frame)},
-        tag_histogram={str(t): int(c) for t, c in enumerate(stats.tag_hist) if c},
-        range_m={"min": finite(stats.range_min), "max": finite(stats.range_max),
-                 "p50_approx": stats.range_percentile(0.5),
-                 "p95_approx": stats.range_percentile(0.95)},
-        elevation_deg={"min": finite(math.degrees(stats.el_min)),
-                       "max": finite(math.degrees(stats.el_max))})
-    zero_row = np.zeros(SECTORS, dtype=np.int64)
-    if stats.windows:
-        span = range(min(stats.windows), max(stats.windows) + 1)
-        complete = [stats.windows.get(w, zero_row) for w in span][1:-1]
-    else:
-        complete = []
-    if complete:
-        cells = np.concatenate(complete)
-        report["rays_per_sector_per_window"] = {
-            "window_ms": window_ms, "windows": len(complete), "min": int(cells.min()),
-            "p5": int(np.percentile(cells, 5)), "median": int(np.median(cells)),
-            "max": int(cells.max()), "empty_cells": int((cells == 0).sum())}
-    else:
-        report["rays_per_sector_per_window"] = {
-            "window_ms": window_ms, "windows": 0, "min": None, "p5": None, "median": None,
-            "max": None, "empty_cells": None}
+        tag_histogram={str(t): int(c) for t, c in enumerate(tag_hist) if c},
+        range_m={"min": finite(min((st.range_min for st in stats.values()), default=math.inf)),
+                 "max": finite(max((st.range_max for st in stats.values()), default=-math.inf)),
+                 "p50_approx": merged.range_percentile(0.5),
+                 "p95_approx": merged.range_percentile(0.95)},
+        elevation_deg={"min": finite(math.degrees(el_min)), "max": finite(math.degrees(el_max))})
     return report
 
 
@@ -282,6 +295,8 @@ def selftest():
         fail("selftest timestamp steps")
     if report["tag_histogram"] != {"0": 18, "4": 6}:
         fail("selftest tag histogram %r" % report["tag_histogram"])
+    if list(report["per_lidar"]) != ["1"] or report["per_lidar"]["1"]["points"] != 24:
+        fail("selftest per-lidar points")
     if abs(report["range_m"]["max"] - 1.0) > 1e-9 or abs(report["elevation_deg"]["max"]) > 1e-9:
         fail("selftest range or elevation")
     def rejected(data):
@@ -298,8 +313,6 @@ def selftest():
     bad_type = bytearray(blob)
     data_type_offset = start + FRAME_HEADER.size + 1 + 4 + 1 + 1 + 8 + 2  # package 0
     bad_type[data_type_offset] = 7
-    two_devices = bytearray(blob)
-    two_devices[PUBLIC_HEADER + 4] = 2
     spherical = Stats(1_000_000)
     zero_depth = struct.pack("<IHHBB", 0, 9000, 0, 0, 0)  # depth 0, theta 90 deg, phi 0
     spherical.add(3, [zero_depth], [0], [1])
@@ -308,7 +321,7 @@ def selftest():
     if sum(int(row.sum()) for row in spherical.windows.values()) != 1:
         fail("selftest: spherical zero-depth sample missing from the sector tally")
     cases = {"trailing bytes": blob + bytes(5), "cut frame header": cut,
-             "unknown data type": bytes(bad_type), "two devices": bytes(two_devices)}
+             "unknown data type": bytes(bad_type)}
     for name, data in cases.items():
         if not rejected(data):
             fail("selftest: %s was accepted" % name)
