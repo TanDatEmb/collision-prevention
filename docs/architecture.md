@@ -1,7 +1,8 @@
 # Architecture
 
-Status: DRAFT, G1/G2 not approved. Values marked approved are design/test baselines, not
-flight-qualified limits. Decided items are in `docs/adr/`; platform values in `config/platforms/`.
+Status: DRAFT. G1 approved by the owner on 2026-11-19 with one exception (HZ-CP-009 stays open as
+OPEN-020); G2 not approved. Values marked approved are design/test baselines, not flight-qualified
+limits. Decided items are in `docs/adr/`; platform values in `config/platforms/`.
 
 ## 1. Context and ConOps
 
@@ -226,7 +227,7 @@ SITL fidelity gaps:
 | OPEN-015 | Pin Micro XRCE-DDS Agent and target runtime versions | Software Integration | TBD | G5 |
 | OPEN-016 | Record FMU V6X hardware revision, bootloader, baseline | Hardware + Test | TBD | G5 |
 | OPEN-019 | Action when CP degradation coincides with invalid estimate or authority | SE + Safety + PX4 | TBD | G2 |
-| OPEN-020 | Pilot enable, disable and override procedure; HZ-CP-009 has no requirement | SE + Operations | TBD | G1 |
+| OPEN-020 | Pilot enable, disable and override procedure; HZ-CP-009 has no requirement | SE + Operations | TBD | G6 (accepted G1 exception) |
 | OPEN-022 | Pin Livox SDK2 and firmware; zero-depth, too-close, tag and packet-loss semantics | Perception + Test | TBD | G3 |
 | OPEN-023 | Freeze the ray-coverage rule and `coverage_min_rays_per_sector`; boundary epsilon | Perception + SE + Test | TBD | G4 |
 | OPEN-024 | Qualify dwell 0.3 s and rise 2.0 m/s^2 | Controls + Operations | TBD | G4, G6 |
