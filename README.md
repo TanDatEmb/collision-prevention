@@ -35,6 +35,7 @@ ros2_ws/src/obstacle_sector_map   platform-neutral sector map library
 ros2_ws/src/obstacle_sector_node pipeline, config loader and ROS node class
 ros2_ws/src/px4_obstacle_bridge   ObstacleDistance encoder
 ros2_ws/src/px4_msgs              PX4 ROS 2 messages (submodule, pinned)
+ros2_ws/third_party/Livox-SDK2    Livox SDK2 (submodule, pinned, not yet used by code)
 tools/check_msg_parity.sh      checks PX4 and px4_msgs message definitions match
 .agents/skills/                commit and pr skills (symlinked from .claude/skills/)
 .github/workflows/ci.yml       PR title check, format check, build and test
@@ -48,6 +49,7 @@ Ubuntu 24.04 and ROS 2 Jazzy.
 | --- | --- |
 | PX4 | `v1.17.0-13-gf65ddce539`, fork branch `collision-prevention/release-1.17` |
 | px4_msgs | `86d8239`, branch `release/1.17` |
+| Livox SDK2 | `v1.3.1` (`f5d9375`), license review open (OPEN-014) |
 | PX4 targets | `px4_fmu-v6x_default`, `px4_sitl_default` |
 
 ## Build and test

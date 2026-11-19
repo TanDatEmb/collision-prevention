@@ -25,6 +25,7 @@ jobs:
       - run: |
           git config --global --add safe.directory "$GITHUB_WORKSPACE"
           git submodule update --init --depth 1 ros2_ws/src/px4_msgs firmware/PX4-Autopilot
+          git submodule update --init ros2_ws/third_party/Livox-SDK2
       - run: ./tools/check_msg_parity.sh
       - run: |
           find ros2_ws/src/obstacle_sector_map ros2_ws/src/px4_obstacle_bridge \
