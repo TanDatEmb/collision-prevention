@@ -224,6 +224,17 @@ numerical tolerance, not a safety threshold. Raw point cloud source: ADR 0004.
   sentinel (a value outside its valid range); a single `obstacle_distance` source, so
   `SIM_GZ_EN_LIDAR` must be 0 in simulation. How a second publisher is detected is left to the
   detailed design.
+- Cap law (owner, 2026-11-19): the cap of a sector is the largest speed `v` in `[0, CPB_MAX_V]`
+  whose stopping distance fits the usable range. Stopping distance = `v * T_LAT` + jerk-limited
+  braking distance from `v` with `A_BRK` and `JERK` + `MARGIN`; it is strictly increasing in `v`,
+  so the cap is non-decreasing in the range and unit tests can use that as an oracle. Reference
+  check: 12 m/s with 3 m/s^2 and 4 m/s^3 brakes in about 28.5 m (section 2). Usable range = the
+  measured range minus the distance the vehicle moved toward the sector since the sample time,
+  from the position history that also holds the heading. By sector state: unknown or stale gives
+  cap 0; `0` (too close) gives cap 0; clear is evaluated at `max_distance` with no special case;
+  an occupied sector uses its measured range. `A_BRK` and `JERK` are model inputs, not limits on
+  the setpoint rate; a new obstacle tightens the cap at once (ADR 0008). `T_LAT` is a required
+  input with no default (OPEN-004). Inputs are validated finite and positive first (NFR-CP-002).
 - Parameters (`CPB_`): `EN`; `MAX_V` 12 m/s (PERF-01); `A_BRK` 3 m/s^2 and `JERK` 4 m/s^3 (PERF-02);
   `AGE_STOP` 0.5 s (PERF-04); `CLR_T` 0.3 s and `RISE` 2.0 m/s^2 (PERF-05); `MARGIN` 2.0 m
   (SAFE-01); `T_LAT` TBD (OPEN-004). Values are baselines, not qualified limits.
