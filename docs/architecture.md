@@ -137,7 +137,11 @@ flowchart LR
 Operational states (reason flags carry the cause): `DISABLED`, `OBSERVER_ONLY`, `NOT_READY`,
 `ACTIVE_CLEAR`, `BRAKING`, `SAFE_STOP`. `SAFE_STOP` leaves only through pilot acknowledgement and
 revalidation, or a logged override. Persistent blockage stays `BRAKING`; persistent invalid data
-stays `SAFE_STOP`. `UNQUALIFIED` is a reason flag, not a state.
+stays `SAFE_STOP`. `UNQUALIFIED` is a reason flag, not a state. `SAFE_STOP` means zero
+horizontal velocity with the horizontal feed-forward cleared, no position hold. The operator is
+told through the PX4 log and event channel; the pilot acknowledges with a MAVLink command handled
+by `cp_brake` (command id fixed at detailed design). The exit rules are the ones stated above
+(owner, 2026-11-19).
 
 Directional limiting (ADR 0008): each sector is a half-plane on the horizontal setpoint; a side
 obstacle does not reduce forward motion, a front obstacle does not reduce retreat. A global minimum
@@ -160,7 +164,7 @@ collision envelope. PX4 uses `MAV_FRAME_BODY_FRD`; only `px4_obstacle_bridge` co
 | ICD-CP-06 ray batch | `livox_ray_source` to `obstacle_sector_map`, in one process with no ROS hop: approved design below (ADR 0004, 0006, 0015) | A ray without a valid time or direction is `kInvalid`; a frame without continuity gives no clear evidence |
 
 ICD-CP-01, 02, 03 and 05 are approved by the owner (2026-11-19) as sole safety approver.
-ICD-CP-04 is approved by the owner (2026-11-19) with its open items (OPEN-032, 033, 034, 035).
+ICD-CP-04 is approved by the owner (2026-11-19) with its open items (OPEN-032, 033, 035).
 ICD-CP-06 is approved by the owner (2026-11-19) with its open items (OPEN-030, 031, 036).
 Orin parameters (versioned, logged): `sector_map_rate_hz` 10, `coverage_window_ms` 100,
 `coverage_min_rays_per_sector` (no default until OPEN-023, never tuned after an acceptance run).
@@ -239,8 +243,12 @@ source: ADR 0004.
   change (`MulticopterPositionControl.cpp`); `obstacle_distance` has three publishers: DDS
   (`dds_topics.yaml`), MAVLink (`mavlink_receiver.cpp`) and the Gazebo bridge
   (`gz_bridge/GZBridge.cpp`, enabled by `SIM_GZ_EN_LIDAR`, default 1); DDS input clamps a later
-  timestamp to the receive time (`Tools/msg/templates/ucdr/msg.h.em`), so how a clamped map
-  timestamp is detected or rejected is not specified yet (OPEN-033).
+  timestamp to the receive time (`Tools/msg/templates/ucdr/msg.h.em`), so PX4 cannot
+  see a per-map clamp and `ObstacleDistance` has no spare field for it (ADR 0002). Therefore the
+  Orin node must not publish a map whose sample time is later than its own clock (negative age),
+  and on the hardware profile `cp_brake` judges the sync from `timesync_status` (estimated offset
+  and round-trip time; the message has no convergence flag) and rejects maps while the sync is not
+  valid. The numeric limits are OPEN-033, measured at G5 (owner, 2026-11-19).
 - Enforcement scope (owner, 2026-11-19): the hook enforces in Position and Mission (the ODD); in
   any other nav state it is transparent and the status carries a reason flag. `NOT_READY` is an
   indication only and does not block arming (ADR 0007). `cp_brake` sends `cp_brake_constraints`
@@ -354,9 +362,8 @@ SITL fidelity gaps:
 | OPEN-029 | X500 SITL model name and lidar mount pose | SE | TBD | G4 |
 | OPEN-030 | Measured rate and latency of `VehicleOdometry` for deskew and the interpolation scheme (source: ADR 0018) | Perception + PX4 | TBD | G3 |
 | OPEN-031 | Clear evidence when the ray origin moves during a scan: origin-aware evidence in the map, or a conservative filter in acquisition (chosen, ADR 0018); its threshold value | Perception + SE | TBD | G3 |
-| OPEN-032 | Staleness threshold and publish rate of the `cp_brake_constraints` output; heading history source and depth | PX4 + Controls | TBD | G3 |
-| OPEN-033 | Time validity at PX4: a later map timestamp is clamped to the receive time and timesync convergence is not gated; how `cp_brake` establishes sample age and rejects such a map | PX4 + Software Integration | TBD | G3 |
-| OPEN-034 | SAFE_STOP semantics: velocity zero or position hold, the pilot acknowledge channel and the operator notify channel (see OPEN-020) | SE + PX4 + Operations | TBD | G4 |
+| OPEN-032 | Staleness threshold and publish rate of the `cp_brake_constraints` output; heading history source and depth; sentinel until the G4 SITL measurements | PX4 + Controls | TBD | G4 |
+| OPEN-033 | Numeric limits for judging the sync from `timesync_status` at PX4 and for an excessive map age; the Orin-side rejection of a negative age is implemented in a separate issue (structure decided) | PX4 + Software Integration | TBD | G5 |
 | OPEN-035 | Hook interaction with FlightTask feedback of the published setpoint, the XY velocity integrator and the tilt limit | Controls + PX4 | TBD | G4 |
 | OPEN-036 | Vertical collision envelope as a height band: how a no-return ray, which has no endpoint, is tested against it; builder change from the elevation band | Perception + SE | TBD | G3 |
 
