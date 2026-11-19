@@ -31,7 +31,7 @@ void setSector(SectorMap & map, std::size_t index, SectorState state, float dist
   map.sectors.at(index).distance_m = distance_m;
 
   if (state == SectorState::kObservedClear) {
-    map.sectors.at(index).contributing_ray_count = kConfig.coverage_min_rays_per_sector;
+    map.sectors.at(index).clear_ray_count = kConfig.coverage_min_rays_per_sector;
   }
 }
 
@@ -123,7 +123,7 @@ TEST(ObstacleDistanceEncoderTest, RejectsClearWithoutContinuityOrCoverage)
   EXPECT_FALSE(encodeObstacleDistance(map, kConfig).has_value());
 
   map.packet_continuity_valid = true;
-  map.sectors[0].contributing_ray_count = 0U;
+  map.sectors[0].clear_ray_count = 0U;
   EXPECT_FALSE(encodeObstacleDistance(map, kConfig).has_value());
 }
 

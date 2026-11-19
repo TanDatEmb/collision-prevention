@@ -16,8 +16,8 @@ Values are supplied by the caller; none is defaulted here.
 ## Output contract
 `finalize()` returns a `SectorMap` with one `SectorObservation` per sector:
 `kUnknown`, `kObservedClear`, `kOccupied` (minimum projected range) or `kTooClose`.
-- Only `kQualifiedNoReturn` rays count as clear evidence; clear also needs packet continuity and
-  the minimum ray count. Everything else stays `kUnknown`.
+- Only `kQualifiedNoReturn` rays count as clear evidence (`clear_ray_count`); clear also needs
+  packet continuity and the minimum count. Anything else, even a far return, stays `kUnknown`.
 - Obstacle evidence on a sector boundary is copied into both adjacent sectors.
 - The map timestamp is the earliest contributing ray time.
 

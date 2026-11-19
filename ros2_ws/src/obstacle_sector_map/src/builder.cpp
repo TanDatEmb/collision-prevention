@@ -113,6 +113,11 @@ void SectorMapBuilder::updateSector(std::size_t sector_index, const RaySample & 
   auto & accumulator = _accumulators.at(sector_index);
   ++accumulator.contributing_ray_count;
 
+  if (ray.return_kind == RayReturnKind::kQualifiedNoReturn) {
+    ++accumulator.clear_ray_count;
+    return;
+  }
+
   if (ray.return_kind != RayReturnKind::kReturn) {
     return;
   }
@@ -142,6 +147,7 @@ SectorMap SectorMapBuilder::finalize() const
     const auto & accumulator = _accumulators[index];
     auto & sector = map.sectors[index];
     sector.contributing_ray_count = accumulator.contributing_ray_count;
+    sector.clear_ray_count = accumulator.clear_ray_count;
 
     if (accumulator.too_close) {
       sector.state = SectorState::kTooClose;
@@ -153,7 +159,7 @@ SectorMap SectorMapBuilder::finalize() const
     }
     else if (
       _packet_continuity_valid &&
-      accumulator.contributing_ray_count >= _config.coverage_min_rays_per_sector) {
+      accumulator.clear_ray_count >= _config.coverage_min_rays_per_sector) {
       sector.state = SectorState::kObservedClear;
     }
   }
