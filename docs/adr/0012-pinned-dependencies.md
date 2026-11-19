@@ -10,4 +10,5 @@ deliberate, reviewed changes. `tools/check_msg_parity.sh` checks that the seven 
 definitions are identical in both.
 
 ## Consequences
-- CI and local builds initialize only these two submodules, not PX4's nested ones.
+- CI and local builds initialize only these two submodules, not PX4's nested ones. ADR 0016 adds
+  Livox SDK2 as a third pinned submodule.
