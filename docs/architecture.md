@@ -211,7 +211,8 @@ numerical tolerance, not a safety threshold. Raw point cloud source: ADR 0004.
   change (`MulticopterPositionControl.cpp`); `obstacle_distance` has three publishers: DDS
   (`dds_topics.yaml`), MAVLink (`mavlink_receiver.cpp`) and the Gazebo bridge
   (`gz_bridge/GZBridge.cpp`, enabled by `SIM_GZ_EN_LIDAR`, default 1); DDS input clamps a later
-  timestamp to the receive time (`Tools/msg/templates/ucdr/msg.h.em`).
+  timestamp to the receive time (`Tools/msg/templates/ucdr/msg.h.em`), so how a clamped map
+  timestamp is detected or rejected is not specified yet (OPEN-033).
 - Parameters (`CPB_`): `EN`; `MAX_V` 12 m/s (PERF-01); `A_BRK` 3 m/s^2 and `JERK` 4 m/s^3 (PERF-02);
   `AGE_STOP` 0.5 s (PERF-04); `CLR_T` 0.3 s and `RISE` 2.0 m/s^2 (PERF-05); `MARGIN` 2.0 m
   (SAFE-01); `T_LAT` TBD (OPEN-004). Values are baselines, not qualified limits.
@@ -291,6 +292,7 @@ SITL fidelity gaps:
 | OPEN-030 | Pose source for deskew: rate, latency, frame and interpolation | Perception + PX4 | TBD | G3 |
 | OPEN-031 | Clear evidence when the ray origin moves during a scan: origin-aware evidence in the map, or a conservative filter in acquisition | Perception + SE | TBD | G3 |
 | OPEN-032 | Staleness threshold and publish rate of the `cp_brake_constraints` output; heading history source and depth | PX4 + Controls | TBD | G2 |
+| OPEN-033 | Time validity at PX4: a later map timestamp is clamped to the receive time and timesync convergence is not gated; how `cp_brake` establishes sample age and rejects such a map | PX4 + Software Integration | TBD | G3 |
 
 OPEN-022, 023 and 025 block any operational clear-sector claim. OPEN-002 to OPEN-008 block the
 12 m/s claim. Neither blocks the implementation and SITL work that produces the evidence.
