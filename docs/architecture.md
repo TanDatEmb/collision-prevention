@@ -51,9 +51,9 @@ Verified facts (PX4 1.17 at `f65ddce`, `px4_msgs` at `86d8239`):
 | --- | --- | --- | --- | --- |
 | SYS-CP-001 | Constrain horizontal motion in Position and Mission modes | ADR 0001 | SITL | Draft |
 | SYS-CP-002 | 72 sectors of 5 degrees, body FRD, sector 0 forward, clockwise | ADR 0002 | UT | Draft, encoder UT exist |
-| SYS-CP-003 | Exactly one CP authority modifies motion | ADR 0001, HZ-CP-007 | UT, SITL | Draft, OPEN-026 |
+| SYS-CP-003 | Exactly one CP authority modifies motion; stock PX4 CP is disabled when `cp_brake` is enabled | ADR 0014, HZ-CP-007 | UT, SITL | Draft |
 | SYS-CP-004 | Unknown, invalid or stale observation is never free space; velocity into it is zero | ADR 0004 | UT, SITL | Draft |
-| SYS-CP-005 | Constraint acts on the final horizontal setpoint, so position-only Mission is covered | Verified facts | SITL | Draft, OPEN-026 |
+| SYS-CP-005 | Constraint acts on the final horizontal setpoint, so position-only Mission is covered | ADR 0014 | SITL | Draft |
 | SYS-CP-006 | Disabling V1 CP preserves PX4 baseline behaviour | ADR 0001 | SITL | Draft |
 | SYS-CP-007 | Invalid config, math fault or lost constraint gives safe-stop while PX4 state and authority are valid; otherwise `UNQUALIFIED`, existing failsafes act, no mode command | ADR 0007 | UT, SITL | Draft |
 | SYS-CP-008 | No Hold, RTL or mode request; persistent blockage keeps the constraint and notifies | ADR 0007 | SITL | Draft |
@@ -117,7 +117,7 @@ flowchart LR
   Lidar[Mid-360S] --> Src
   Br -->|/fmu/in/obstacle_distance| DDS[uXRCE-DDS]
   subgraph FMU[PX4 fork, f65ddce]
-    DDS --> Cons[CP constraint component]
+    DDS --> Cons[cp_brake]
     Cons --> Hook[horizontal limiter hook]
   end
 ```
@@ -128,14 +128,14 @@ flowchart LR
 | `obstacle_sector_map` (pure C++) | Reference impl | Validation, masked/return-kind handling, sector classification, nearest projected range; no ROS or PX4 types | Frames, units, safety policy, sensor tags | SYS-CP-004, 011, 015 |
 | `px4_obstacle_bridge` | Reference impl | FLU/CCW to BODY_FRD/CW, cm conversion, fail-closed encoding | Filtering to improve results | SYS-CP-002, NFR-CP-002 |
 | Orin node | Not implemented | One process composing source, map, bridge; publishes `/fmu/in/obstacle_distance` | Safety policy | SYS-CP-016, NFR-CP-003 |
-| CP constraint component (PX4) | Open, OPEN-026 | Input validation, freshness, stopping model, sector caps, state machine | Planning, attitude, sensor filtering | SYS-CP-001, 003, 007, 008, 012, 013, 014 |
-| Horizontal limiter hook (PX4) | Open, OPEN-026/027 | Apply caps to the final horizontal setpoint | Sensor, DDS, mode logic | SYS-CP-005, 006, 012 |
+| `cp_brake` (PX4 module) | Not implemented, ADR 0014 | Input validation, freshness, stopping model, sector caps, state machine | Planning, attitude, sensor filtering | SYS-CP-001, 003, 007, 008, 012, 013, 014 |
+| Horizontal limiter hook (PX4) | Not implemented, ADR 0014 | Apply caps to the final horizontal setpoint | Sensor, DDS, mode logic | SYS-CP-005, 006, 012 |
 | Existing PX4 modes and failsafes | Existing | Mode and failsafe handling | CP-owned mode logic | SYS-CP-008 |
 
 Operational states (reason flags carry the cause): `DISABLED`, `OBSERVER_ONLY`, `NOT_READY`,
 `ACTIVE_CLEAR`, `BRAKING`, `SAFE_STOP`. `SAFE_STOP` leaves only through pilot acknowledgement and
 revalidation, or a logged override. Persistent blockage stays `BRAKING`; persistent invalid data
-stays `SAFE_STOP`. The state set applies to either implementation choice.
+stays `SAFE_STOP`.
 
 Directional limiting (ADR 0008): each sector is a half-plane on the horizontal setpoint; a side
 obstacle does not reduce forward motion, a front obstacle does not reduce retreat. A global minimum
@@ -153,7 +153,7 @@ collision envelope. PX4 uses `MAV_FRAME_BODY_FRD`; only `px4_obstacle_bridge` co
 | ICD-CP-01 sensor geometry | Mid-360S, 360 deg horizontal, -7 to 52 deg vertical; CAD self-mask; `livox_frame -> base_link` repeatability <= 5 mm, <= 0.5 deg | Out of tolerance: recalibrate, new mask revision |
 | ICD-CP-02 time | Hardware PTPv2 or sim `/clock` (ADR 0003); three runtime timestamps: sample, constraint, status; `sample_age = status - sample`; sync residual <= 2 ms; integer microseconds | Zero or unconvertible: unknown sectors; regression or age > 0.5 s: safe-stop |
 | ICD-CP-03 `ObstacleDistance` | `/fmu/in/obstacle_distance`; frame 12, sensor LASER (0); 72 x 5 deg, `angle_offset=0`; cm; 10 Hz nominal, no bursts; QoS best-effort, volatile, keep-last 2 (OPEN-011); `min_distance=10`, `max_distance=4000`; `0` too close, `max_distance+1` clear, `UINT16_MAX` unknown; timestamp = acquisition time | Missing, invalid or stale: no velocity toward affected sectors; never inferred clear |
-| ICD-CP-04 PX4 constraint | Message and hook definitions depend on OPEN-026/027; any choice must keep: no mode command, vertical, yaw, attitude and actuator outputs untouched, baseline-equivalent when disabled, transparent before `TAKEOFF_STATE_FLIGHT` | Non-finite, stale or malformed constraint: zero velocity toward the affected direction plus a reason |
+| ICD-CP-04 PX4 constraint | Message and hook definitions are decided at G2 (ADR 0014); they must keep: no mode command, vertical, yaw, attitude and actuator outputs untouched, baseline-equivalent when disabled, transparent before `TAKEOFF_STATE_FLIGHT` | Non-finite, stale or malformed constraint: zero velocity toward the affected direction plus a reason |
 | ICD-CP-05 logging | Each intervention reconstructs sample, constraint, hook, response, recovery; status 10 Hz plus every transition; Orin diagnostics 1 Hz; raw clouds only in a debug profile; raw ULog, rosbag, MCAP stay out of Git (manifests and hashes only) | Run verdict `PASS`, `FAIL` or `INVALID`; incomplete evidence is never `PASS` |
 
 All five ICDs are proposed, none approved. Orin parameters (versioned, logged): `qualified_range_m`
@@ -192,7 +192,7 @@ only host unit tests exist; they are not detection, integration, runtime or qual
 | --- | --- |
 | G0 Baseline | Repo, CI and branch rules active; submodule pins verified; message parity passes |
 | G1 Requirements | ODD, hazards and SYS-CP requirements approved by owner and safety; every hazard traces to a requirement or an OPEN item; every requirement has a verify method |
-| G2 Architecture | OPEN-026 and OPEN-027 decided as ADRs; ICD-CP-01 to 05 approved; latency and CPU budgets approved; observation core reviewed against the approved architecture |
+| G2 Architecture | OPEN-027 decided as an ADR (OPEN-026 closed by ADR 0014); ICD-CP-01 to 05 approved; latency and CPU budgets approved; observation core reviewed against the approved architecture |
 | G3 Core implementation | Build clean with `-Werror`; UT groups for assigned requirements pass; Orin node composes source, map and bridge; no SITL claim |
 | G4 SITL X500 | `x500.yaml` values approved and filled; SITL scenarios pass with fidelity gaps below recorded; no detection or braking claim |
 | G5 HIL | FMU timing, DDS, load and p99 latency within the approved budget on target hardware |
@@ -232,7 +232,6 @@ SITL fidelity gaps:
 | OPEN-023 | Freeze the ray-coverage rule and `coverage_min_rays_per_sector`; boundary epsilon | Perception + SE + Test | TBD | G4 |
 | OPEN-024 | Qualify dwell 0.3 s and rise 2.0 m/s^2 | Controls + Operations | TBD | G4, G6 |
 | OPEN-025 | Raw-ray path: embed Livox SDK2 or patch `livox_ros_driver2` | Perception + SE | TBD | G3 |
-| OPEN-026 | Use the existing PX4 CollisionPrevention or write a custom brake module (`cp_brake`) | SE + PX4 | TBD | G2 |
 | OPEN-027 | Deskew in acquisition, or widen the influence zone with velocity and yaw rate | Perception + SE | TBD | G2 |
 | OPEN-028 | Orin and FMU CPU, memory and thermal budgets | Orin Lead + PX4 | TBD | G2 |
 | OPEN-029 | X500 SITL model name and lidar mount pose | SE | TBD | G4 |
