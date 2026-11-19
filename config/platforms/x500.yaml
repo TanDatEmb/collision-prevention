@@ -13,7 +13,7 @@ sensor:
   max_distance_m: null  # TBD: OPEN-006
 self_mask:  # upright cylinders in livox_frame (docs/adr/0006)
   cylinders:
-    - center_m: [null, null, null]  # TBD: OPEN-005
+    - center_m: [null, null]  # TBD: OPEN-005 (x, y of the axis)
       radius_m: null  # TBD: OPEN-005
       z_min_m: null  # TBD: OPEN-005
       z_max_m: null  # TBD: OPEN-005

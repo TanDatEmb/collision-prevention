@@ -161,12 +161,11 @@ SelfMask loadSelfMask(const std::string & yaml_path)
   std::vector<MaskCylinder> cylinders;
   for (const auto & entry : list) {
     const YAML::Node center = entry["center_m"];
-    if (!center || !center.IsSequence() || center.size() != 3U) {
-      throw std::invalid_argument("self_mask: center_m needs three numbers");
+    if (!center || !center.IsSequence() || center.size() != 2U) {
+      throw std::invalid_argument("self_mask: center_m needs two numbers [x, y]");
     }
     const double cx = finiteNumber(center[0], "center_m x");
     const double cy = finiteNumber(center[1], "center_m y");
-    static_cast<void>(finiteNumber(center[2], "center_m z"));
     cylinders.push_back(MaskCylinder{
       cx, cy, finiteNumber(entry["radius_m"], "radius_m"),
       finiteNumber(entry["z_min_m"], "z_min_m"), finiteNumber(entry["z_max_m"], "z_max_m")});

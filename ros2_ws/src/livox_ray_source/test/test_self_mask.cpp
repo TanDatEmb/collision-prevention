@@ -135,7 +135,7 @@ TEST(SelfMaskLoaderTest, LoadsCylindersFromYaml)
 {
   const auto path = writeYaml(
     "valid",
-    "self_mask:\n  cylinders:\n    - center_m: [1.0, 0.0, 0.0]\n      radius_m: 0.2\n"
+    "self_mask:\n  cylinders:\n    - center_m: [1.0, 0.0]\n      radius_m: 0.2\n"
     "      z_min_m: -0.1\n      z_max_m: 0.1\n");
   const auto mask = loadSelfMask(path);
   EXPECT_TRUE(mask.isMasked(makeReturn(1.0F, 0.0F, 0.0F), kMaxDistanceM));
@@ -146,13 +146,12 @@ TEST(SelfMaskLoaderTest, RejectsNullMissingEmptyAndNonNumericValues)
   EXPECT_THROW(
     loadSelfMask(writeYaml(
       "null",
-      "self_mask:\n  cylinders:\n    - center_m: [null, null, null]\n      radius_m: null\n"
+      "self_mask:\n  cylinders:\n    - center_m: [null, null]\n      radius_m: null\n"
       "      z_min_m: null\n      z_max_m: null\n")),
     std::invalid_argument);
   EXPECT_THROW(
     loadSelfMask(writeYaml(
-      "missing",
-      "self_mask:\n  cylinders:\n    - center_m: [1.0, 0.0, 0.0]\n      radius_m: 0.2\n")),
+      "missing", "self_mask:\n  cylinders:\n    - center_m: [1.0, 0.0]\n      radius_m: 0.2\n")),
     std::invalid_argument);
   EXPECT_THROW(
     loadSelfMask(writeYaml("empty", "self_mask:\n  cylinders: []\n")), std::invalid_argument);
@@ -160,7 +159,13 @@ TEST(SelfMaskLoaderTest, RejectsNullMissingEmptyAndNonNumericValues)
   EXPECT_THROW(
     loadSelfMask(writeYaml(
       "text",
-      "self_mask:\n  cylinders:\n    - center_m: [1.0, 0.0, 0.0]\n      radius_m: wide\n"
+      "self_mask:\n  cylinders:\n    - center_m: [1.0, 0.0]\n      radius_m: wide\n"
+      "      z_min_m: -0.1\n      z_max_m: 0.1\n")),
+    std::invalid_argument);
+  EXPECT_THROW(
+    loadSelfMask(writeYaml(
+      "threevalues",
+      "self_mask:\n  cylinders:\n    - center_m: [1.0, 0.0, 0.0]\n      radius_m: 0.2\n"
       "      z_min_m: -0.1\n      z_max_m: 0.1\n")),
     std::invalid_argument);
   EXPECT_THROW(loadSelfMask("/nonexistent/self_mask.yaml"), std::invalid_argument);

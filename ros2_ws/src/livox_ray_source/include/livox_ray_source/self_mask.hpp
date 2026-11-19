@@ -8,8 +8,8 @@
 namespace livox_ray_source
 {
 
-/// Upright cylinder in the sensor frame (ADR 0006): axis through (center_x_m, center_y_m),
-/// extent z_min_m to z_max_m, radius radius_m.
+/// Upright cylinder in the sensor frame (ADR 0006): axis through (center_x_m, center_y_m), radius
+/// radius_m, absolute z range z_min_m to z_max_m.
 struct MaskCylinder
 {
   double center_x_m;
@@ -42,8 +42,8 @@ private:
 };
 
 /// Reads `self_mask.cylinders` (center_m, radius_m, z_min_m, z_max_m) from a platform YAML file.
-/// `center_m` needs three finite numbers; its z entry is checked but the z extent comes from
-/// z_min_m and z_max_m. Throws std::invalid_argument when the file cannot be read, the list is
+/// `center_m` is the axis position [x, y]; `z_min_m` and `z_max_m` are absolute z in the sensor
+/// frame. Throws std::invalid_argument when the file cannot be read, the list is
 /// missing or empty, or any value is null, missing or not a finite number.
 [[nodiscard]] SelfMask loadSelfMask(const std::string & yaml_path);
 
