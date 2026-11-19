@@ -16,5 +16,7 @@ map and the bridge stay free of motion compensation.
   latency and frame (OPEN-030).
 - A ray without a valid pose at its time must not become clear evidence (ADR 0004); the exact
   handling is decided at G2.
+- Open: correcting a no-return ray to the reference pose does not prove clear space from that
+  pose when the origin moved during the scan (OPEN-031). The map's clear rule is unchanged.
 - Simulation stamps a scan once, so deskew is not exercised there; see the SITL fidelity gaps.
 - Closes OPEN-027.
