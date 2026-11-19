@@ -11,4 +11,4 @@ definitions are identical in both.
 
 ## Consequences
 - CI and local builds initialize only these two submodules, not PX4's nested ones. ADR 0016 adds
-  Livox SDK2 as a third pinned submodule.
+  Livox SDK2 as a third pinned submodule. ADR 0017 sets the workflow for changes to the PX4 fork.
