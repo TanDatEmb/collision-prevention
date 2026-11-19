@@ -68,7 +68,7 @@ Verified facts (PX4 1.17 at `f65ddce`, `px4_msgs` at `86d8239`):
 | PERF-01 | Maximum speed 12 m/s (Mission nominal 5, Position nominal 10) | ADR 0010 | SITL, Flight | Approved baseline, OPEN-002 |
 | PERF-02 | Braking reference 3 m/s^2, jerk 4 m/s^3 (setpoint limits, not physical guarantees) | ADR 0010 | Flight | Approved baseline, OPEN-003 |
 | PERF-03 | Sensor sample to PX4 enforcement <= 350 ms at p99, hard gate 500 ms; attitude response excluded | ADR 0005 | HIL | Approved baseline, OPEN-004 |
-| PERF-04 | Safe-stop at 0.5 s sample age; no Hold timer | ADR 0007 | SITL, HIL | Approved baseline, OPEN-012 |
+| PERF-04 | Safe-stop at 0.5 s sample age; no Hold timer | ADR 0007 | SITL, HIL | Approved baseline (owner, 2026-11-19); qualify at G5 |
 | PERF-05 | Rise 2.0 m/s^2 after 0.3 s clear dwell | ADR 0008 | SITL, Flight | Approved baseline, OPEN-024 |
 | SAFE-01 | Clearance margin 2.0 m beyond body and self-mask radius | ADR 0010 | Analysis | Approved baseline, OPEN-005 |
 | DET-01 | Detect at >= 40 m a static target: width >= 0.30 m, reflectivity >= 10%; wires unqualified | ADR 0010 | Flight | Approved baseline, OPEN-006 |
@@ -221,7 +221,6 @@ SITL fidelity gaps:
 | OPEN-008 | Rain and optical contamination envelope | SE + Test | TBD | G6 |
 | OPEN-010 | Freedom-to-operate review of referenced patents | Legal + SE | TBD | Release |
 | OPEN-011 | Validate DDS QoS on the target network | Software Integration | TBD | G5 |
-| OPEN-012 | Approve 0.5 s stale safe-stop threshold | SE + Safety + Controls | TBD | G2 |
 | OPEN-013 | Baseline target Orin OS, JetPack, native ROS 2 runtime | Orin Lead + SE | TBD | G5 |
 | OPEN-014 | Project license and third-party notice policy | Project Owner | TBD | Release |
 | OPEN-015 | Pin Micro XRCE-DDS Agent and target runtime versions | Software Integration | TBD | G5 |
