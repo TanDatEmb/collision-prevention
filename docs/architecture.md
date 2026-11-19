@@ -180,6 +180,10 @@ numerical tolerance, not a safety threshold. Raw point cloud source: ADR 0004.
   already holds the position-error term and the feed-forward, so position-only Mission setpoints
   are covered. Vertical, yaw, attitude and actuator outputs are not touched; no second control
   thread.
+- Reference time: the deskew reference time of the rays equals the map timestamp (the earliest
+  contributing ray time, SYS-CP-016), because `ObstacleDistance` carries only that timestamp. The
+  heading used for the caps is the heading at that time. Another reference time cannot be
+  recovered from the wire without a new field.
 - Frames: caps are body FRD at the sample heading. The limiter rotates them to local NED with the
   `heading_rad` in the constraint, not the current heading. If the PX4 heading or estimator state
   is itself invalid, the claim is `UNQUALIFIED` and the hook takes no action (ADR 0007). If PX4
