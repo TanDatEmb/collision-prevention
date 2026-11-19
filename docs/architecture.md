@@ -156,7 +156,8 @@ collision envelope. PX4 uses `MAV_FRAME_BODY_FRD`; only `px4_obstacle_bridge` co
 | ICD-CP-04 PX4 constraint | Message and hook definitions are decided at G2 (ADR 0014); they must keep: no mode command, vertical, yaw, attitude and actuator outputs untouched, baseline-equivalent when disabled, transparent before `TAKEOFF_STATE_FLIGHT` | Non-finite, stale or malformed constraint: zero velocity toward the affected direction plus a reason |
 | ICD-CP-05 logging | Each intervention reconstructs sample, constraint, hook, response, recovery; status 10 Hz plus every transition; Orin diagnostics 1 Hz; raw clouds only in a debug profile; raw ULog, rosbag, MCAP stay out of Git (manifests and hashes only) | Run verdict `PASS`, `FAIL` or `INVALID`; incomplete evidence is never `PASS` |
 
-All five ICDs are proposed, none approved. Orin parameters (versioned, logged): `qualified_range_m`
+ICD-CP-01, 02, 03 and 05 are approved by the owner (2026-11-19); safety approval is not recorded.
+ICD-CP-04 is not approved: the `cp_brake` message and hook are still to be designed (ADR 0014). Orin parameters (versioned, logged): `qualified_range_m`
 40, `sector_map_rate_hz` 10, `coverage_window_ms` 100, `coverage_min_rays_per_sector` (no default
 until OPEN-023, never tuned after an acceptance run). Raw point cloud source: ADR 0004.
 
