@@ -136,7 +136,7 @@ flowchart LR
 Operational states (reason flags carry the cause): `DISABLED`, `OBSERVER_ONLY`, `NOT_READY`,
 `ACTIVE_CLEAR`, `BRAKING`, `SAFE_STOP`. `SAFE_STOP` leaves only through pilot acknowledgement and
 revalidation, or a logged override. Persistent blockage stays `BRAKING`; persistent invalid data
-stays `SAFE_STOP`.
+stays `SAFE_STOP`. `UNQUALIFIED` is a reason flag, not a state.
 
 Directional limiting (ADR 0008): each sector is a half-plane on the horizontal setpoint; a side
 obstacle does not reduce forward motion, a front obstacle does not reduce retreat. A global minimum
@@ -214,6 +214,16 @@ numerical tolerance, not a safety threshold. Raw point cloud source: ADR 0004.
   (`gz_bridge/GZBridge.cpp`, enabled by `SIM_GZ_EN_LIDAR`, default 1); DDS input clamps a later
   timestamp to the receive time (`Tools/msg/templates/ucdr/msg.h.em`), so how a clamped map
   timestamp is detected or rejected is not specified yet (OPEN-033).
+- Enforcement scope (owner, 2026-11-19): the hook enforces in Position and Mission (the ODD); in
+  any other nav state it is transparent and the status carries a reason flag. `NOT_READY` is an
+  indication only and does not block arming (ADR 0007). `cp_brake` sends `cp_brake_constraints`
+  to the hook over uORB; module and hook stay separate (ADR 0014).
+- Start-up checks, `INVALID_CONFIG` while `CPB_EN` is on: stock collision prevention off (active
+  only when `CP_DIST` > 0, default -1, `lib/collision_prevention/CollisionPrevention.cpp`);
+  `MPC_XY_VEL_MAX` (default 12) not above `CPB_MAX_V`; no `CPB_` parameter still holding its TBD
+  sentinel (a value outside its valid range); a single `obstacle_distance` source, so
+  `SIM_GZ_EN_LIDAR` must be 0 in simulation. How a second publisher is detected is left to the
+  detailed design.
 - Parameters (`CPB_`): `EN`; `MAX_V` 12 m/s (PERF-01); `A_BRK` 3 m/s^2 and `JERK` 4 m/s^3 (PERF-02);
   `AGE_STOP` 0.5 s (PERF-04); `CLR_T` 0.3 s and `RISE` 2.0 m/s^2 (PERF-05); `MARGIN` 2.0 m
   (SAFE-01); `T_LAT` TBD (OPEN-004). Values are baselines, not qualified limits.
