@@ -157,9 +157,11 @@ collision envelope. PX4 uses `MAV_FRAME_BODY_FRD`; only `px4_obstacle_bridge` co
 | ICD-CP-05 logging | Each intervention reconstructs sample, constraint, hook, response, recovery; status 10 Hz plus every transition; Orin diagnostics 1 Hz; raw clouds only in a debug profile; raw ULog, rosbag, MCAP stay out of Git (manifests and hashes only) | Run verdict `PASS`, `FAIL` or `INVALID`; incomplete evidence is never `PASS` |
 
 ICD-CP-01, 02, 03 and 05 are approved by the owner (2026-11-19); safety approval is not recorded.
-ICD-CP-04 is not approved: the `cp_brake` message and hook are still to be designed (ADR 0014). Orin parameters (versioned, logged): `qualified_range_m`
-40, `sector_map_rate_hz` 10, `coverage_window_ms` 100, `coverage_min_rays_per_sector` (no default
-until OPEN-023, never tuned after an acceptance run). Raw point cloud source: ADR 0004.
+ICD-CP-04 is not approved: the `cp_brake` message and hook are still to be designed (ADR 0014).
+Orin parameters (versioned, logged): `qualified_range_m` 40, `sector_map_rate_hz` 10, `coverage_window_ms` 100, `coverage_min_rays_per_sector` (no default
+until OPEN-023, never tuned after an acceptance run). The sector-boundary tolerance is a fixed
+constant of 2.0e-6 rad in `obstacle_sector_map`, approved by the owner (2026-11-19); it is a
+numerical tolerance, not a safety threshold. Raw point cloud source: ADR 0004.
 
 ## 6. Budgets
 
@@ -228,7 +230,7 @@ SITL fidelity gaps:
 | OPEN-016 | Record FMU V6X hardware revision, bootloader, baseline | Hardware + Test | TBD | G5 |
 | OPEN-020 | Pilot enable, disable and override procedure; HZ-CP-009 has no requirement | SE + Operations | TBD | G6 (accepted G1 exception) |
 | OPEN-022 | Pin Livox SDK2 and firmware; per-point timestamps, zero-depth, too-close, tag and packet-loss semantics | Perception + Test | TBD | G3 |
-| OPEN-023 | Freeze the ray-coverage rule and `coverage_min_rays_per_sector`; approve the fixed boundary tolerance 2.0e-6 rad (chosen by the agent, not yet owner-approved) | Perception + SE + Test | TBD | G4 |
+| OPEN-023 | Freeze the ray-coverage rule and `coverage_min_rays_per_sector` | Perception + SE + Test | TBD | G4 |
 | OPEN-024 | Qualify dwell 0.3 s and rise 2.0 m/s^2 | Controls + Operations | TBD | G4, G6 |
 | OPEN-025 | Raw-ray path: embed Livox SDK2 or patch `livox_ros_driver2` | Perception + SE | TBD | G3 |
 | OPEN-028 | Orin and FMU CPU, memory and thermal budgets | Orin Lead + PX4 | TBD | G2 |
