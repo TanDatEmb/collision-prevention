@@ -14,8 +14,8 @@ class. There is no executable yet: it needs a sensor source (issue #58).
   (no message, counted, nothing replaces it) or `kSourceEnded`. The message timestamp is the
   earliest accepted ray time (SYS-CP-016).
 - `ObstacleSectorNode` publishes it on `/fmu/in/obstacle_distance` (best effort, volatile, keep
-  last 2) at `sector_map_rate_hz`, and `DiagnosticArray` (frames, messages, encode_failures) on
-  `status` at 1 Hz.
+  last 2) at `sector_map_rate_hz`, and `DiagnosticArray` (latest map age, frames, messages,
+  encode_failures; ERROR when the source ended or the latest frame failed) on `status` at 1 Hz.
 
 ## Usage
 ```cpp

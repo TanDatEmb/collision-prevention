@@ -50,6 +50,15 @@ protected:
 
 }  // namespace
 
+TEST(MapAgeTest, IsTheNodeClockMinusTheSampleTime)
+{
+  using obstacle_sector_node::mapAgeNs;
+
+  EXPECT_EQ(mapAgeNs(2'000'000'000, 1'500'000U), 500'000'000);
+  EXPECT_EQ(mapAgeNs(1'000'000, 1'000U), 0);
+  EXPECT_LT(mapAgeNs(1'000'000, 2'000U), 0);
+}
+
 TEST(DiagnosticLevelTest, ReflectsEndedSourceAndEncodeFailures)
 {
   using diagnostic_msgs::msg::DiagnosticStatus;

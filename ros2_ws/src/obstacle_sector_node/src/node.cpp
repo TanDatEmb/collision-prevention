@@ -26,6 +26,12 @@ diagnostic_msgs::msg::KeyValue keyValue(const std::string & key, uint64_t value)
 
 }  // namespace
 
+int64_t mapAgeNs(int64_t now_ns, uint64_t sample_timestamp_us)
+{
+  constexpr int64_t kNanosecondsPerMicrosecond{1'000};
+  return now_ns - static_cast<int64_t>(sample_timestamp_us) * kNanosecondsPerMicrosecond;
+}
+
 uint8_t diagnosticLevel(StepStatus last_status, const PipelineStats & stats)
 {
   using diagnostic_msgs::msg::DiagnosticStatus;
@@ -69,6 +75,7 @@ void ObstacleSectorNode::publishNext()
   _last_status = result.status;
 
   if (result.status == StepStatus::kMessage) {
+    _latest_sample_us = result.message->timestamp;
     _distance_pub->publish(*result.message);
   }
 }
@@ -82,6 +89,12 @@ void ObstacleSectorNode::publishDiagnostics()
   status.message = _last_status == StepStatus::kSourceEnded    ? "source ended"
                    : _last_status == StepStatus::kEncodeFailed ? "latest frame did not encode"
                                                                : "running";
+  diagnostic_msgs::msg::KeyValue age;
+  age.key = "latest_map_age_ms";
+  age.value = _latest_sample_us.has_value()
+                ? std::to_string(mapAgeNs(now().nanoseconds(), *_latest_sample_us) / 1'000'000)
+                : "none";
+  status.values.push_back(age);
   status.values.push_back(keyValue("frames", _pipeline->stats().frames));
   status.values.push_back(keyValue("messages", _pipeline->stats().messages));
   status.values.push_back(keyValue("encode_failures", _pipeline->stats().encode_failures));
