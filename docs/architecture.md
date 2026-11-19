@@ -156,17 +156,17 @@ collision envelope. PX4 uses `MAV_FRAME_BODY_FRD`; only `px4_obstacle_bridge` co
 | ICD-CP-03 `ObstacleDistance` | `/fmu/in/obstacle_distance`; frame 12, sensor LASER (0); 72 x 5 deg, `angle_offset=0`; cm; 10 Hz nominal, no bursts; QoS best-effort, volatile, keep-last 2 (OPEN-011); `min_distance=10`, `max_distance=4000`; `0` too close, `max_distance+1` clear, `UINT16_MAX` unknown; timestamp = acquisition time | Missing, invalid or stale: no velocity toward affected sectors; never inferred clear |
 | ICD-CP-04 PX4 constraint | `cp_brake` messages and limiter hook: approved design below (ADR 0014) | Non-finite, stale or malformed constraint: zero velocity toward the affected direction plus a reason |
 | ICD-CP-05 logging | Each intervention reconstructs sample, constraint, hook, response, recovery; status 10 Hz plus every transition; Orin diagnostics 1 Hz; raw clouds only in a debug profile; raw ULog, rosbag, MCAP stay out of Git (manifests and hashes only) | Run verdict `PASS`, `FAIL` or `INVALID`; incomplete evidence is never `PASS` |
-| ICD-CP-06 ray batch | `livox_ray_source` to `obstacle_sector_map`, in one process with no ROS hop: proposed design below (ADR 0004, 0006, 0015) | A ray without a valid time or direction is `kInvalid`; a frame without continuity gives no clear evidence |
+| ICD-CP-06 ray batch | `livox_ray_source` to `obstacle_sector_map`, in one process with no ROS hop: approved design below (ADR 0004, 0006, 0015) | A ray without a valid time or direction is `kInvalid`; a frame without continuity gives no clear evidence |
 
 ICD-CP-01, 02, 03 and 05 are approved by the owner (2026-11-19) as sole safety approver.
 ICD-CP-04 is approved by the owner (2026-11-19) with its open items (OPEN-032, 033, 034, 035).
-ICD-CP-06 is not approved: the design below is proposed and awaits the owner.
+ICD-CP-06 is approved by the owner (2026-11-19) with its open items (OPEN-030, 031, 036).
 Orin parameters (versioned, logged): `qualified_range_m` 40, `sector_map_rate_hz` 10, `coverage_window_ms` 100, `coverage_min_rays_per_sector` (no default
 until OPEN-023, never tuned after an acceptance run). The sector-boundary tolerance is a fixed
 constant of 2.0e-6 rad in `obstacle_sector_map`, approved by the owner (2026-11-19); it is a
 numerical tolerance, not a safety threshold. Raw point cloud source: ADR 0004.
 
-### ICD-CP-06 design (proposed, not approved)
+### ICD-CP-06 design (approved 2026-11-19)
 
 - Contract: per map, one frame of `RaySample` (non-zero `timestamp_ns`, `range_m`, `azimuth_rad`
   counter-clockwise FLU, `elevation_rad`, `masked`, `return_kind`) plus one packet-continuity flag
@@ -309,7 +309,7 @@ only host unit tests exist; they are not detection, integration, runtime or qual
 | --- | --- |
 | G0 Baseline | Repo, CI and branch rules active; submodule pins verified; message parity passes |
 | G1 Requirements | ODD, hazards and SYS-CP requirements approved by the owner, who is the sole safety approver until another is named (waiver, 2026-11-19); every hazard traces to a requirement or an OPEN item; every requirement has a verify method |
-| G2 Architecture | OPEN-026 and OPEN-027 closed by ADR 0014 and 0015; ICD-CP-01 to 06 approved (06 is the ray-source to map interface, still to be proposed); latency and CPU budget allocation and owners approved, values measured and approved at G5 (OPEN-004, OPEN-028); observation core reviewed against the proposed architecture (issue #5) before G2 is approved |
+| G2 Architecture | OPEN-026 and OPEN-027 closed by ADR 0014 and 0015; ICD-CP-01 to 06 approved (done: 06, the ray-source to map interface, was approved on 2026-11-19); latency and CPU budget allocation and owners approved, values measured and approved at G5 (OPEN-004, OPEN-028); observation core reviewed against the proposed architecture (issue #5) before G2 is approved |
 | G3 Core implementation | Build clean with `-Werror`; UT groups for assigned requirements pass; Orin node composes source, map and bridge; no SITL claim |
 | G4 SITL X500 | `x500.yaml` values approved and filled; SITL scenarios pass with fidelity gaps below recorded; no detection or braking claim |
 | G5 HIL | FMU timing, DDS, load and p99 latency within the approved budget on target hardware |
