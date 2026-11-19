@@ -1,0 +1,45 @@
+name: Work item
+description: One task that fits in one pull request
+body:
+  - type: input
+    id: req
+    attributes:
+      label: REQ ID
+      description: Requirement, hazard or open item this work serves (SYS-CP-xxx, HZ-CP-xxx, OPEN-xxx).
+    validations:
+      required: true
+  - type: dropdown
+    id: component
+    attributes:
+      label: Component
+      options:
+        - livox_ray_source
+        - obstacle_sector_map
+        - px4_obstacle_bridge
+        - obstacle_sector_node
+        - px4_cp_constraint
+        - px4_limiter_hook
+        - docs or tooling
+    validations:
+      required: true
+  - type: textarea
+    id: done
+    attributes:
+      label: Completion criteria
+      description: Observable conditions that close the issue. If it needs more than one PR, split it.
+    validations:
+      required: true
+  - type: dropdown
+    id: verify
+    attributes:
+      label: Verification level
+      options:
+        - Unit test
+        - Synthetic SITL
+        - Gazebo SITL
+        - Rosbag replay
+        - HIL or bench
+        - Flight
+        - Review only
+    validations:
+      required: true
