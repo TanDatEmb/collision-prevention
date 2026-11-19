@@ -40,7 +40,7 @@ Verified facts (PX4 1.17 at `f65ddce`, `px4_msgs` at `86d8239`):
 - `PositionControl::update()` runs `_positionControl()` before `_velocityControl()`, so a hook
   between them sees the final velocity of a position-only Mission setpoint.
 - `PositionSmoothing` slows its trajectory when the vehicle lags (`MPC_XY_ERR_MAX` default 2 m).
-- uXRCE-DDS timesync maps timestamps to PX4 monotonic time; zero is replaced by receive time.
+- uXRCE-DDS timesync maps timestamps to PX4 monotonic time; zero is replaced by receive time and a later timestamp is clamped to it.
   The stock CP range stream times out after 0.5 s.
 - `gz_x500_lidar_2d` is a smoke-test model: about 270 degrees, rays averaged per 5 degrees.
 - Seven required message definitions are byte-identical (`tools/check_msg_parity.sh`).
@@ -202,6 +202,17 @@ numerical tolerance, not a safety threshold. Raw point cloud source: ADR 0004.
   SYS-CP-007), plus a reason. If only some sector entries are invalid, those sectors get zero
   velocity toward them. Constraint age is `status - constraint timestamp`; its staleness
   threshold is OPEN-032.
+- Facts of the pinned PX4 (`f65ddce`) that the design must handle (no choice made here):
+  `MulticopterPositionControl::Run()` calls `_control.update()` up to three times per cycle and
+  falls back to the last valid setpoint or a failsafe setpoint when the output is not finite
+  (`mc_pos_control/MulticopterPositionControl.cpp`); the position setpoint is published after the
+  hook position and `FlightTask::_evaluateVehicleLocalPositionSetpoint()` reads it back
+  (`flight_mode_manager/tasks/FlightTask/FlightTask.cpp`); `takeoff_status` is published only on
+  change (`MulticopterPositionControl.cpp`); `obstacle_distance` has three publishers: DDS
+  (`dds_topics.yaml`), MAVLink (`mavlink_receiver.cpp`) and the Gazebo bridge
+  (`gz_bridge/GZBridge.cpp`, enabled by `SIM_GZ_EN_LIDAR`, default 1); DDS input clamps a later
+  timestamp to the receive time (`Tools/msg/templates/ucdr/msg.h.em`), so how a clamped map
+  timestamp is detected or rejected is not specified yet (OPEN-033).
 - Parameters (`CPB_`): `EN`; `MAX_V` 12 m/s (PERF-01); `A_BRK` 3 m/s^2 and `JERK` 4 m/s^3 (PERF-02);
   `AGE_STOP` 0.5 s (PERF-04); `CLR_T` 0.3 s and `RISE` 2.0 m/s^2 (PERF-05); `MARGIN` 2.0 m
   (SAFE-01); `T_LAT` TBD (OPEN-004). Values are baselines, not qualified limits.
@@ -281,6 +292,7 @@ SITL fidelity gaps:
 | OPEN-030 | Pose source for deskew: rate, latency, frame and interpolation | Perception + PX4 | TBD | G3 |
 | OPEN-031 | Clear evidence when the ray origin moves during a scan: origin-aware evidence in the map, or a conservative filter in acquisition | Perception + SE | TBD | G3 |
 | OPEN-032 | Staleness threshold and publish rate of the `cp_brake_constraints` output; heading history source and depth | PX4 + Controls | TBD | G2 |
+| OPEN-033 | Time validity at PX4: a later map timestamp is clamped to the receive time and timesync convergence is not gated; how `cp_brake` establishes sample age and rejects such a map | PX4 + Software Integration | TBD | G3 |
 
 OPEN-022, 023 and 025 block any operational clear-sector claim. OPEN-002 to OPEN-008 block the
 12 m/s claim. Neither blocks the implementation and SITL work that produces the evidence.
