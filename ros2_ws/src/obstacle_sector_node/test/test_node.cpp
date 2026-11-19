@@ -59,6 +59,24 @@ TEST(MapAgeTest, IsTheNodeClockMinusTheSampleTime)
   EXPECT_LT(mapAgeNs(1'000'000, 2'000U), 0);
 }
 
+TEST(MapAgeTest, ASampleTimeBeyondTheNanosecondRangeIsAheadOfAnyClock)
+{
+  using obstacle_sector_node::mapAgeNs;
+
+  // Nanoseconds in int64 end at 9'223'372'036'854'775 us (year 2262). A later or garbled time must
+  // not wrap around and look like an old sample: it is ahead of every clock.
+  EXPECT_LT(mapAgeNs(2'000'000'000, std::numeric_limits<uint64_t>::max()), 0);
+  EXPECT_LT(mapAgeNs(2'000'000'000, 9'223'372'036'854'776U), 0);
+}
+
+TEST(MapAgeTest, TheLastRepresentableSampleTimeKeepsItsExactAge)
+{
+  using obstacle_sector_node::mapAgeNs;
+
+  // 9'223'372'036'854'775 us is 9'223'372'036'854'775'000 ns, the largest that fits in int64.
+  EXPECT_EQ(mapAgeNs(2'000'000'000, 9'223'372'036'854'775U), -9'223'372'034'854'775'000);
+}
+
 TEST(DiagnosticLevelTest, ReflectsEndedSourceAndEncodeFailures)
 {
   using diagnostic_msgs::msg::DiagnosticStatus;
@@ -73,6 +91,22 @@ TEST(DiagnosticLevelTest, ReflectsEndedSourceAndEncodeFailures)
   EXPECT_EQ(diagnosticLevel(StepStatus::kMessage, some_failures), DiagnosticStatus::WARN);
   EXPECT_EQ(diagnosticLevel(StepStatus::kEncodeFailed, some_failures), DiagnosticStatus::ERROR);
   EXPECT_EQ(diagnosticLevel(StepStatus::kSourceEnded, none), DiagnosticStatus::ERROR);
+}
+
+TEST(DiagnosticLevelTest, ReflectsMapsHeldBackForANegativeAge)
+{
+  using diagnostic_msgs::msg::DiagnosticStatus;
+  using obstacle_sector_node::diagnosticLevel;
+  using obstacle_sector_node::PipelineStats;
+  using obstacle_sector_node::StepStatus;
+
+  const PipelineStats none{};
+
+  // earlier drops warn, a drop of the latest map is an error (nothing reaches PX4), no drops change
+  // nothing
+  EXPECT_EQ(diagnosticLevel(StepStatus::kMessage, none, 0U, false), DiagnosticStatus::OK);
+  EXPECT_EQ(diagnosticLevel(StepStatus::kMessage, none, 3U, false), DiagnosticStatus::WARN);
+  EXPECT_EQ(diagnosticLevel(StepStatus::kMessage, none, 3U, true), DiagnosticStatus::ERROR);
 }
 
 TEST_F(NodeTest, RejectsANullSourceAndANonPositiveRate)

@@ -13,6 +13,7 @@
 #include "diagnostic_msgs/msg/diagnostic_status.hpp"
 #include "livox_ray_source/replay_ray_source.hpp"
 #include "obstacle_sector_node/node.hpp"
+#include "rosgraph_msgs/msg/clock.hpp"
 
 using livox_ray_source::ReplayRaySource;
 using livox_ray_source::StreamSample;
@@ -31,14 +32,19 @@ constexpr uint64_t kWindowNs = 1'000'000U;
 constexpr uint64_t kFrameSpacingNs = 10'000'000U;
 constexpr double kRateHz = 20.0;
 constexpr const char * kTopic = "/fmu/in/obstacle_distance";
+// About the year 2096: ahead of any real clock, and still inside the int64 nanosecond range.
+constexpr uint64_t kFarFutureNs = 4'000'000'000'000'000'000U;
 
 // Frames of two no-return rays each; with `timestamps` false the rays carry no time and the
-// encoder refuses them.
-std::unique_ptr<livox_ray_source::RaySource> makeSource(int frames, bool timestamps = true)
+// encoder refuses them. `first_frame_ns` is the time of the first ray (a small value is long
+// before the node clock, kFarFutureNs is after it).
+std::unique_ptr<livox_ray_source::RaySource> makeSource(
+  int frames, bool timestamps = true, uint64_t first_frame_ns = 5'000'000U)
 {
   std::vector<StreamSample> samples;
   for (int i = 0; i < frames; ++i) {
-    const uint64_t base = timestamps ? 5'000'000U + static_cast<uint64_t>(i) * kFrameSpacingNs : 0U;
+    const uint64_t base =
+      timestamps ? first_frame_ns + static_cast<uint64_t>(i) * kFrameSpacingNs : 0U;
     for (uint64_t k = 0U; k < 2U; ++k) {
       samples.push_back(StreamSample{
         RaySample{
@@ -53,12 +59,17 @@ std::unique_ptr<livox_ray_source::RaySource> makeSource(int frames, bool timesta
 class Harness
 {
 public:
-  explicit Harness(std::unique_ptr<livox_ray_source::RaySource> source)
+  // With `simulated_time` the node clock follows /clock (it reads 0 until the first message), so a
+  // test can move it; otherwise the node runs on the system clock.
+  explicit Harness(std::unique_ptr<livox_ray_source::RaySource> source, bool simulated_time = false)
   {
     rclcpp::NodeOptions options;
-    options.parameter_overrides({rclcpp::Parameter("sector_map_rate_hz", kRateHz)});
+    options.parameter_overrides(
+      {rclcpp::Parameter("sector_map_rate_hz", kRateHz),
+       rclcpp::Parameter("use_sim_time", simulated_time)});
     node = std::make_shared<ObstacleSectorNode>(std::move(source), kConfig, options);
     listener = std::make_shared<rclcpp::Node>("obstacle_listener");
+    clock = listener->create_publisher<rosgraph_msgs::msg::Clock>("/clock", rclcpp::ClockQoS());
     maps = listener->create_subscription<ObstacleDistance>(
       kTopic, rclcpp::QoS(rclcpp::KeepLast(2)).best_effort().durability_volatile(),
       [this](const ObstacleDistance &) { arrivals.push_back(std::chrono::steady_clock::now()); });
@@ -81,6 +92,16 @@ public:
     }
   }
 
+  // Sends the simulated time. The topic is best effort, so a test that needs the node to have it
+  // sends it again while it spins.
+  void setClock(std::chrono::seconds time)
+  {
+    rosgraph_msgs::msg::Clock message;
+    message.clock =
+      rclcpp::Time(std::chrono::duration_cast<std::chrono::nanoseconds>(time).count());
+    clock->publish(message);
+  }
+
   std::string value(const std::string & key) const
   {
     for (const auto & entry : last_status.values) {
@@ -94,6 +115,7 @@ public:
   std::shared_ptr<ObstacleSectorNode> node;
   std::shared_ptr<rclcpp::Node> listener;
   rclcpp::executors::SingleThreadedExecutor executor;
+  rclcpp::Publisher<rosgraph_msgs::msg::Clock>::SharedPtr clock;
   rclcpp::Subscription<ObstacleDistance>::SharedPtr maps;
   rclcpp::Subscription<diagnostic_msgs::msg::DiagnosticArray>::SharedPtr diagnostics;
   std::vector<std::chrono::steady_clock::time_point> arrivals;
@@ -185,4 +207,59 @@ TEST_F(NodeIntegrationTest, DiagnosticsCarryTheLatestMapAgeWhileMapsFlow)
   const auto age = harness.value("latest_map_age_ms");
   EXPECT_FALSE(age.empty());
   EXPECT_NE(age, "none");
+  EXPECT_EQ(harness.value("negative_age_drops"), "0");  // maps before the clock are never held back
+}
+
+TEST_F(NodeIntegrationTest, MapsAheadOfTheNodeClockAreNotPublished)
+{
+  Harness harness{makeSource(40, true, kFarFutureNs)};
+
+  harness.spinFor(std::chrono::milliseconds(600));
+
+  EXPECT_TRUE(harness.arrivals.empty());
+  // the pipeline did build maps: they were held back, not missing
+  EXPECT_GT(harness.node->stats().messages, 0U);
+}
+
+TEST_F(NodeIntegrationTest, HeldBackMapsAreCountedAndDiagnosticsReportThem)
+{
+  Harness harness{makeSource(40, true, kFarFutureNs)};
+
+  harness.spinFor(std::chrono::milliseconds(1'600));
+
+  EXPECT_GT(harness.node->negativeAgeDrops(), 0U);
+  EXPECT_EQ(harness.node->negativeAgeDrops(), harness.node->stats().messages);
+  ASSERT_GT(harness.status_count, 0);
+  EXPECT_EQ(harness.last_status.level, diagnostic_msgs::msg::DiagnosticStatus::ERROR);
+  EXPECT_EQ(harness.last_status.message, "latest map dropped: sample time ahead of the node clock");
+  EXPECT_FALSE(harness.value("negative_age_drops").empty());
+  EXPECT_NE(harness.value("negative_age_drops"), "0");
+  EXPECT_EQ(harness.value("latest_map_age_ms"), "none");  // nothing was published
+}
+
+TEST_F(NodeIntegrationTest, MapsFlowAgainOnceTheNodeClockHasCaughtUp)
+{
+  // The node runs on simulated time that reads 0, so maps built from times after 3 s are ahead of
+  // its clock and are held back. When the clock passes them they must flow again, and the
+  // diagnostics must stop reporting the held-back state while still counting the earlier drops.
+  Harness harness{makeSource(40, true, 3'000'000'000U), true};
+
+  const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(3);
+  while (harness.node->negativeAgeDrops() == 0U && std::chrono::steady_clock::now() < deadline) {
+    harness.spinFor(std::chrono::milliseconds(10));
+  }
+  ASSERT_GT(harness.node->negativeAgeDrops(), 0U);
+  EXPECT_TRUE(harness.arrivals.empty());
+
+  const auto end = std::chrono::steady_clock::now() + std::chrono::milliseconds(1'200);
+  while (std::chrono::steady_clock::now() < end) {
+    harness.setClock(std::chrono::seconds(10));
+    harness.spinFor(std::chrono::milliseconds(20));
+  }
+
+  EXPECT_GE(harness.arrivals.size(), 10U);
+  ASSERT_GT(harness.status_count, 0);
+  EXPECT_EQ(harness.last_status.level, diagnostic_msgs::msg::DiagnosticStatus::WARN);
+  EXPECT_EQ(harness.last_status.message, "running");
+  EXPECT_NE(harness.value("negative_age_drops"), "0");
 }
