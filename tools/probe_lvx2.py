@@ -132,6 +132,8 @@ def read_file(path, window_ms):
     if struct.unpack_from("<I", buf, 20)[0] != MAGIC or version[0] != 2:
         fail("unsupported LVX version or magic code")
     frame_ms, devices = struct.unpack_from("<IB", buf, PUBLIC_HEADER)
+    if devices != 1:
+        fail("only single-device files are supported (found %d devices)" % devices)
     offset = PUBLIC_HEADER + PRIVATE_HEADER + devices * DEVICE_INFO
     report = {"file": path, "version": version, "frame_duration_ms": frame_ms, "devices": devices}
     frames = packages = 0
@@ -139,6 +141,7 @@ def read_file(path, window_ms):
     per_lidar, per_frame = {}, []
     pending = {}
     finished = False
+    imu_packages = 0
     while offset + FRAME_HEADER.size <= size:
         current, nxt, _index = FRAME_HEADER.unpack_from(buf, offset)
         if current != offset:
@@ -160,7 +163,11 @@ def read_file(path, window_ms):
             seen = per_lidar.setdefault(lidar_id, ([], []))
             seen[0].append(udp)
             seen[1].append(ts)
-            if dtype in POINT_DTYPES:
+            if dtype == 0:
+                imu_packages += 1
+            elif dtype not in POINT_DTYPES:
+                fail("unsupported point data type %d at %d" % (dtype, pos))
+            else:
                 item = POINT_DTYPES[dtype].itemsize
                 if length % item:
                     fail("payload length %d not a multiple of %d at %d" % (length, item, pos))
@@ -184,7 +191,7 @@ def read_file(path, window_ms):
         fail("truncated file: %d bytes remain after the last frame" % (size - offset))
     for dtype, entry in pending.items():
         stats.add(dtype, *entry)
-    report.update(frames=frames, packages=packages, data_types=sorted(data_types),
+    report.update(frames=frames, packages=packages, imu_packages=imu_packages, data_types=sorted(data_types),
                   time_types=sorted(time_types), lidar_types=sorted(lidar_types))
     packets = {}
     for lidar_id, (counters, stamps) in sorted(per_lidar.items()):
@@ -227,9 +234,9 @@ def read_file(path, window_ms):
 
 def selftest():
     """Write a tiny synthetic LVX2 file with known content and check the report."""
-    def package(ts, udp, points):
+    def package(ts, udp, points, dtype=1):
         payload = b"".join(struct.pack("<iiiBB", *p) for p in points)
-        head = PACKAGE_HEADER.pack(0, 1, 9, 0, ts, udp, 1, len(payload), 0)
+        head = PACKAGE_HEADER.pack(0, 1, 9, 0, ts, udp, dtype, len(payload), 0)
         return head + payload
 
     pts = [(1000, 0, 0, 10, 0), (0, 1000, 0, 10, 0), (0, 0, 0, 0, 0), (-1000, 0, 0, 10, 4)]
@@ -262,25 +269,27 @@ def selftest():
         fail("selftest tag histogram %r" % report["tag_histogram"])
     if abs(report["range_m"]["max"] - 1.0) > 1e-9 or abs(report["elevation_deg"]["max"]) > 1e-9:
         fail("selftest range or elevation")
-    with tempfile.NamedTemporaryFile(suffix=".lvx2") as handle:
-        handle.write(blob + bytes(5))
-        handle.flush()
-        try:
-            read_file(handle.name, 1.0)
-        except SystemExit:
-            pass
-        else:
-            fail("selftest: truncated file was accepted")
+    def rejected(data):
+        with tempfile.NamedTemporaryFile(suffix=".lvx2") as handle:
+            handle.write(data)
+            handle.flush()
+            try:
+                read_file(handle.name, 1.0)
+            except SystemExit:
+                return True
+        return False
+
     cut = blob[:-(len(frames[-1]) - 10)]
-    with tempfile.NamedTemporaryFile(suffix=".lvx2") as handle:
-        handle.write(cut)
-        handle.flush()
-        try:
-            read_file(handle.name, 1.0)
-        except SystemExit:
-            pass
-        else:
-            fail("selftest: file cut inside a frame header was accepted")
+    bad_type = bytearray(blob)
+    data_type_offset = start + FRAME_HEADER.size + 1 + 4 + 1 + 1 + 8 + 2  # package 0
+    bad_type[data_type_offset] = 7
+    two_devices = bytearray(blob)
+    two_devices[PUBLIC_HEADER + 4] = 2
+    cases = {"trailing bytes": blob + bytes(5), "cut frame header": cut,
+             "unknown data type": bytes(bad_type), "two devices": bytes(two_devices)}
+    for name, data in cases.items():
+        if not rejected(data):
+            fail("selftest: %s was accepted" % name)
     print("selftest ok")
 
 
