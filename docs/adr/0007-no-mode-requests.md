@@ -7,7 +7,8 @@ with them.
 ## Decision
 V1 never publishes a vehicle command or requests Hold, RTL or another mode. Persistent blockage
 keeps the constraint and notifies the operator. If estimator, heading or control authority is
-invalid, the CP claim is `UNQUALIFIED` and existing PX4 failsafes act.
+invalid, the CP claim is `UNQUALIFIED` and existing PX4 failsafes act. CP does not add any
+action of its own in that case (owner decision, 2026-11-19, closes OPEN-019).
 
 ## Consequences
 - No Hold timer exists; the 0.5 s stale threshold only triggers safe-stop.
