@@ -193,9 +193,10 @@ numerical tolerance, not a safety threshold. Raw point cloud source: ADR 0004.
 - `cp_brake_constraints` (uORB, from `cp_brake` to the limiter): publication `timestamp`;
   `sample_timestamp` of the source map; `heading_rad` and `heading_valid` at the sample time; 72
   body-FRD velocity caps in m/s clamped to `[0, CPB_MAX_V]`; `enforcement_active`; `valid`; state;
-  reason flags; counters. `cp_brake_status` (uORB, logging) carries the three timestamps and ages,
-  input and output setpoints, actual velocity, active sector, minimum range, free and stopping
-  distance, state, reasons and counters.
+  reason flags; counters. `cp_brake_status` (uORB, logging) carries the three timestamps and ages
+  (the status timestamp is taken when the hook applies the constraint, so sample-to-status is
+  sample-to-enforcement), input and output setpoints, actual velocity, active sector, minimum
+  range, free and stopping distance, state, reasons and counters.
 - Hook (verified in the pinned source): `PositionControl::update()` runs `_positionControl()` and
   then `_velocityControl(dt)`. The limiter acts between them on `_vel_sp.xy()` and removes
   horizontal feed-forward acceleration `_acc_sp.xy()` toward an affected sector. `_vel_sp` there
@@ -283,7 +284,7 @@ and approved at G5, OPEN-004 and OPEN-028; no number is entered before then):
 | Acquisition, deskew and mask (`livox_ray_source`) | Perception | Stage timestamps in a latency-profiling run (ADR 0003) |
 | Sector map and bridge | Perception | Same profiling run |
 | uXRCE-DDS transport | Software Integration | Publish time against uORB receive time, HIL (OPEN-011, 015) |
-| `cp_brake` and hook | PX4 + Controls | Sample, constraint and status timestamps in `cp_brake_status` (ICD-CP-05) |
+| `cp_brake` and hook | PX4 + Controls | Sample, constraint and status timestamps in `cp_brake_status` (ICD-CP-05); the status timestamp is taken when the hook applies the constraint |
 | Reserve | SE | Difference between the measured p99 and the sum of the stages |
 | Orin CPU, memory, temperature | Orin Lead | Per-process CPU and memory, board temperature, worst-case load, HIL |
 | FMU CPU and scheduling | PX4 | `cpuload` topic and the `cp_brake` task load, HIL (`msg/Cpuload.msg`) |
