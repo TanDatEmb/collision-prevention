@@ -366,6 +366,33 @@ SITL fidelity gaps:
 | OPEN-033 | Numeric limits for judging the sync from `timesync_status` at PX4 and for an excessive map age; the Orin-side rejection of a negative age is implemented in a separate issue (structure decided) | PX4 + Software Integration | TBD | G5 |
 | OPEN-035 | Hook interaction with FlightTask feedback of the published setpoint, the XY velocity integrator and the tilt limit | Controls + PX4 | TBD | G4 |
 | OPEN-036 | Vertical collision envelope as a height band: how a no-return ray, which has no endpoint, is tested against it; builder change from the elevation band | Perception + SE | TBD | G3 |
+| OPEN-037 | `fmu-v6x` FLASH budget: `cp_brake` does not fit the board image; owner decision on how to make room (facts and options below) | Project Owner + PX4 | TBD | #64, #65, #66 on `fmu-v6x` |
 
 OPEN-022 and 023 block any operational clear-sector claim. OPEN-002 to OPEN-008 block the
 12 m/s claim. Neither blocks the implementation and SITL work that produces the evidence.
+
+### OPEN-037 `fmu-v6x` FLASH budget (owner decision pending)
+
+Facts, as measured in the PX4 fork build `px4_fmu-v6x_default` on 2026-11-19 (fork PR
+`TanDatEmb/PX4-Autopilot#4`); no build was run in this repository for this entry:
+- The FLASH region is 1,966,080 bytes (1920 KB).
+- Fork baseline without `cp_brake`: 1,960,680 bytes used (99.73%), 5,400 bytes free.
+- With `cp_brake` enabled, before the review fix: 1,966,052 bytes used, 28 bytes free. The module
+  took 5,372 bytes.
+- The review fix added 80 bytes and the link failed with `region FLASH overflowed by 52 bytes`.
+- #64 (heading history and state machine) and #65 (limiter hook) add more code, so they will not
+  fit either.
+- Taken in the fork PR: `cp_brake` is left out of the `fmu-v6x` board config and stays enabled for
+  `sitl`. Until this item is decided no claim that `cp_brake` or the hook runs on `fmu-v6x`
+  hardware can be made (build, HIL or flight).
+
+Options, none chosen (the owner decides; they may be combined):
+- Drop other PX4 modules from the fork's `fmu-v6x` config; the owner picks which.
+- Decide that `cp_brake` does not run on this board, and record what that means for SYS-CP-001
+  and 005 on the target hardware.
+- Use another board; this changes the target hardware recorded in OPEN-016.
+- Reduce the module footprint; it must recover at least the 52 bytes of the reviewed module plus
+  what #64 and #65 add (not yet measured). No byte target or margin is set here: TBD.
+
+Blocks #64, #65 and #66 on `fmu-v6x`. Which modules to drop, any flash margin and any size target
+stay TBD until approved by the owner.
