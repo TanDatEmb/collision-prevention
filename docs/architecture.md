@@ -349,8 +349,8 @@ SITL fidelity gaps:
 | OPEN-024 | Qualify dwell 0.3 s and rise 2.0 m/s^2 | Controls + Operations | TBD | G4, G6 |
 | OPEN-028 | Orin and FMU CPU, memory and thermal budgets | Orin Lead + PX4 | TBD | G5 |
 | OPEN-029 | X500 SITL model name and lidar mount pose | SE | TBD | G4 |
-| OPEN-030 | Pose source for deskew: rate, latency, frame and interpolation | Perception + PX4 | TBD | G3 |
-| OPEN-031 | Clear evidence when the ray origin moves during a scan: origin-aware evidence in the map, or a conservative filter in acquisition; the threshold value if a filter is chosen | Perception + SE | TBD | G3 |
+| OPEN-030 | Measured rate and latency of `VehicleOdometry` for deskew and the interpolation scheme (source: ADR 0018) | Perception + PX4 | TBD | G3 |
+| OPEN-031 | Clear evidence when the ray origin moves during a scan: origin-aware evidence in the map, or a conservative filter in acquisition (chosen, ADR 0018); its threshold value | Perception + SE | TBD | G3 |
 | OPEN-032 | Staleness threshold and publish rate of the `cp_brake_constraints` output; heading history source and depth | PX4 + Controls | TBD | G3 |
 | OPEN-033 | Time validity at PX4: a later map timestamp is clamped to the receive time and timesync convergence is not gated; how `cp_brake` establishes sample age and rejects such a map | PX4 + Software Integration | TBD | G3 |
 | OPEN-034 | SAFE_STOP semantics: velocity zero or position hold, the pilot acknowledge channel and the operator notify channel (see OPEN-020) | SE + PX4 + Operations | TBD | G4 |
