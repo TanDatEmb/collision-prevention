@@ -284,16 +284,18 @@ SITL fidelity gaps:
 | OPEN-015 | Pin Micro XRCE-DDS Agent and target runtime versions | Software Integration | TBD | G5 |
 | OPEN-016 | Record FMU V6X hardware revision, bootloader, baseline | Hardware + Test | TBD | G5 |
 | OPEN-020 | Pilot enable, disable and override procedure; HZ-CP-009 has no requirement | SE + Operations | TBD | G6 (accepted G1 exception) |
-| OPEN-022 | Pin Livox SDK2 and firmware; per-point timestamps, zero-depth, too-close, tag and packet-loss semantics | Perception + Test | TBD | G3 |
+| OPEN-022 | Pin Livox SDK2 and firmware; per-point timestamps, zero-depth, too-close, tag and packet-loss semantics; the rule that classifies a sample as a qualified no-return | Perception + Test | TBD | G3 |
 | OPEN-023 | Freeze the ray-coverage rule and `coverage_min_rays_per_sector` | Perception + SE + Test | TBD | G4 |
 | OPEN-024 | Qualify dwell 0.3 s and rise 2.0 m/s^2 | Controls + Operations | TBD | G4, G6 |
 | OPEN-025 | Raw-ray path: embed Livox SDK2 or patch `livox_ros_driver2` | Perception + SE | TBD | G3 |
 | OPEN-028 | Orin and FMU CPU, memory and thermal budgets | Orin Lead + PX4 | TBD | G5 |
 | OPEN-029 | X500 SITL model name and lidar mount pose | SE | TBD | G4 |
 | OPEN-030 | Pose source for deskew: rate, latency, frame and interpolation | Perception + PX4 | TBD | G3 |
-| OPEN-031 | Clear evidence when the ray origin moves during a scan: origin-aware evidence in the map, or a conservative filter in acquisition | Perception + SE | TBD | G3 |
+| OPEN-031 | Clear evidence when the ray origin moves during a scan: origin-aware evidence in the map, or a conservative filter in acquisition; the threshold value if a filter is chosen | Perception + SE | TBD | G3 |
 | OPEN-032 | Staleness threshold and publish rate of the `cp_brake_constraints` output; heading history source and depth | PX4 + Controls | TBD | G3 |
 | OPEN-033 | Time validity at PX4: a later map timestamp is clamped to the receive time and timesync convergence is not gated; how `cp_brake` establishes sample age and rejects such a map | PX4 + Software Integration | TBD | G3 |
+| OPEN-034 | SAFE_STOP semantics: velocity zero or position hold, the pilot acknowledge channel and the operator notify channel (see OPEN-020) | SE + PX4 + Operations | TBD | G4 |
+| OPEN-035 | Hook interaction with FlightTask feedback of the published setpoint, the XY velocity integrator and the tilt limit | Controls + PX4 | TBD | G4 |
 
 OPEN-022, 023 and 025 block any operational clear-sector claim. OPEN-002 to OPEN-008 block the
 12 m/s claim. Neither blocks the implementation and SITL work that produces the evidence.
