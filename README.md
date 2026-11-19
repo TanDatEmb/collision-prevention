@@ -32,7 +32,7 @@ docs/adr/                      accepted architecture decisions
 firmware/PX4-Autopilot         PX4 fork (submodule, pinned)
 ros2_ws/src/livox_ray_source     ray source interface, frame segmentation, replay source
 ros2_ws/src/obstacle_sector_map   platform-neutral sector map library
-ros2_ws/src/obstacle_sector_node frame to ObstacleDistance pipeline (ROS node to follow)
+ros2_ws/src/obstacle_sector_node pipeline, config loader and ROS node class
 ros2_ws/src/px4_obstacle_bridge   ObstacleDistance encoder
 ros2_ws/src/px4_msgs              PX4 ROS 2 messages (submodule, pinned)
 tools/check_msg_parity.sh      checks PX4 and px4_msgs message definitions match

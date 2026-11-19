@@ -1,0 +1,41 @@
+#pragma once
+
+#include <memory>
+
+#include "diagnostic_msgs/msg/diagnostic_array.hpp"
+#include "obstacle_sector_node/pipeline.hpp"
+#include "px4_msgs/msg/obstacle_distance.hpp"
+#include "rclcpp/rclcpp.hpp"
+
+namespace obstacle_sector_node
+{
+
+/// ROS 2 node around SectorMapPipeline. It publishes ObstacleDistance on
+/// `/fmu/in/obstacle_distance` (best effort, volatile, keep last 2, ICD-CP-03) at
+/// `sector_map_rate_hz` (default 10, the approved baseline) and diagnostics on `status` at 1 Hz.
+/// It never publishes anything inferred: when the pipeline gives no message, nothing is sent.
+class ObstacleSectorNode : public rclcpp::Node
+{
+public:
+  /// Throws std::invalid_argument for a null source or `sector_map_rate_hz` not positive and
+  /// finite.
+  ObstacleSectorNode(
+    std::unique_ptr<livox_ray_source::RaySource> source,
+    const obstacle_sector_map::SectorMapConfig & config,
+    const rclcpp::NodeOptions & options = rclcpp::NodeOptions());
+
+  [[nodiscard]] const PipelineStats & stats() const { return _pipeline->stats(); }
+
+private:
+  void publishNext();
+  void publishDiagnostics();
+
+  std::unique_ptr<SectorMapPipeline> _pipeline;
+  bool _source_ended{false};
+  rclcpp::Publisher<px4_msgs::msg::ObstacleDistance>::SharedPtr _distance_pub;
+  rclcpp::Publisher<diagnostic_msgs::msg::DiagnosticArray>::SharedPtr _diagnostics_pub;
+  rclcpp::TimerBase::SharedPtr _map_timer;
+  rclcpp::TimerBase::SharedPtr _diagnostics_timer;
+};
+
+}  // namespace obstacle_sector_node

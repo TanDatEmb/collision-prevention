@@ -11,8 +11,11 @@ find_package(obstacle_sector_map REQUIRED)
 find_package(px4_obstacle_bridge REQUIRED)
 find_package(livox_ray_source REQUIRED)
 find_package(px4_msgs REQUIRED)
+find_package(rclcpp REQUIRED)
+find_package(diagnostic_msgs REQUIRED)
+find_package(yaml-cpp REQUIRED)
 
-add_library(obstacle_sector_node src/pipeline.cpp)
+add_library(obstacle_sector_node src/pipeline.cpp src/platform_config.cpp src/node.cpp)
 target_include_directories(obstacle_sector_node PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
   $<INSTALL_INTERFACE:include>)
@@ -20,7 +23,8 @@ target_link_libraries(obstacle_sector_node PUBLIC
   obstacle_sector_map::obstacle_sector_map
   px4_obstacle_bridge::px4_obstacle_bridge
   livox_ray_source::livox_ray_source)
-ament_target_dependencies(obstacle_sector_node PUBLIC px4_msgs)
+ament_target_dependencies(obstacle_sector_node PUBLIC px4_msgs rclcpp diagnostic_msgs)
+target_link_libraries(obstacle_sector_node PRIVATE yaml-cpp::yaml-cpp)
 
 install(TARGETS obstacle_sector_node
   EXPORT export_obstacle_sector_node
@@ -33,8 +37,15 @@ if(BUILD_TESTING)
   find_package(ament_cmake_gtest REQUIRED)
   ament_add_gtest(test_pipeline test/test_pipeline.cpp)
   target_link_libraries(test_pipeline obstacle_sector_node)
+  ament_add_gtest(test_platform_config test/test_platform_config.cpp)
+  target_link_libraries(test_platform_config obstacle_sector_node)
+  target_compile_definitions(test_platform_config PRIVATE
+    X500_YAML_PATH="${CMAKE_CURRENT_SOURCE_DIR}/../../../config/platforms/x500.yaml")
+  ament_add_gtest(test_node test/test_node.cpp)
+  target_link_libraries(test_node obstacle_sector_node)
 endif()
 
 ament_export_targets(export_obstacle_sector_node HAS_LIBRARY_TARGET)
-ament_export_dependencies(obstacle_sector_map px4_obstacle_bridge livox_ray_source px4_msgs)
+ament_export_dependencies(
+  obstacle_sector_map px4_obstacle_bridge livox_ray_source px4_msgs rclcpp diagnostic_msgs yaml-cpp)
 ament_package()
