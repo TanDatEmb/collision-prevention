@@ -15,7 +15,7 @@ using px4_obstacle_bridge::encodeObstacleDistance;
 namespace
 {
 
-constexpr SectorMapConfig kConfig{0.1F, 40.0F, -0.2F, 0.4F, 2U};
+constexpr SectorMapConfig kConfig{-0.2F, 0.4F, 2U};
 
 SectorMap makeMap()
 {
@@ -147,16 +147,15 @@ TEST(ObstacleDistanceEncoderTest, RejectsInvalidConfigAndInvalidOccupiedDistance
   EXPECT_FALSE(encodeObstacleDistance(map, kConfig).has_value());
 
   setSector(map, 0U, SectorState::kOccupied, 1.0F);
-  const SectorMapConfig invalid_config{0.0F, 40.0F, -0.2F, 0.4F, 2U};
+  const SectorMapConfig invalid_config{-0.2F, 0.4F, 0U};
   EXPECT_FALSE(encodeObstacleDistance(map, invalid_config).has_value());
 }
 
-TEST(ObstacleDistanceEncoderTest, RejectsConfigThatAliasesReservedWireValues)
+TEST(ObstacleDistanceEncoderTest, RangeFieldsAreFixedByTheInterface)
 {
-  const auto map = makeMap();
-  const SectorMapConfig sub_centimetre_minimum{0.001F, 40.0F, -0.2F, 0.4F, 2U};
-  const SectorMapConfig clear_aliases_unknown{0.1F, 655.34F, -0.2F, 0.4F, 2U};
+  const auto encoded = encodeObstacleDistance(makeMap(), kConfig);
 
-  EXPECT_FALSE(encodeObstacleDistance(map, sub_centimetre_minimum).has_value());
-  EXPECT_FALSE(encodeObstacleDistance(map, clear_aliases_unknown).has_value());
+  ASSERT_TRUE(encoded.has_value());
+  EXPECT_EQ(encoded->min_distance, 10U);
+  EXPECT_EQ(encoded->max_distance, 4'000U);
 }

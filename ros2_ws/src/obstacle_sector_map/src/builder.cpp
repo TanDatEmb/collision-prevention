@@ -90,8 +90,8 @@ void SectorMapBuilder::addRay(const RaySample & ray)
 
   const float wrapped_azimuth_rad = wrapZeroToTwoPi(ray.azimuth_rad);
 
-  const bool has_obstacle_evidence = ray.return_kind == RayReturnKind::kReturn &&
-                                     horizontalProjectedRange(ray) <= _config.max_distance_m;
+  const bool has_obstacle_evidence =
+    ray.return_kind == RayReturnKind::kReturn && horizontalProjectedRange(ray) <= kMaxDistanceM;
 
   if (has_obstacle_evidence && liesOnSectorBoundary(wrapped_azimuth_rad)) {
     const auto lower_index =
@@ -120,12 +120,12 @@ void SectorMapBuilder::updateSector(std::size_t sector_index, const RaySample & 
 
   const float horizontal_range_m = horizontalProjectedRange(ray);
 
-  if (horizontal_range_m < _config.min_distance_m) {
+  if (horizontal_range_m < kMinDistanceM) {
     accumulator.too_close = true;
     return;
   }
 
-  if (horizontal_range_m <= _config.max_distance_m) {
+  if (horizontal_range_m <= kMaxDistanceM) {
     accumulator.minimum_obstacle_distance_m =
       std::min(accumulator.minimum_obstacle_distance_m, horizontal_range_m);
   }

@@ -11,6 +11,11 @@ namespace obstacle_sector_map
 
 inline constexpr std::size_t kSectorCount{72U};
 inline constexpr float kHalfPiRad{1.57079632679489661923F};
+// Detection range limits of the map and of the wire (ICD-CP-03): 10 cm and 40 m. Fixed for every
+// platform; they are not configuration.
+inline constexpr float kMinDistanceM{0.10F};
+inline constexpr float kMaxDistanceM{40.0F};
+static_assert(kMinDistanceM > 0.0F && kMinDistanceM < kMaxDistanceM);
 // Float rounding tolerance for the sector-boundary test. Fixed, not a tuning parameter.
 inline constexpr float kSectorBoundaryEpsilonRad{2.0e-6F};
 static_assert(
@@ -61,17 +66,13 @@ struct SectorMap
 
 struct SectorMapConfig
 {
-  float min_distance_m;
-  float max_distance_m;
   float min_elevation_rad;
   float max_elevation_rad;
   uint32_t coverage_min_rays_per_sector;
 
   [[nodiscard]] bool isValid() const
   {
-    return std::isfinite(min_distance_m) && std::isfinite(max_distance_m) &&
-           std::isfinite(min_elevation_rad) && std::isfinite(max_elevation_rad) &&
-           min_distance_m > 0.0F && max_distance_m > min_distance_m &&
+    return std::isfinite(min_elevation_rad) && std::isfinite(max_elevation_rad) &&
            min_elevation_rad > -kHalfPiRad && max_elevation_rad < kHalfPiRad &&
            min_elevation_rad < max_elevation_rad && coverage_min_rays_per_sector > 0U;
   }

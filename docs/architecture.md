@@ -162,10 +162,12 @@ collision envelope. PX4 uses `MAV_FRAME_BODY_FRD`; only `px4_obstacle_bridge` co
 ICD-CP-01, 02, 03 and 05 are approved by the owner (2026-11-19) as sole safety approver.
 ICD-CP-04 is approved by the owner (2026-11-19) with its open items (OPEN-032, 033, 034, 035).
 ICD-CP-06 is approved by the owner (2026-11-19) with its open items (OPEN-030, 031, 036).
-Orin parameters (versioned, logged): `qualified_range_m` 40, `sector_map_rate_hz` 10, `coverage_window_ms` 100, `coverage_min_rays_per_sector` (no default
-until OPEN-023, never tuned after an acceptance run). The sector-boundary tolerance is a fixed
-constant of 2.0e-6 rad in `obstacle_sector_map`, approved by the owner (2026-11-19); it is a
-numerical tolerance, not a safety threshold. Raw point cloud source: ADR 0004.
+Orin parameters (versioned, logged): `sector_map_rate_hz` 10, `coverage_window_ms` 100,
+`coverage_min_rays_per_sector` (no default until OPEN-023, never tuned after an acceptance run).
+The range limits (10 cm and 40 m, ICD-CP-03) are fixed constants, not parameters. The
+sector-boundary tolerance is a fixed constant of 2.0e-6 rad in `obstacle_sector_map`, approved by
+the owner (2026-11-19); it is a numerical tolerance, not a safety threshold. Raw point cloud
+source: ADR 0004.
 
 ### ICD-CP-06 design (approved 2026-11-19)
 
@@ -176,8 +178,9 @@ numerical tolerance, not a safety threshold. Raw point cloud source: ADR 0004.
   the map timestamp (earliest contributing ray, SYS-CP-016).
 - Framing: a window of `coverage_window_ms` by sensor timestamp; the whole frame is buffered, then
   `reset(continuity)`, `addRay` and `finalize` run, so the builder API is unchanged.
-- Distance limits: one pair `min_distance_m` and `max_distance_m` (ICD-CP-03: 10 cm, 4000 cm); the
-  separate name `qualified_range_m` is dropped. The `x500.yaml` entries are aligned in a follow-up.
+- Distance limits: one pair `kMinDistanceM` and `kMaxDistanceM` (ICD-CP-03: 10 cm, 4000 cm), fixed
+  constants in `obstacle_sector_map` and not platform configuration; the separate name
+  `qualified_range_m` is dropped.
 - Self-mask (ADR 0006): `livox_ray_source` sets `masked`. A return is masked when its endpoint is
   inside a cylinder; a no-return is masked when its ray segment up to `max_distance_m` crosses a
   cylinder. A masked ray is neither obstacle nor clear evidence.

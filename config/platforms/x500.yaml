@@ -9,8 +9,6 @@ sensor:
     rpy_rad: [null, null, null]  # TBD: OPEN-029
   collision_elevation_min_rad: null  # TBD: OPEN-005
   collision_elevation_max_rad: null  # TBD: OPEN-005
-  min_distance_m: null  # TBD: OPEN-005
-  max_distance_m: null  # TBD: OPEN-006
 self_mask:  # upright cylinders in livox_frame (docs/adr/0006)
   cylinders:
     - center_m: [null, null]  # TBD: OPEN-005 (x, y of the axis)
