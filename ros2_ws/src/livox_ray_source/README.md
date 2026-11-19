@@ -1,7 +1,7 @@
 # livox_ray_source
 
 Ray source interface for `obstacle_sector_map` (ICD-CP-06). At present it holds the interface, the
-frame segmentation and a replay source; there is no Livox SDK code yet (ADR 0016).
+frame segmentation, a replay source and the self-mask; there is no Livox SDK code yet (ADR 0016).
 
 ## Input contract
 - `StreamSample`: a `RaySample` (non-zero `timestamp_ns`, `range_m`, `azimuth_rad`,
@@ -14,6 +14,10 @@ frame segmentation and a replay source; there is no Livox SDK code yet (ADR 0016
 - A window starts at the first ray with a non-zero timestamp and lasts `window_ns`
   (`coverage_window_ms` in the ICD, no default here).
 - Rays are passed on unchanged: the direction of returns and no-returns is preserved.
+- `SelfMask` (ADR 0006) sets `masked` for rays in the sensor frame: a return whose end point is in
+  an upright cylinder, a no-return whose segment up to `max_distance_m` crosses one.
+  `loadSelfMask(yaml)` refuses null, missing or empty values. `MaskingRaySource` wraps any source
+  and applies it to every frame, before any frame change or deskew.
 
 ## Usage
 ```cpp
