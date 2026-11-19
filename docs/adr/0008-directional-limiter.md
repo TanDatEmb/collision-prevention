@@ -13,5 +13,5 @@ immediate release causes brake/release chatter on transient returns.
 
 ## Consequences
 - An empty feasible set gives zero horizontal output and a blockage report.
-- The dwell and rise rate are design/test inputs, qualified by OPEN-024. Their parameter names
-  depend on the implementation choice (OPEN-026).
+- The dwell and rise rate are design/test inputs, qualified by OPEN-024. They are `cp_brake`
+  parameters `CPB_CLR_T` and `CPB_RISE` (ADR 0014).
