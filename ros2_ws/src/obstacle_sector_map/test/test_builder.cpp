@@ -55,6 +55,10 @@ TEST(SectorMapConfigTest, RejectsUnsafeValues)
   EXPECT_FALSE((SectorMapConfig{0.1F, 40.0F, 0.4F, -0.2F, 8U}).isValid());
   EXPECT_FALSE((SectorMapConfig{0.1F, 40.0F, -1.6F, 0.4F, 8U}).isValid());
   EXPECT_FALSE((SectorMapConfig{0.1F, 40.0F, -0.2F, 1.6F, 8U}).isValid());
+  EXPECT_FALSE(
+    (SectorMapConfig{0.1F, 40.0F, -obstacle_sector_map::kHalfPiRad, 0.4F, 8U}).isValid());
+  EXPECT_FALSE(
+    (SectorMapConfig{0.1F, 40.0F, -0.2F, obstacle_sector_map::kHalfPiRad, 8U}).isValid());
   EXPECT_FALSE((SectorMapConfig{0.1F, 40.0F, -0.2F, 0.4F, 0U}).isValid());
 }
 

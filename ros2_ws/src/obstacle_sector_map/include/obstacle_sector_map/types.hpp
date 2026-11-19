@@ -72,7 +72,7 @@ struct SectorMapConfig
     return std::isfinite(min_distance_m) && std::isfinite(max_distance_m) &&
            std::isfinite(min_elevation_rad) && std::isfinite(max_elevation_rad) &&
            min_distance_m > 0.0F && max_distance_m > min_distance_m &&
-           min_elevation_rad >= -kHalfPiRad && max_elevation_rad <= kHalfPiRad &&
+           min_elevation_rad > -kHalfPiRad && max_elevation_rad < kHalfPiRad &&
            min_elevation_rad < max_elevation_rad && coverage_min_rays_per_sector > 0U;
   }
 };
