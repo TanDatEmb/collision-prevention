@@ -184,6 +184,9 @@ def read_file(path, window_ms):
             data_types.add(dtype)
             time_types.add(ttype)
             lidar_types.add(ltype)
+            if lidar_id not in stats:  # origin of this lidar's windows: its first package
+                stats[lidar_id] = Stats(int(window_ms * 1e6))
+                stats[lidar_id].ts0 = ts
             counters = seen.setdefault(lidar_id, ([], []))
             counters[0].append(udp)
             counters[1].append(ts)
@@ -202,8 +205,7 @@ def read_file(path, window_ms):
                 entry[2].append(length // item)
                 frame_points += length // item
                 if len(entry[0]) >= FLUSH_PACKAGES:
-                    stats.setdefault(lidar_id, Stats(int(window_ms * 1e6))).add(
-                        dtype, *pending.pop(key))
+                    stats[lidar_id].add(dtype, *pending.pop(key))
             pos = body + length
         if pos != end:
             fail("%d unconsumed bytes after the last package: truncated file" % (end - pos))
@@ -218,7 +220,7 @@ def read_file(path, window_ms):
     if not finished and offset != size:
         fail("truncated file: %d bytes remain after the last frame" % (size - offset))
     for (lidar_id, dtype), entry in pending.items():
-        stats.setdefault(lidar_id, Stats(int(window_ms * 1e6))).add(dtype, *entry)
+        stats[lidar_id].add(dtype, *entry)
     report.update(frames=frames, packages=packages, imu_packages=imu_packages,
                   data_types=sorted(data_types), time_types=sorted(time_types),
                   lidar_types=sorted(lidar_types))
