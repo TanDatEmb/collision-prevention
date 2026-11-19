@@ -4,11 +4,11 @@ LiDAR sector-based collision prevention for PX4 multicopters (pre-alpha).
 
 ## Status
 
-Pre-alpha. G1 (requirements) is approved by the owner (sole safety approver) with one open exception;
-G2 (architecture) is not approved. The
-observation core (`obstacle_sector_map`) and the `ObstacleDistance` encoder
-(`px4_obstacle_bridge`) are reference implementations with host unit tests; their design is
-unapproved and will be reviewed at G2. Not implemented: Livox acquisition, ROS 2 nodes, the PX4 constraint component, SITL, HIL and flight
+Pre-alpha. G1 (requirements) and G2 (architecture) are approved by the owner, who is the sole
+safety approver; G1 has one open exception (HZ-CP-009). The observation core
+(`obstacle_sector_map`) and the `ObstacleDistance` encoder (`px4_obstacle_bridge`) are reference
+implementations with host unit tests, reviewed against the approved architecture (issue #5). Not
+implemented: Livox acquisition, ROS 2 nodes, the PX4 constraint component, SITL, HIL and flight
 evidence. No safety claim is made.
 
 ## How it works
