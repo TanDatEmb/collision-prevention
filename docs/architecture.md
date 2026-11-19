@@ -162,10 +162,12 @@ collision envelope. PX4 uses `MAV_FRAME_BODY_FRD`; only `px4_obstacle_bridge` co
 ICD-CP-01, 02, 03 and 05 are approved by the owner (2026-11-19) as sole safety approver.
 ICD-CP-04 is approved by the owner (2026-11-19) with its open items (OPEN-032, 033, 034, 035).
 ICD-CP-06 is approved by the owner (2026-11-19) with its open items (OPEN-030, 031, 036).
-Orin parameters (versioned, logged): `qualified_range_m` 40, `sector_map_rate_hz` 10, `coverage_window_ms` 100, `coverage_min_rays_per_sector` (no default
-until OPEN-023, never tuned after an acceptance run). The sector-boundary tolerance is a fixed
-constant of 2.0e-6 rad in `obstacle_sector_map`, approved by the owner (2026-11-19); it is a
-numerical tolerance, not a safety threshold. Raw point cloud source: ADR 0004.
+Orin parameters (versioned, logged): `sector_map_rate_hz` 10, `coverage_window_ms` 100,
+`coverage_min_rays_per_sector` (no default until OPEN-023, never tuned after an acceptance run).
+The range limits (10 cm and 40 m, ICD-CP-03) are fixed constants, not parameters. The
+sector-boundary tolerance is a fixed constant of 2.0e-6 rad in `obstacle_sector_map`, approved by
+the owner (2026-11-19); it is a numerical tolerance, not a safety threshold. Raw point cloud
+source: ADR 0004.
 
 ### ICD-CP-06 design (approved 2026-11-19)
 
