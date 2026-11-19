@@ -10,6 +10,10 @@
 namespace obstacle_sector_node
 {
 
+/// Diagnostic level of the pipeline: ERROR when the source ended or the latest frame did not
+/// encode, WARN when earlier frames failed to encode, OK otherwise.
+[[nodiscard]] uint8_t diagnosticLevel(StepStatus last_status, const PipelineStats & stats);
+
 /// ROS 2 node around SectorMapPipeline. It publishes ObstacleDistance on
 /// `/fmu/in/obstacle_distance` (best effort, volatile, keep last 2, ICD-CP-03) at
 /// `sector_map_rate_hz` (default 10, the approved baseline) and diagnostics on `status` at 1 Hz.
@@ -31,7 +35,7 @@ private:
   void publishDiagnostics();
 
   std::unique_ptr<SectorMapPipeline> _pipeline;
-  bool _source_ended{false};
+  StepStatus _last_status{StepStatus::kMessage};
   rclcpp::Publisher<px4_msgs::msg::ObstacleDistance>::SharedPtr _distance_pub;
   rclcpp::Publisher<diagnostic_msgs::msg::DiagnosticArray>::SharedPtr _diagnostics_pub;
   rclcpp::TimerBase::SharedPtr _map_timer;

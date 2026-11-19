@@ -50,6 +50,22 @@ protected:
 
 }  // namespace
 
+TEST(DiagnosticLevelTest, ReflectsEndedSourceAndEncodeFailures)
+{
+  using diagnostic_msgs::msg::DiagnosticStatus;
+  using obstacle_sector_node::diagnosticLevel;
+  using obstacle_sector_node::PipelineStats;
+  using obstacle_sector_node::StepStatus;
+
+  const PipelineStats none{};
+  const PipelineStats some_failures{10U, 8U, 2U};
+
+  EXPECT_EQ(diagnosticLevel(StepStatus::kMessage, none), DiagnosticStatus::OK);
+  EXPECT_EQ(diagnosticLevel(StepStatus::kMessage, some_failures), DiagnosticStatus::WARN);
+  EXPECT_EQ(diagnosticLevel(StepStatus::kEncodeFailed, some_failures), DiagnosticStatus::ERROR);
+  EXPECT_EQ(diagnosticLevel(StepStatus::kSourceEnded, none), DiagnosticStatus::ERROR);
+}
+
 TEST_F(NodeTest, RejectsANullSourceAndANonPositiveRate)
 {
   EXPECT_THROW(ObstacleSectorNode(nullptr, kConfig), std::invalid_argument);

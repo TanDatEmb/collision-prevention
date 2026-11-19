@@ -26,6 +26,17 @@ diagnostic_msgs::msg::KeyValue keyValue(const std::string & key, uint64_t value)
 
 }  // namespace
 
+uint8_t diagnosticLevel(StepStatus last_status, const PipelineStats & stats)
+{
+  using diagnostic_msgs::msg::DiagnosticStatus;
+
+  if (last_status == StepStatus::kSourceEnded || last_status == StepStatus::kEncodeFailed) {
+    return DiagnosticStatus::ERROR;
+  }
+
+  return stats.encode_failures > 0U ? DiagnosticStatus::WARN : DiagnosticStatus::OK;
+}
+
 ObstacleSectorNode::ObstacleSectorNode(
   std::unique_ptr<livox_ray_source::RaySource> source,
   const obstacle_sector_map::SectorMapConfig & config, const rclcpp::NodeOptions & options)
@@ -55,11 +66,10 @@ void ObstacleSectorNode::publishNext()
 {
   auto result = _pipeline->step();
 
+  _last_status = result.status;
+
   if (result.status == StepStatus::kMessage) {
     _distance_pub->publish(*result.message);
-  }
-  else if (result.status == StepStatus::kSourceEnded) {
-    _source_ended = true;
   }
 }
 
@@ -68,8 +78,10 @@ void ObstacleSectorNode::publishDiagnostics()
   diagnostic_msgs::msg::DiagnosticStatus status;
   status.name = "obstacle_sector_node";
   status.hardware_id = "obstacle_sector_node";
-  status.level = diagnostic_msgs::msg::DiagnosticStatus::OK;
-  status.message = _source_ended ? "source ended" : "running";
+  status.level = diagnosticLevel(_last_status, _pipeline->stats());
+  status.message = _last_status == StepStatus::kSourceEnded    ? "source ended"
+                   : _last_status == StepStatus::kEncodeFailed ? "latest frame did not encode"
+                                                               : "running";
   status.values.push_back(keyValue("frames", _pipeline->stats().frames));
   status.values.push_back(keyValue("messages", _pipeline->stats().messages));
   status.values.push_back(keyValue("encode_failures", _pipeline->stats().encode_failures));
