@@ -1,0 +1,8 @@
+[submodule "firmware/PX4-Autopilot"]
+	path = firmware/PX4-Autopilot
+	url = https://github.com/TanDatEmb/PX4-Autopilot.git
+	branch = collision-prevention/release-1.17
+[submodule "ros2_ws/src/px4_msgs"]
+	path = ros2_ws/src/px4_msgs
+	url = https://github.com/PX4/px4_msgs.git
+	branch = release/1.17

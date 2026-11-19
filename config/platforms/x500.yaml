@@ -1,0 +1,22 @@
+# Platform values for the X500 Gazebo SITL reference platform.
+# Every value is null until the owner approves it: never fill one without an owner decision.
+platform: x500
+sim:
+  gz_model: null  # TBD: OPEN-029
+sensor:
+  mount_pose_in_base_link:  # livox_frame -> base_link
+    xyz_m: [null, null, null]  # TBD: OPEN-029
+    rpy_rad: [null, null, null]  # TBD: OPEN-029
+  collision_elevation_min_rad: null  # TBD: OPEN-005
+  collision_elevation_max_rad: null  # TBD: OPEN-005
+  min_distance_m: null  # TBD: OPEN-005
+  max_distance_m: null  # TBD: OPEN-006
+self_mask:  # upright cylinders in livox_frame (docs/adr/0006)
+  cylinders:
+    - center_m: [null, null, null]  # TBD: OPEN-005
+      radius_m: null  # TBD: OPEN-005
+      z_min_m: null  # TBD: OPEN-005
+      z_max_m: null  # TBD: OPEN-005
+dynamics:
+  t_lag_s: null  # TBD: OPEN-004
+  a_brake_achievable_m_s2: null  # TBD: OPEN-003

@@ -1,0 +1,38 @@
+name: ci
+on:
+  pull_request:
+  push:
+    branches: [main]
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  pr-title:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-24.04
+    steps:
+      - env:
+          TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          re='^(feat|fix|docs|refactor|perf|test|build|ci|chore|revert)(\([a-z0-9_-]+\))?!?: [a-z].{1,68}$'
+          [[ "$TITLE" =~ $re ]] || { echo "::error::PR title must match: $re"; exit 1; }
+  build-test:
+    runs-on: ubuntu-24.04
+    container: ros:jazzy
+    steps:
+      - run: apt-get update && apt-get install -y --no-install-recommends git clang-format
+      - uses: actions/checkout@v4
+      - run: |
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          git submodule update --init --depth 1 ros2_ws/src/px4_msgs firmware/PX4-Autopilot
+      - run: ./tools/check_msg_parity.sh
+      - run: |
+          find ros2_ws/src/obstacle_sector_map ros2_ws/src/px4_obstacle_bridge \
+            -name '*.[ch]pp' | xargs clang-format --dry-run -Werror
+      - shell: bash
+        working-directory: ros2_ws
+        run: |
+          source /opt/ros/jazzy/setup.bash
+          colcon build --event-handlers console_cohesion+
+          colcon test --packages-select obstacle_sector_map px4_obstacle_bridge
+          colcon test-result --verbose

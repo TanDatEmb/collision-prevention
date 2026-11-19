@@ -1,0 +1,25 @@
+# Build and generated output
+build/
+install/
+log/
+compile_commands.json
+
+# Python and test caches
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+
+# ROS and simulation output
+.ros/
+*.bag
+*.db3
+*.mcap
+*.ulg
+
+# Local editor and operating-system files
+*.swp
+*.swo
+.DS_Store
