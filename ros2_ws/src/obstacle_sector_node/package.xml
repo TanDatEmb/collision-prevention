@@ -10,6 +10,9 @@
   <depend>px4_obstacle_bridge</depend>
   <depend>livox_ray_source</depend>
   <depend>px4_msgs</depend>
+  <depend>rclcpp</depend>
+  <depend>diagnostic_msgs</depend>
+  <depend>yaml-cpp</depend>
   <test_depend>ament_cmake_gtest</test_depend>
   <export>
     <build_type>ament_cmake</build_type>

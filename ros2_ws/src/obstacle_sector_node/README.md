@@ -1,23 +1,24 @@
 # obstacle_sector_node
 
-Orin side of the sector pipeline. At present it holds the ROS-free pipeline; the ROS 2 node
-(publisher, QoS, diagnostics, platform values) is a later step (issue #59).
+Orin side of the sector pipeline: a ROS-free pipeline, a platform config loader and a ROS 2 node
+class. There is no executable yet: it needs a sensor source (issue #58).
 
 ## Input contract
-- A `livox_ray_source::RaySource` (ICD-CP-06) and a `SectorMapConfig` (elevation band, coverage
-  threshold). No default is supplied here.
+- A `livox_ray_source::RaySource` (ICD-CP-06) and a `SectorMapConfig`.
+- `loadSectorMapConfig(yaml)` builds the config from the platform file (elevation band and coverage
+  count) and refuses null, missing or invalid values. The node takes the parameter
+  `sector_map_rate_hz` (default 10, the approved baseline).
 
 ## Output contract
-`SectorMapPipeline::step()` returns a `StepResult`:
-- `kMessage` with an `ObstacleDistance` (ICD-CP-03) built from one frame: reset with the frame's
-  continuity, `addRay` per ray, `finalize`, `encodeObstacleDistance`;
-- `kEncodeFailed`: no message, counted in `stats().encode_failures`; nothing replaces it;
-- `kSourceEnded`: the source has no more frames.
-The message timestamp is the earliest accepted ray time (SYS-CP-016).
+- `SectorMapPipeline::step()` returns `kMessage` (an `ObstacleDistance`, ICD-CP-03), `kEncodeFailed`
+  (no message, counted, nothing replaces it) or `kSourceEnded`. The message timestamp is the
+  earliest accepted ray time (SYS-CP-016).
+- `ObstacleSectorNode` publishes it on `/fmu/in/obstacle_distance` (best effort, volatile, keep
+  last 2) at `sector_map_rate_hz`, and `DiagnosticArray` (latest map age, frames, messages,
+  encode_failures; ERROR when the source ended or the latest frame failed) on `status` at 1 Hz.
 
 ## Usage
 ```cpp
-obstacle_sector_node::SectorMapPipeline pipeline(std::move(source), config);
-auto result = pipeline.step();
-if (result.status == obstacle_sector_node::StepStatus::kMessage) { /* publish *result.message */ }
+auto config = obstacle_sector_node::loadSectorMapConfig("config/platforms/x500.yaml");
+rclcpp::spin(std::make_shared<obstacle_sector_node::ObstacleSectorNode>(std::move(source), config));
 ```
