@@ -183,7 +183,10 @@ numerical tolerance, not a safety threshold. Raw point cloud source: ADR 0004.
 - Reference time: the deskew reference time of the rays equals the map timestamp (the earliest
   contributing ray time, SYS-CP-016), because `ObstacleDistance` carries only that timestamp. The
   heading used for the caps is the heading at that time. Another reference time cannot be
-  recovered from the wire without a new field.
+  recovered from the wire without a new field. `cp_brake` keeps a timestamped history of the PX4
+  heading estimate and interpolates it at the map timestamp (converted to PX4 time); source topic
+  and history depth are fixed at detailed design (OPEN-032). A timestamp outside the history is the
+  "no heading for the sample time" case below.
 - Frames: caps are body FRD at the sample heading. The limiter rotates them to local NED with the
   `heading_rad` in the constraint, not the current heading. If the PX4 heading or estimator state
   is itself invalid, the claim is `UNQUALIFIED` and the hook takes no action (ADR 0007). If PX4
@@ -193,7 +196,9 @@ numerical tolerance, not a safety threshold. Raw point cloud source: ADR 0004.
 - Transparent paths: with `CPB_EN` off, or before `TAKEOFF_STATE_FLIGHT` (observer-only, ADR 0009)
   whether the constraint is valid or not, the hook leaves the setpoints unchanged (SYS-CP-006, 014).
 - Invalid constraint (non-finite, malformed, stale), once `TAKEOFF_STATE_FLIGHT` is reached: zero
-  velocity toward the affected directions plus a reason. Constraint age is `status - constraint timestamp`; its staleness threshold is
+  velocity toward the affected directions plus a reason. If the whole constraint is unusable and
+  no valid cap set exists, the affected directions are unknown, so the limiter outputs zero
+  horizontal velocity (`SAFE_STOP`, SYS-CP-007), plus a reason. Constraint age is `status - constraint timestamp`; its staleness threshold is
   OPEN-032.
 - Parameters (`CPB_`): `EN`; `MAX_V` 12 m/s (PERF-01); `A_BRK` 3 m/s^2 and `JERK` 4 m/s^3 (PERF-02);
   `AGE_STOP` 0.5 s (PERF-04); `CLR_T` 0.3 s and `RISE` 2.0 m/s^2 (PERF-05); `MARGIN` 2.0 m
@@ -273,7 +278,7 @@ SITL fidelity gaps:
 | OPEN-029 | X500 SITL model name and lidar mount pose | SE | TBD | G4 |
 | OPEN-030 | Pose source for deskew: rate, latency, frame and interpolation | Perception + PX4 | TBD | G3 |
 | OPEN-031 | Clear evidence when the ray origin moves during a scan: origin-aware evidence in the map, or a conservative filter in acquisition | Perception + SE | TBD | G3 |
-| OPEN-032 | Staleness threshold and publish rate of the `cp_brake_constraints` output | PX4 + Controls | TBD | G2 |
+| OPEN-032 | Staleness threshold and publish rate of the `cp_brake_constraints` output; heading history source and depth | PX4 + Controls | TBD | G2 |
 
 OPEN-022, 023 and 025 block any operational clear-sector claim. OPEN-002 to OPEN-008 block the
 12 m/s claim. Neither blocks the implementation and SITL work that produces the evidence.
