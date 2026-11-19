@@ -181,8 +181,8 @@ numerical tolerance, not a safety threshold. Raw point cloud source: ADR 0004.
   are covered. Vertical, yaw, attitude and actuator outputs are not touched; no second control
   thread.
 - Frames: caps are body FRD at the sample heading. The limiter rotates them to local NED with the
-  `heading_rad` in the constraint, not the current heading. Invalid heading: zero velocity toward
-  the affected directions, plus a reason.
+  `heading_rad` in the constraint, not the current heading. Invalid heading: there is no valid
+  transform, so the limiter outputs zero horizontal velocity (safe-stop), plus a reason.
 - Limiter rule: ADR 0008 (directional half-plane per sector; no global minimum range).
 - Transparent paths: with `CPB_EN` off, or before `TAKEOFF_STATE_FLIGHT` with a valid inactive
   constraint, the hook leaves the setpoints unchanged (SYS-CP-006, 014).
