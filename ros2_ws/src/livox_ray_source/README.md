@@ -16,7 +16,8 @@ frame segmentation, a replay source and the self-mask; there is no Livox SDK cod
 - Rays are passed on unchanged: the direction of returns and no-returns is preserved.
 - `SelfMask` (ADR 0006) sets `masked` for rays in the sensor frame: a return whose end point is in
   an upright cylinder, a no-return whose segment up to `max_distance_m` crosses one.
-  `loadSelfMask(yaml)` refuses null, missing or empty values.
+  `loadSelfMask(yaml)` refuses null, missing or empty values. `MaskingRaySource` wraps any source
+  and applies it to every frame, before any frame change or deskew.
 
 ## Usage
 ```cpp
