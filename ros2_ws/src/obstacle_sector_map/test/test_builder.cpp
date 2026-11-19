@@ -315,3 +315,92 @@ TEST(SectorMapBuilderTest, WrapBoundaryNeverIndexesOutsideSeventyTwoSectors)
   EXPECT_FLOAT_EQ(map.sectors[36].distance_m, 9.0F);
   EXPECT_EQ(map.accepted_ray_count, 2U);
 }
+
+TEST(SectorMapBuilderTest, RejectsRayWithZeroTimestamp)
+{
+  SectorMapBuilder builder{kConfig};
+  builder.reset(true);
+  builder.addRay(makeReturn(5.0F, 0.0F, 0U));
+  builder.addRay(makeNoReturn(0.0F, 0U));
+
+  const auto map = builder.finalize();
+  EXPECT_EQ(map.accepted_ray_count, 0U);
+  EXPECT_EQ(map.rejected_ray_count, 2U);
+  EXPECT_EQ(map.sample_timestamp_ns, 0U);
+  EXPECT_EQ(map.sectors[0].state, SectorState::kUnknown);
+}
+
+TEST(SectorMapBuilderTest, RejectsReturnWithInvalidRange)
+{
+  SectorMapBuilder builder{kConfig};
+  builder.reset(true);
+  builder.addRay(makeReturn(std::numeric_limits<float>::quiet_NaN()));
+  builder.addRay(makeReturn(std::numeric_limits<float>::infinity()));
+  builder.addRay(makeReturn(0.0F));
+  builder.addRay(makeReturn(-3.0F));
+
+  const auto map = builder.finalize();
+  EXPECT_EQ(map.accepted_ray_count, 0U);
+  EXPECT_EQ(map.rejected_ray_count, 4U);
+  EXPECT_EQ(map.sectors[0].state, SectorState::kUnknown);
+}
+
+TEST(SectorMapBuilderTest, ElevationBoundsAreInclusive)
+{
+  SectorMapBuilder builder{kConfig};
+  builder.reset(true);
+
+  auto at_minimum = makeNoReturn();
+  at_minimum.elevation_rad = kConfig.min_elevation_rad;
+  builder.addRay(at_minimum);
+
+  auto at_maximum = makeNoReturn();
+  at_maximum.elevation_rad = kConfig.max_elevation_rad;
+  builder.addRay(at_maximum);
+
+  auto below_minimum = makeNoReturn();
+  below_minimum.elevation_rad = std::nextafter(kConfig.min_elevation_rad, -1.0F);
+  builder.addRay(below_minimum);
+
+  auto above_maximum = makeNoReturn();
+  above_maximum.elevation_rad = std::nextafter(kConfig.max_elevation_rad, 1.0F);
+  builder.addRay(above_maximum);
+
+  const auto map = builder.finalize();
+  EXPECT_EQ(map.accepted_ray_count, 2U);
+  EXPECT_EQ(map.rejected_ray_count, 2U);
+  EXPECT_EQ(map.sectors[0].state, SectorState::kObservedClear);
+}
+
+TEST(SectorMapBuilderTest, ResetClearsPreviousWindow)
+{
+  SectorMapBuilder builder{kConfig};
+  builder.reset(true);
+  builder.addRay(makeReturn(5.0F, 0.0F, 7'000U));
+  builder.addRay(makeNoReturn(0.0F, 7'000U));
+  builder.addRay(makeNoReturn(0.0F, 0U));
+
+  builder.reset(false);
+  const auto map = builder.finalize();
+
+  EXPECT_FALSE(map.packet_continuity_valid);
+  EXPECT_EQ(map.sample_timestamp_ns, 0U);
+  EXPECT_EQ(map.accepted_ray_count, 0U);
+  EXPECT_EQ(map.rejected_ray_count, 0U);
+  for (const auto & sector : map.sectors) {
+    EXPECT_EQ(sector.state, SectorState::kUnknown);
+    EXPECT_EQ(sector.contributing_ray_count, 0U);
+  }
+}
+
+TEST(SectorMapBuilderTest, TooCloseOverridesOccupiedInSameSector)
+{
+  SectorMapBuilder builder{kConfig};
+  builder.reset(true);
+  builder.addRay(makeReturn(8.0F));
+  builder.addRay(makeReturn(0.05F));
+
+  const auto sector = builder.finalize().sectors[0];
+  EXPECT_EQ(sector.state, SectorState::kTooClose);
+  EXPECT_FLOAT_EQ(sector.distance_m, 0.0F);
+}
