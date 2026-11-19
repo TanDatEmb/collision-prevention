@@ -1,8 +1,9 @@
 # Architecture
 
 Status: DRAFT. G1 approved by the owner on 2026-11-19 with one exception (HZ-CP-009 stays open as
-OPEN-020); safety approval of G1 is not recorded yet; G2 not approved. Values marked approved are design/test baselines, not flight-qualified
-limits. Decided items are in `docs/adr/`; platform values in `config/platforms/`.
+OPEN-020); the owner is the sole safety approver (waiver, 2026-11-19); G2 not approved. Values
+marked approved are design/test baselines, not flight-qualified limits. Decided items are in
+`docs/adr/`; platform values in `config/platforms/`.
 
 ## 1. Context and ConOps
 
@@ -156,7 +157,7 @@ collision envelope. PX4 uses `MAV_FRAME_BODY_FRD`; only `px4_obstacle_bridge` co
 | ICD-CP-04 PX4 constraint | `cp_brake` messages and limiter hook: proposed design below (ADR 0014) | Non-finite, stale or malformed constraint: zero velocity toward the affected direction plus a reason |
 | ICD-CP-05 logging | Each intervention reconstructs sample, constraint, hook, response, recovery; status 10 Hz plus every transition; Orin diagnostics 1 Hz; raw clouds only in a debug profile; raw ULog, rosbag, MCAP stay out of Git (manifests and hashes only) | Run verdict `PASS`, `FAIL` or `INVALID`; incomplete evidence is never `PASS` |
 
-ICD-CP-01, 02, 03 and 05 are approved by the owner (2026-11-19); safety approval is not recorded.
+ICD-CP-01, 02, 03 and 05 are approved by the owner (2026-11-19) as sole safety approver.
 ICD-CP-04 is not approved: the design below is proposed and awaits the owner (issue #21).
 Orin parameters (versioned, logged): `qualified_range_m` 40, `sector_map_rate_hz` 10, `coverage_window_ms` 100, `coverage_min_rays_per_sector` (no default
 until OPEN-023, never tuned after an acceptance run). The sector-boundary tolerance is a fixed
@@ -248,8 +249,8 @@ only host unit tests exist; they are not detection, integration, runtime or qual
 | Gate | Pass criteria |
 | --- | --- |
 | G0 Baseline | Repo, CI and branch rules active; submodule pins verified; message parity passes |
-| G1 Requirements | ODD, hazards and SYS-CP requirements approved by owner and safety; every hazard traces to a requirement or an OPEN item; every requirement has a verify method |
-| G2 Architecture | OPEN-026 and OPEN-027 closed by ADR 0014 and 0015; ICD-CP-01 to 05 approved; latency and CPU budgets approved; observation core reviewed against the approved architecture |
+| G1 Requirements | ODD, hazards and SYS-CP requirements approved by the owner, who is the sole safety approver until another is named (waiver, 2026-11-19); every hazard traces to a requirement or an OPEN item; every requirement has a verify method |
+| G2 Architecture | OPEN-026 and OPEN-027 closed by ADR 0014 and 0015; ICD-CP-01 to 06 approved (06 is the ray-source to map interface, still to be proposed); latency and CPU budget allocation and owners approved, values measured and approved at G5 (OPEN-004, OPEN-028); observation core reviewed against the proposed architecture (issue #5) before G2 is approved |
 | G3 Core implementation | Build clean with `-Werror`; UT groups for assigned requirements pass; Orin node composes source, map and bridge; no SITL claim |
 | G4 SITL X500 | `x500.yaml` values approved and filled; SITL scenarios pass with fidelity gaps below recorded; no detection or braking claim |
 | G5 HIL | FMU timing, DDS, load and p99 latency within the approved budget on target hardware |
@@ -271,7 +272,7 @@ SITL fidelity gaps:
 | --- | --- | --- | --- | --- |
 | OPEN-002 | Qualify the 12 m/s maximum speed | SE + Flight Test | TBD | G6 |
 | OPEN-003 | Measure braking and jerk against 3 m/s^2 and 4 m/s^3 | Controls + Flight Test | TBD | G6 |
-| OPEN-004 | Approve 350 ms latency and 500 ms gate | SE + Orin + PX4 | TBD | G2, G5 |
+| OPEN-004 | Approve 350 ms latency and 500 ms gate | SE + Orin + PX4 | TBD | G5 |
 | OPEN-005 | Approve 2.0 m margin, elevation band, self-mask values | Mechanical + SE | TBD | G4 |
 | OPEN-006 | Qualify 40 m detection for the target class | Perception + Test | TBD | G6 |
 | OPEN-007 | Freeze false-brake metric and 5% threshold | SE + Operations | TBD | G6 |
@@ -287,11 +288,11 @@ SITL fidelity gaps:
 | OPEN-023 | Freeze the ray-coverage rule and `coverage_min_rays_per_sector` | Perception + SE + Test | TBD | G4 |
 | OPEN-024 | Qualify dwell 0.3 s and rise 2.0 m/s^2 | Controls + Operations | TBD | G4, G6 |
 | OPEN-025 | Raw-ray path: embed Livox SDK2 or patch `livox_ros_driver2` | Perception + SE | TBD | G3 |
-| OPEN-028 | Orin and FMU CPU, memory and thermal budgets | Orin Lead + PX4 | TBD | G2 |
+| OPEN-028 | Orin and FMU CPU, memory and thermal budgets | Orin Lead + PX4 | TBD | G5 |
 | OPEN-029 | X500 SITL model name and lidar mount pose | SE | TBD | G4 |
 | OPEN-030 | Pose source for deskew: rate, latency, frame and interpolation | Perception + PX4 | TBD | G3 |
 | OPEN-031 | Clear evidence when the ray origin moves during a scan: origin-aware evidence in the map, or a conservative filter in acquisition | Perception + SE | TBD | G3 |
-| OPEN-032 | Staleness threshold and publish rate of the `cp_brake_constraints` output; heading history source and depth | PX4 + Controls | TBD | G2 |
+| OPEN-032 | Staleness threshold and publish rate of the `cp_brake_constraints` output; heading history source and depth | PX4 + Controls | TBD | G3 |
 | OPEN-033 | Time validity at PX4: a later map timestamp is clamped to the receive time and timesync convergence is not gated; how `cp_brake` establishes sample age and rejects such a map | PX4 + Software Integration | TBD | G3 |
 
 OPEN-022, 023 and 025 block any operational clear-sector claim. OPEN-002 to OPEN-008 block the
