@@ -9,4 +9,4 @@ Sensor geometry, self-mask and extrinsics stay in scope because they change coll
 
 ## Consequences
 - Absence of those topics here is not evidence that the installed hardware is qualified.
-- Orin thermal throttling is covered only as a latency fault (NFR-CP-007).
+- Orin thermal throttling is covered only as a latency fault (NFR-CP-004).
