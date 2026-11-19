@@ -26,6 +26,11 @@ diagnostic_msgs::msg::KeyValue keyValue(const std::string & key, uint64_t value)
 
 }  // namespace
 
+rclcpp::QoS obstacleDistanceQos()
+{
+  return rclcpp::QoS(rclcpp::KeepLast(2)).best_effort().durability_volatile();
+}
+
 int64_t mapAgeNs(int64_t now_ns, uint64_t sample_timestamp_us)
 {
   constexpr int64_t kNanosecondsPerMicrosecond{1'000};
@@ -56,8 +61,7 @@ ObstacleSectorNode::ObstacleSectorNode(
   }
 
   _distance_pub = create_publisher<px4_msgs::msg::ObstacleDistance>(
-    "/fmu/in/obstacle_distance",
-    rclcpp::QoS(rclcpp::KeepLast(2)).best_effort().durability_volatile());
+    "/fmu/in/obstacle_distance", obstacleDistanceQos());
   _diagnostics_pub = create_publisher<diagnostic_msgs::msg::DiagnosticArray>("status", 10);
 
   _map_timer = create_wall_timer(

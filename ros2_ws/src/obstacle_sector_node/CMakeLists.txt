@@ -43,6 +43,8 @@ if(BUILD_TESTING)
     X500_YAML_PATH="${CMAKE_CURRENT_SOURCE_DIR}/../../../config/platforms/x500.yaml")
   ament_add_gtest(test_node test/test_node.cpp)
   target_link_libraries(test_node obstacle_sector_node)
+  ament_add_gtest(test_node_integration test/test_node_integration.cpp)
+  target_link_libraries(test_node_integration obstacle_sector_node)
 endif()
 
 ament_export_targets(export_obstacle_sector_node HAS_LIBRARY_TARGET)
