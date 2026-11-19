@@ -191,7 +191,8 @@ def read_file(path, window_ms):
         fail("truncated file: %d bytes remain after the last frame" % (size - offset))
     for dtype, entry in pending.items():
         stats.add(dtype, *entry)
-    report.update(frames=frames, packages=packages, imu_packages=imu_packages, data_types=sorted(data_types),
+    report.update(frames=frames, packages=packages, imu_packages=imu_packages,
+                  data_types=sorted(data_types),
                   time_types=sorted(time_types), lidar_types=sorted(lidar_types))
     packets = {}
     for lidar_id, (counters, stamps) in sorted(per_lidar.items()):
@@ -229,6 +230,10 @@ def read_file(path, window_ms):
             "window_ms": window_ms, "windows": len(complete), "min": int(cells.min()),
             "p5": int(np.percentile(cells, 5)), "median": int(np.median(cells)),
             "max": int(cells.max()), "empty_cells": int((cells == 0).sum())}
+    else:
+        report["rays_per_sector_per_window"] = {
+            "window_ms": window_ms, "windows": 0, "min": None, "p5": None, "median": None,
+            "max": None, "empty_cells": None}
     return report
 
 
