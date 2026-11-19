@@ -124,7 +124,7 @@ flowchart LR
 
 | Component | Status | Owns | Does not own | Reqs |
 | --- | --- | --- | --- | --- |
-| `livox_ray_source` | Not implemented | Raw spherical samples: direction, depth, per-sample time, packet continuity; sensor tag and confidence filtering | Clear decisions, speed limits | SYS-CP-011, 016 |
+| `livox_ray_source` | Not implemented | Raw spherical samples: direction, depth, per-sample time, packet continuity; deskew (ADR 0015); sensor tag and confidence filtering | Clear decisions, speed limits | SYS-CP-011, 016 |
 | `obstacle_sector_map` (pure C++) | Reference impl | Validation, masked/return-kind handling, sector classification, nearest projected range; no ROS or PX4 types | Frames, units, safety policy, sensor tags | SYS-CP-004, 011, 015 |
 | `px4_obstacle_bridge` | Reference impl | FLU/CCW to BODY_FRD/CW, cm conversion, fail-closed encoding | Filtering to improve results | SYS-CP-002, NFR-CP-002 |
 | Orin node | Not implemented | One process composing source, map, bridge; publishes `/fmu/in/obstacle_distance` | Safety policy | SYS-CP-016, NFR-CP-003 |
@@ -192,7 +192,7 @@ only host unit tests exist; they are not detection, integration, runtime or qual
 | --- | --- |
 | G0 Baseline | Repo, CI and branch rules active; submodule pins verified; message parity passes |
 | G1 Requirements | ODD, hazards and SYS-CP requirements approved by owner and safety; every hazard traces to a requirement or an OPEN item; every requirement has a verify method |
-| G2 Architecture | OPEN-027 decided as an ADR (OPEN-026 closed by ADR 0014); ICD-CP-01 to 05 approved; latency and CPU budgets approved; observation core reviewed against the approved architecture |
+| G2 Architecture | OPEN-026 and OPEN-027 closed by ADR 0014 and 0015; ICD-CP-01 to 05 approved; latency and CPU budgets approved; observation core reviewed against the approved architecture |
 | G3 Core implementation | Build clean with `-Werror`; UT groups for assigned requirements pass; Orin node composes source, map and bridge; no SITL claim |
 | G4 SITL X500 | `x500.yaml` values approved and filled; SITL scenarios pass with fidelity gaps below recorded; no detection or braking claim |
 | G5 HIL | FMU timing, DDS, load and p99 latency within the approved budget on target hardware |
@@ -202,7 +202,7 @@ SITL fidelity gaps:
 
 | Gap | Effect | Mitigation in sim | Gate that checks it |
 | --- | --- | --- | --- |
-| Per-point timestamp and deskew | Sim stamps a scan once and has no motion distortion; skew effects are invisible (OPEN-027) | Log per-ray time; inject synthetic skew in replay | G5 bench rotation, G6 |
+| Per-point timestamp and deskew | Sim stamps a scan once and has no motion distortion; skew effects are invisible (ADR 0015) | Log per-ray time; inject synthetic skew in replay | G5 bench rotation, G6 |
 | Non-repetitive scan and ray density | A regular sim pattern hides coverage gaps; the coverage rule cannot be tuned in sim (OPEN-023) | Randomised or Livox-like pattern; synthetic gap tests | G5 with real data, RPL-003 |
 | Self-mask, landing legs, propellers | X500 geometry and rotating props differ from the target; a sim lidar may ignore them | Model the mask cylinders from the X500 model; inject self-returns | G5 mounting data (RPL-001), G6 |
 | Noise, dropout, reflectivity | Ideal sim returns hide false obstacles and missing returns | Noise and dropout injection; fault injection | RPL-002, G6 |
@@ -228,13 +228,13 @@ SITL fidelity gaps:
 | OPEN-016 | Record FMU V6X hardware revision, bootloader, baseline | Hardware + Test | TBD | G5 |
 | OPEN-019 | Action when CP degradation coincides with invalid estimate or authority | SE + Safety + PX4 | TBD | G2 |
 | OPEN-020 | Pilot enable, disable and override procedure; HZ-CP-009 has no requirement | SE + Operations | TBD | G6 (accepted G1 exception) |
-| OPEN-022 | Pin Livox SDK2 and firmware; zero-depth, too-close, tag and packet-loss semantics | Perception + Test | TBD | G3 |
+| OPEN-022 | Pin Livox SDK2 and firmware; per-point timestamps, zero-depth, too-close, tag and packet-loss semantics | Perception + Test | TBD | G3 |
 | OPEN-023 | Freeze the ray-coverage rule and `coverage_min_rays_per_sector`; boundary epsilon | Perception + SE + Test | TBD | G4 |
 | OPEN-024 | Qualify dwell 0.3 s and rise 2.0 m/s^2 | Controls + Operations | TBD | G4, G6 |
 | OPEN-025 | Raw-ray path: embed Livox SDK2 or patch `livox_ros_driver2` | Perception + SE | TBD | G3 |
-| OPEN-027 | Deskew in acquisition, or widen the influence zone with velocity and yaw rate | Perception + SE | TBD | G2 |
 | OPEN-028 | Orin and FMU CPU, memory and thermal budgets | Orin Lead + PX4 | TBD | G2 |
 | OPEN-029 | X500 SITL model name and lidar mount pose | SE | TBD | G4 |
+| OPEN-030 | Pose source for deskew: rate, latency, frame and interpolation | Perception + PX4 | TBD | G3 |
 
 OPEN-022, 023 and 025 block any operational clear-sector claim. OPEN-002 to OPEN-008 block the
 12 m/s claim. Neither blocks the implementation and SITL work that produces the evidence.
