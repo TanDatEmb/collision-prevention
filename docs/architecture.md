@@ -229,7 +229,7 @@ SITL fidelity gaps:
 | OPEN-019 | Action when CP degradation coincides with invalid estimate or authority | SE + Safety + PX4 | TBD | G2 |
 | OPEN-020 | Pilot enable, disable and override procedure; HZ-CP-009 has no requirement | SE + Operations | TBD | G6 (accepted G1 exception) |
 | OPEN-022 | Pin Livox SDK2 and firmware; per-point timestamps, zero-depth, too-close, tag and packet-loss semantics | Perception + Test | TBD | G3 |
-| OPEN-023 | Freeze the ray-coverage rule and `coverage_min_rays_per_sector`; boundary epsilon | Perception + SE + Test | TBD | G4 |
+| OPEN-023 | Freeze the ray-coverage rule and `coverage_min_rays_per_sector` | Perception + SE + Test | TBD | G4 |
 | OPEN-024 | Qualify dwell 0.3 s and rise 2.0 m/s^2 | Controls + Operations | TBD | G4, G6 |
 | OPEN-025 | Raw-ray path: embed Livox SDK2 or patch `livox_ros_driver2` | Perception + SE | TBD | G3 |
 | OPEN-028 | Orin and FMU CPU, memory and thermal budgets | Orin Lead + PX4 | TBD | G2 |

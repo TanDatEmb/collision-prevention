@@ -32,15 +32,13 @@ std::size_t nearestSectorIndex(float wrapped_azimuth_rad)
   return rounded_index % kSectorCount;
 }
 
-bool liesOnSectorBoundary(float wrapped_azimuth_rad, float epsilon_rad)
+bool liesOnSectorBoundary(float wrapped_azimuth_rad)
 {
   const double sector_width_rad = static_cast<double>(kSectorWidthRad);
   const double wrapped_rad = static_cast<double>(wrapped_azimuth_rad);
   const double lower_sector = std::floor(wrapped_rad / sector_width_rad);
   const double boundary_rad = (lower_sector + 0.5) * sector_width_rad;
-  const double effective_epsilon_rad =
-    std::max(static_cast<double>(epsilon_rad), static_cast<double>(kMinSectorBoundaryEpsilonRad));
-  return std::fabs(wrapped_rad - boundary_rad) <= effective_epsilon_rad;
+  return std::fabs(wrapped_rad - boundary_rad) <= static_cast<double>(kSectorBoundaryEpsilonRad);
 }
 
 float horizontalProjectedRange(const RaySample & ray)
@@ -95,9 +93,7 @@ void SectorMapBuilder::addRay(const RaySample & ray)
   const bool has_obstacle_evidence = ray.return_kind == RayReturnKind::kReturn &&
                                      horizontalProjectedRange(ray) <= _config.max_distance_m;
 
-  if (
-    has_obstacle_evidence &&
-    liesOnSectorBoundary(wrapped_azimuth_rad, _config.sector_boundary_epsilon_rad)) {
+  if (has_obstacle_evidence && liesOnSectorBoundary(wrapped_azimuth_rad)) {
     const auto lower_index =
       static_cast<std::size_t>(std::floor(wrapped_azimuth_rad / kSectorWidthRad)) % kSectorCount;
     updateSector(lower_index, ray);
