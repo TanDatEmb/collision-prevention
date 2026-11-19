@@ -146,6 +146,8 @@ def window_summary(stats, window_ms):
 
 
 def read_file(path, window_ms):
+    if not math.isfinite(window_ms) or int(window_ms * 1e6) < 1:
+        fail("window must be at least 1 ns (got %r ms)" % window_ms)
     with open(path, "rb") as handle:
         buf = mmap.mmap(handle.fileno(), 0, access=mmap.ACCESS_READ)
     size = len(buf)
@@ -320,6 +322,12 @@ def selftest():
         fail("selftest: spherical zero-depth sample not counted")
     if sum(int(row.sum()) for row in spherical.windows.values()) != 1:
         fail("selftest: spherical zero-depth sample missing from the sector tally")
+    for bad_window in (0.0, 1e-9, float("nan")):
+        try:
+            read_file("unused", bad_window)
+        except SystemExit:
+            continue
+        fail("selftest: window %r was accepted" % bad_window)
     cases = {"trailing bytes": blob + bytes(5), "cut frame header": cut,
              "unknown data type": bytes(bad_type)}
     for name, data in cases.items():
