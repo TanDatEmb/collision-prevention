@@ -30,9 +30,10 @@ config/platforms/x500.yaml     platform values (X500 SITL; all TBD)
 docs/architecture.md           scope, requirements, ICDs, hazards, V&V, open items
 docs/adr/                      accepted architecture decisions
 firmware/PX4-Autopilot         PX4 fork (submodule, pinned)
-ros2_ws/src/obstacle_sector_map    platform-neutral sector map library
-ros2_ws/src/px4_obstacle_bridge    ObstacleDistance encoder
-ros2_ws/src/px4_msgs           PX4 ROS 2 messages (submodule, pinned)
+ros2_ws/src/livox_ray_source     ray source interface, frame segmentation, replay source
+ros2_ws/src/obstacle_sector_map   platform-neutral sector map library
+ros2_ws/src/px4_obstacle_bridge   ObstacleDistance encoder
+ros2_ws/src/px4_msgs              PX4 ROS 2 messages (submodule, pinned)
 tools/check_msg_parity.sh      checks PX4 and px4_msgs message definitions match
 .agents/skills/                commit and pr skills (symlinked from .claude/skills/)
 .github/workflows/ci.yml       PR title check, format check, build and test
@@ -57,7 +58,8 @@ source /opt/ros/jazzy/setup.bash
 ./tools/check_msg_parity.sh
 cd ros2_ws
 colcon build --parallel-workers 2
-colcon test --parallel-workers 2 --packages-select obstacle_sector_map px4_obstacle_bridge
+colcon test --parallel-workers 2 --packages-select obstacle_sector_map px4_obstacle_bridge \
+  livox_ray_source
 colcon test-result --verbose
 ```
 

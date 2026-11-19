@@ -28,11 +28,12 @@ jobs:
       - run: ./tools/check_msg_parity.sh
       - run: |
           find ros2_ws/src/obstacle_sector_map ros2_ws/src/px4_obstacle_bridge \
+            ros2_ws/src/livox_ray_source \
             -name '*.[ch]pp' | xargs clang-format --dry-run -Werror
       - shell: bash
         working-directory: ros2_ws
         run: |
           source /opt/ros/jazzy/setup.bash
           colcon build --event-handlers console_cohesion+
-          colcon test --packages-select obstacle_sector_map px4_obstacle_bridge
+          colcon test --packages-select obstacle_sector_map px4_obstacle_bridge livox_ray_source
           colcon test-result --verbose
