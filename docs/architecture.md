@@ -284,12 +284,13 @@ source: ADR 0004.
 | Sector map rate | 10 Hz nominal | Approved baseline |
 | Wire load | one 72-sector message per 100 ms | Measure at HIL |
 | Orin CPU, memory, thermal | TBD: OPEN-028 | Open |
-| FMU CPU and scheduling | TBD: OPEN-028 | Open |
+| FMU CPU and scheduling | `cp_brake` and the hook together add at most 10 points of CPU load on top of PX4 multicopter flight (owner, 2026-11-19, from the owner's experience of 40 to 50% load on the Pixhawk 6X; not measured by the project) | Approved baseline, measured at G5 (OPEN-028) |
 
 Attitude response is in the measured braking envelope, not in PERF-03 (ADR 0005).
 
 Allocation and owners (owner decision 2026-11-19: G2 approves this allocation; values are measured
-and approved at G5, OPEN-004 and OPEN-028; no number is entered before then):
+and approved at G5, OPEN-004 and OPEN-028; no number is entered before then, except the FMU CPU
+ceiling above):
 
 | Budget item | Owner role | How it is measured |
 | --- | --- | --- |
@@ -393,6 +394,11 @@ Options, none chosen (the owner decides; they may be combined):
 - Use another board; this changes the target hardware recorded in OPEN-016.
 - Reduce the module footprint; it must recover at least the 52 bytes of the reviewed module plus
   what #64 and #65 add (not yet measured). No byte target or margin is set here: TBD.
+
+Owner decision, 2026-11-19: the VTOL modules stay in the image. Checked in the pinned PX4
+(`ROMFS/px4fmu_common/init.d/rc.vtol_apps`): the VTOL start script also starts `fw_rate_control`,
+`fw_att_control` and `fw_mode_manager`, so those stay too. Still undecided: which other modules to
+drop, whether to save flash in another way, any flash margin and any size target.
 
 Blocks #64, #65 and #66 on `fmu-v6x`. Which modules to drop, any flash margin and any size target
 stay TBD until approved by the owner.
