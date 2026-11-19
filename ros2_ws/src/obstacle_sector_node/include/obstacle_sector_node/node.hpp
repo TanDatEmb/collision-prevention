@@ -16,6 +16,9 @@ namespace obstacle_sector_node
 /// encode, WARN when earlier frames failed to encode, OK otherwise.
 [[nodiscard]] uint8_t diagnosticLevel(StepStatus last_status, const PipelineStats & stats);
 
+/// QoS of the ObstacleDistance publisher (ICD-CP-03): best effort, volatile, keep last 2.
+[[nodiscard]] rclcpp::QoS obstacleDistanceQos();
+
 /// Age of a map in nanoseconds: `now_ns` minus the map's sample timestamp in microseconds. Both
 /// must be on the same clock (the two time profiles of ADR 0003); a negative result means the
 /// sample time is ahead of the node clock.
