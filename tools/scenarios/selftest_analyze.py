@@ -82,8 +82,8 @@ def run(name, rows, expect, states=((0, 3), (7.5, 4)), wall=22.0, extra=(), **kw
         res = json.loads(p.stdout)
     except ValueError:
         res = {"verdict": "NO JSON: " + p.stderr.strip()[-60:]}
-    code = {"PASS": 0, "FAIL": 1, "INVALID": 2}.get(res["verdict"], 99)
-    ok = res["verdict"] == expect and code == {"PASS": 0, "FAIL": 1, "INVALID": 2}[expect]
+    # the process exit code is checked itself, not derived from the verdict that was printed
+    ok = res["verdict"] == expect and p.returncode == {"PASS": 0, "FAIL": 1, "INVALID": 2}[expect]
     print(("PASS" if ok else "FAIL"), "%-58s" % name, "got", res["verdict"], "expected", expect,
           "|", (res.get("error") or "")[:70])
     return ok
