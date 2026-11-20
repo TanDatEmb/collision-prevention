@@ -226,6 +226,11 @@ source: ADR 0004.
   state is valid but no heading exists for the sample time, there is no valid transform, so the
   limiter outputs zero horizontal velocity and clears the horizontal feed-forward acceleration
   (safe-stop, SYS-CP-007), plus a reason.
+- Time alignment (fork PR #7, ADR 0019): a map whose alignment to PX4 time is not good, judged from
+  `timesync_status`, is not used; its sectors are unknown, never free, and the reason flag is
+  `REASON_TIME_SYNC`. The limits are OPEN-033 (sentinels). The heading history is fed from
+  `vehicle_local_position` and keyed by `timestamp_sample`; a reset counter change invalidates
+  interpolation across it.
 - Limiter rule: ADR 0008 (directional half-plane per sector; no global minimum range).
 - Transparent paths: with `CPB_EN` off, or before `TAKEOFF_STATE_FLIGHT` (observer-only, ADR 0009)
   whether the constraint is valid or not, the hook leaves the setpoints unchanged (SYS-CP-006, 014).
@@ -378,8 +383,8 @@ SITL fidelity gaps:
 | OPEN-029 | X500 SITL model name and lidar mount pose | SE | TBD | G4 |
 | OPEN-030 | Measured rate and latency of `VehicleOdometry` for deskew and the interpolation scheme (source: ADR 0018) | Perception + PX4 | TBD | G3 |
 | OPEN-031 | Clear evidence when the ray origin moves during a scan: origin-aware evidence in the map, or a conservative filter in acquisition (chosen, ADR 0018); its threshold value | Perception + SE | TBD | G3 |
-| OPEN-032 | Staleness threshold and publish rate of the `cp_brake_constraints` output; heading history source and depth; sentinel until the G4 SITL measurements; until then the module evaluates and publishes every 50 ms (an implementation value of fork PR #6, not approved) | PX4 + Controls | TBD | G4 |
-| OPEN-033 | Numeric limits for judging the sync from `timesync_status` at PX4 and for an excessive map age; the Orin-side rejection of a negative age is implemented in a separate issue (structure decided) | PX4 + Software Integration | TBD | G5 |
+| OPEN-032 | Staleness threshold and publish rate of the `cp_brake_constraints` output; heading history source and depth (source `vehicle_local_position`, chosen in fork PR #7 from Gazebo SITL measurements: 125 Hz for it and for `vehicle_odometry`, 250 Hz for `vehicle_attitude`, `timestamp - timestamp_sample` mean 3.5 ms and p99 24 ms; the depth and the gap limit are the sentinels `CPB_HDG_DEPTH` and `CPB_HDG_GAP`, TBD until the G4 SITL measurements); until then the module evaluates and publishes every 50 ms (an implementation value of fork PR #6, not approved) | PX4 + Controls | TBD | G4 |
+| OPEN-033 | Numeric limits for judging the sync from `timesync_status` at PX4 and for an excessive map age (the gate of fork PR #7 judges three quantities, the age of the latest `timesync_status`, its round-trip time and the absolute difference of the observed and estimated offset, against the sentinels `CPB_SYNC_AGE`, `CPB_SYNC_RTT` and `CPB_SYNC_OFF`, measured at G5; it is on only when `UXRCE_DDS_SYNCT` is not 0, and a NuttX build with it off is a configuration fault); the Orin-side rejection of a negative age is implemented in a separate issue (structure decided) | PX4 + Software Integration | TBD | G5 |
 | OPEN-035 | Hook interaction with FlightTask feedback of the published setpoint, the XY velocity integrator and the tilt limit; V1 handling decided by the owner on 2026-11-20: the hook is a stateless pure function applied identically on every `update()` call (PX4 calls it up to three times per cycle), the read-back of the limited setpoint by `FlightTask` is accepted, the XY velocity integrator gets no special handling, and any windup seen in SITL is recorded | Controls + PX4 | TBD | G4 |
 | OPEN-036 | Vertical collision envelope as a height band: how a no-return ray, which has no endpoint, is tested against it; builder change from the elevation band | Perception + SE | TBD | G3 |
 | OPEN-037 | `fmu-v6x` FLASH budget: `cp_brake` does not fit the board image; decided 2026-11-20: build `fmu-v6x` with the PX4 multicopter variant; `cp_brake` is enabled and builds there (fork PR #5, #93; facts and options below) | Project Owner + PX4 | TBD | #64, #65, #66 on `fmu-v6x` |
@@ -431,5 +436,7 @@ unchanged and has no `cp_brake`. Still undecided: any flash margin and any size 
 
 #64 (the state machine, fork PR `TanDatEmb/PX4-Autopilot#6`) is in the image: on the pointer
 commit `2646f97dce` it is 1,886,276 bytes (95.94%), 79,804 bytes free, 800 bytes more than on
-`e8ed65e026` (measured 2026-11-20). #65 adds code whose size is not measured. Any flash margin and
-any size target stay TBD until approved by the owner.
+`e8ed65e026`. #94 (the heading history and the time gate, fork PR `TanDatEmb/PX4-Autopilot#7`)
+adds 3,472 bytes: on `e539f947b0` the image is 1,889,748 bytes (96.12%), 76,332 bytes free
+(measured 2026-11-20). #65 adds code whose size is not measured. Any flash margin and any size
+target stay TBD until approved by the owner.
