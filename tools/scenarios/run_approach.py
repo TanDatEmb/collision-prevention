@@ -6,7 +6,10 @@ usage: run_approach.py --speed 5 [--distance 100] [--altitude 12] [--toggle-cpb]
 The vehicle takes off in Mission mode and flies a straight leg east at --speed toward a wall that the
 caller has placed (see spawn_wall.sh). The run ends when the vehicle has been at rest for 5 s after
 moving, when the leg ends, or after --timeout seconds. It prints one JSON line with what it saw; the
-verdict comes from analyze_stop.py on the ULog, not from this script. Bench values only: nothing here
+verdict comes from analyze_stop.py on the ULog, not from this script. Exit code 0: the leg ran;
+3 a parameter was not applied; 4 the vehicle did not take off; 5 cp_brake was not enforcing, so the leg
+was not started; 6 the mission was refused; 7 the leg did not start (JSON field "error" says which).
+Bench values only: nothing here
 is an approved platform value.
 
 The vehicle first takes off and hovers; with --px4-bin the runner then reads `px4-cp_brake status` and

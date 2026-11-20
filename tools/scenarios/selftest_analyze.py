@@ -100,7 +100,7 @@ results.append(run("hook-on, CP brakes and stops short", series(stop_ys(stop_at=
 results.append(run("never approaches the wall", series([0.0] * 500), "INVALID"))
 results.append(run("one speed spike then zeros", [(0.0, 0.0, 0.0), (0.1, 0.0, 0.6)] + [(0.1 + 0.1 * i, 0.0, 0.0) for i in range(1, 80)],
                    "INVALID"))
-results.append(run("rest declared across a 5 s time gap (still moving)",
+results.append(run("time gap inside the approach (rest across a gap)",
                    [(0.1 * i, 0.25 * i, 5.0) for i in range(20)] + [(2.5, 10.0, 0.05), (7.5, 10.0, 3.0)], "INVALID"))
 results.append(run("CP disabled during the approach", series(stop_ys()), "INVALID", states=((0, 0),), extra=REQ))
 results.append(run("SAFE_STOP the whole approach, stops by itself", series(stop_ys()), "INVALID", states=((0, 5),), extra=REQ))
