@@ -2,10 +2,9 @@
 <!-- Bench copy of the lidar_2d_v2 model of PX4, with the same name so that it replaces the stock one when
      this models directory comes first in GZ_SIM_RESOURCE_PATH. Differences: 360 degrees (the stock model
      scans 270 degrees and leaves a blind rear that makes every rear sector unknown, cap 0), 1440 samples
-     (4 per degree, as the stock 1080 over 270 degrees) and a 40 m range, the qualified range of the map (the
-     stock model reaches 30 m, below it; a longer range makes returns beyond 40 m, which the present
-     builder neither counts as obstacle nor as clear, leave the sector unknown and stop the vehicle,
-     see issue #122). The real Mid-360S is 360 degrees. Simulation asset, not a platform value. -->
+     (4 per degree, as the stock 1080 over 270 degrees) and a 50 m range, beyond the 40 m qualified range of
+     the map, so that the runs exercise the returns the builder counts as clear evidence (issue #127; the
+     stock model reaches 30 m, below the qualified range, and leaves every empty sector unknown). The real Mid-360S is 360 degrees. Simulation asset, not a platform value. -->
 <sdf version="1.6">
   <model name="lidar_2d_v2">
     <link name="link">
@@ -68,7 +67,7 @@
           </scan>
           <range>
             <min>0.1</min>
-            <max>40</max>
+            <max>50</max>
             <resolution>0.01</resolution>
           </range>
           <noise>

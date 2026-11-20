@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Fly one approach to a wall in PX4 SITL over MAVLink and record the vehicle position (bench tool).
 
-usage: run_approach.py --speed 5 [--distance 100] [--altitude 12] [--toggle-cpb] [--connect udpin:0.0.0.0:14550]
+usage: run_approach.py --speed 5 [--distance 100] [--altitude 12] [--toggle-cpb] [--baseline] [--connect udpin:0.0.0.0:14550]
 
 The vehicle takes off in Mission mode and flies a straight leg east at --speed toward a wall that the
 caller has placed (see spawn_wall.sh). The run ends when the vehicle has been at rest for 5 s after
@@ -116,6 +116,8 @@ def main():
     ap.add_argument("--toggle-cpb", action="store_true", help="always toggle CPB_EN 0 then 1 (issue #112)")
     ap.add_argument("--px4-bin", default=None, help="path of px4-cp_brake; enables the wait for enforcing")
     ap.add_argument("--hover-s", type=float, default=20.0, help="hover time before the leg [s]")
+    ap.add_argument("--baseline", action="store_true",
+                    help="CPB_EN is 0 on purpose: do not wait for cp_brake to enforce (needs --px4-bin for arming)")
     a = ap.parse_args()
 
     link = mavutil.mavlink_connection(a.connect)
@@ -166,7 +168,7 @@ def main():
     time.sleep(a.hover_s)  # the PX4 heading must be good for control before CP can enforce
 
     result["toggled"] = False
-    if a.px4_bin:
+    if a.px4_bin and not a.baseline:
         deadline = time.time() + 60
         while time.time() < deadline:
             st = cp_state(a.px4_bin)
