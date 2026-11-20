@@ -52,7 +52,7 @@ leveling, sector evidence, direction-dependent braking, travelled distance, star
 | --- | --- | --- | --- |
 | `livox_ray_source` | Rework | `MaskingRaySource` already wraps a `RaySource`; `RaySample` has direction, range, time, `masked`, `return_kind` | Deskew and leveling as one more wrapper (D1) |
 | `obstacle_sector_map` | Rework | Pure C++, 288 lines, tested | Sector evidence of D2 replaces the nearest-return and clear-count rules |
-| `px4_obstacle_bridge` | Keep | Encoding only, tested | None |
+| `px4_obstacle_bridge` | Rework, small | Encoding, plus a check that rejects the whole map when a clear sector has fewer than `coverage_min_rays_per_sector` no-return rays (`encoder.cpp`) | That check follows D2: a sector is clear when its certified free distance reaches the qualified range with `n_free` rays of any kind; otherwise one sector valid under D2 would suppress all 72 and lead to a stale-map stop |
 | `obstacle_sector_node` | Rework | Composes source, map, bridge | Pose input for both sources, parameters for D1 and D2 |
 | `cp_brake` | Rework | State machine, cap law, dwell and rise, time gate meet their scenarios | Direction-dependent braking (D3), travelled distance (D4), start-up (D5) |
 | Limiter hook (fork PR #8) | Rework, small | Stateless pure function between position and velocity control | Feed-forward rule simplified (table below); scope per D6 |
@@ -83,9 +83,11 @@ elevation.
 
 ### D1. Deskew and leveling are one transform (FEAT-04, 05; SYS-CP-016, 017)
 For a ray at time `t_i`: sensor point, calibrated mount (10 degrees down) to the body frame, `q(t_i)`
-from `VehicleOdometry` (interpolated) to NED, add `x(t_i) - x(t_ref)`, then rotate by the heading at
-`t_ref` only. The result is in the gravity-aligned, yaw-only frame of ICD-CP-06 at the map reference
-time. One pose chain and one interpolation (ADR 0018, 0019); the origin-motion filter of ADR 0018
+from `VehicleOdometry` (interpolated) to NED, add `x(t_i) - x(t_ref)`, rotate by minus the heading at
+`t_ref` (giving a heading-aligned forward-right-down frame), then convert to forward-left-up by
+negating the right and down axes. The result is in the gravity-aligned, yaw-only FLU frame of
+ICD-CP-06 at the map reference time, which the bridge then converts to FRD sectors as today; omitting
+the last step would mirror lateral obstacles and flip the height band. One pose chain and one interpolation (ADR 0018, 0019); the origin-motion filter of ADR 0018
 (OPEN-031) uses the same `x(t_i) - x(t_ref)`. The planar-scan source for Gazebo gets the same
 transform, so the SITL path exercises leveling (OS-11 to OS-13).
 
@@ -98,17 +100,18 @@ level frame the vertical envelope is a height band from `-h_down` to `+h_up` aro
   `n_obstacle` returns. A few isolated returns never fill a window, so they do not brake the vehicle
   (the owner's counting rule). A window below 0.10 m gives too close (ICD-CP-03 distance 0).
 - Certified free distance: every ray that is not obstacle evidence proves the band empty along its
-  path up to where it leaves the band or ends: `r_free = min(end, h / sin|elevation|)`, with `h_up`
-  above the horizon, `h_down` below it, and `end` the return range or, for a no-return, the qualified
-  range (40 m, DET-01). For each half of the band, the certified distance is the `n_free`-th largest
-  `r_free`; the sector's free distance is the smaller of the two halves.
+  path up to where it leaves the band or ends, measured horizontally like every sector distance:
+  `r_free = min(end * cos(elevation), h / tan|elevation|)`, with `h_up` above the horizon, `h_down`
+  below it, and `end` the return range or, for a no-return, the qualified range (40 m, DET-01). For
+  each half of the band, the certified distance is the `n_free`-th largest `r_free`; the sector's free
+  distance is the smaller of the two halves.
 - The distance sent for the sector is the smaller of the confirmed obstacle distance and the free
   distance. A free distance at the qualified range with no obstacle is clear (`max_distance + 1`); no
   evidence at all is unknown. PX4 computes the cap as if an obstacle stood at that distance.
 
 What this gives: above the obstacles, near-horizon no-returns and ground returns below the band
 certify a long free distance, so the vehicle flies at the speed it allows (OS-33); with `h` = 1 m a
-lowest ray at 5 degrees still certifies about 11.5 m. When pitch or roll takes part of the band out of
+lowest ray at 5 degrees still certifies about 11.4 m horizontally. When pitch or roll takes part of the band out of
 view, that half certifies a shorter distance and the vehicle slows instead of stopping at once
 (OS-12 to OS-14); with no evidence the cap is 0. The ground is rejected by height: it lies below the
 band when the height above ground is at least the minimum of OPEN-038. Values `dr`, `n_obstacle`,
@@ -132,10 +135,13 @@ acceleration and maximum speed for the lateral and rear classes; the present `CP
 
 ### D4. Distance moved since the sample (FEAT-11; SYS-CP-026; #115)
 The travelled distance toward sector `i` is the present velocity toward it times the age of the map,
-`max(0, v_now . u_i) * (now - sample)`, with `v_now` from `vehicle_local_position` and `u_i` at the
-sample heading, passed to `sectorSpeedCap`. No position history is added. The error is the change of
-velocity during the age, at most `0.5 * a * age^2` (0.18 m at 3 m/s^2 and 0.35 s), inside the margin.
-An invalid velocity means the map is not used (unknown). The cp_brake cycle between publish and hook
+plus an allowance for a vehicle that slowed down during that age:
+`max(0, v_now . u_i) * age + 0.5 * a_bound * age^2`, with `age = now - sample`, `v_now` from
+`vehicle_local_position`, `u_i` at the sample heading, and `a_bound` an upper bound on the horizontal
+deceleration (a parameter, TBD, no smaller than the braking accelerations of D3), passed to
+`sectorSpeedCap`. The allowance keeps the estimate on the safe side, so `CPB_MARGIN` stays a full
+clearance and is never spent on this error (at 3 m/s^2 and a 0.5 s map it is 0.375 m). No position
+history is added. An invalid velocity means the map is not used (unknown). The cp_brake cycle between publish and hook
 is part of `CPB_T_LAT`, which is measured with that cycle included (SYS-CP-027).
 
 ### D5. Start-up (FEAT-14; SYS-CP-024; #112; OPEN-042)
@@ -181,7 +187,7 @@ owner-approved pass criterion before it counts (OPEN-043).
 | --- | --- |
 | ICD-CP-01 | Mount pitched down 10 degrees (owner decision); calibration of that pose |
 | ICD-CP-02 | None |
-| ICD-CP-03 | No field changes. A sector distance may now be a certified free limit rather than a seen obstacle; PX4 treats both the same way, so only the text changes |
+| ICD-CP-03 | No field changes. A sector distance may now be a certified free limit rather than a seen obstacle; PX4 treats both the same way, so only the text and the bridge's clear-evidence check change |
 | ICD-CP-04 | Reason bits for the start-up and for an unavailable velocity; the hook topic; the lateral and rear parameters; text correction |
 | ICD-CP-05 | None |
 | ICD-CP-06 | None: `RaySample` already carries direction, range, time, `masked`, `return_kind` in the level frame |
@@ -197,7 +203,7 @@ limiter in place of the setpoint limiter.
 
 ## Consequences
 - Issues to open after approval, one task each: deskew and leveling with the pose input (extends #57),
-  sector evidence (D2), braking by direction and the rear limit (D3), travelled distance (D4, #115),
+  sector evidence in the map and the bridge (D2), braking by direction and the rear limit (D3), travelled distance (D4, #115),
   start-up (D5, #112), mode scope (D6, #113), scenario harness and the `CPB_T_LAT` measurement (D7),
   and the feed-forward change in fork PR #8. Order: harness and the baseline stopping proof first (it
   needs no new function), then leveling, sector evidence, braking by direction, travelled distance.
