@@ -13,9 +13,11 @@ find_package(livox_ray_source REQUIRED)
 find_package(px4_msgs REQUIRED)
 find_package(rclcpp REQUIRED)
 find_package(diagnostic_msgs REQUIRED)
+find_package(sensor_msgs REQUIRED)
 find_package(yaml-cpp REQUIRED)
 
-add_library(obstacle_sector_node src/pipeline.cpp src/platform_config.cpp src/node.cpp)
+add_library(obstacle_sector_node src/pipeline.cpp src/platform_config.cpp src/node.cpp
+  src/laser_scan_source.cpp)
 target_include_directories(obstacle_sector_node PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
   $<INSTALL_INTERFACE:include>)
@@ -23,15 +25,22 @@ target_link_libraries(obstacle_sector_node PUBLIC
   obstacle_sector_map::obstacle_sector_map
   px4_obstacle_bridge::px4_obstacle_bridge
   livox_ray_source::livox_ray_source)
-ament_target_dependencies(obstacle_sector_node PUBLIC px4_msgs rclcpp diagnostic_msgs)
+ament_target_dependencies(obstacle_sector_node PUBLIC px4_msgs rclcpp diagnostic_msgs sensor_msgs)
 target_link_libraries(obstacle_sector_node PRIVATE yaml-cpp::yaml-cpp)
+
+# `ros2 run obstacle_sector_node obstacle_sector_node`
+add_executable(obstacle_sector_node_main src/main.cpp)
+target_link_libraries(obstacle_sector_node_main obstacle_sector_node)
+set_target_properties(obstacle_sector_node_main PROPERTIES OUTPUT_NAME obstacle_sector_node)
 
 install(TARGETS obstacle_sector_node
   EXPORT export_obstacle_sector_node
   ARCHIVE DESTINATION lib
   LIBRARY DESTINATION lib
   RUNTIME DESTINATION bin)
+install(TARGETS obstacle_sector_node_main RUNTIME DESTINATION lib/${PROJECT_NAME})
 install(DIRECTORY include/ DESTINATION include)
+install(DIRECTORY launch DESTINATION share/${PROJECT_NAME})
 
 if(BUILD_TESTING)
   find_package(ament_cmake_gtest REQUIRED)
@@ -44,6 +53,8 @@ if(BUILD_TESTING)
     X500_YAML_PATH="${CMAKE_CURRENT_SOURCE_DIR}/../../../config/platforms/x500.yaml")
   ament_add_gtest(test_node test/test_node.cpp)
   target_link_libraries(test_node obstacle_sector_node)
+  ament_add_gtest(test_laser_scan_source test/test_laser_scan_source.cpp)
+  target_link_libraries(test_laser_scan_source obstacle_sector_node)
   ament_add_gtest(test_node_integration test/test_node_integration.cpp)
   target_link_libraries(test_node_integration obstacle_sector_node)
   ament_target_dependencies(test_node_integration rosgraph_msgs)
@@ -51,5 +62,6 @@ endif()
 
 ament_export_targets(export_obstacle_sector_node HAS_LIBRARY_TARGET)
 ament_export_dependencies(
-  obstacle_sector_map px4_obstacle_bridge livox_ray_source px4_msgs rclcpp diagnostic_msgs yaml-cpp)
+  obstacle_sector_map px4_obstacle_bridge livox_ray_source px4_msgs rclcpp diagnostic_msgs
+  sensor_msgs yaml-cpp)
 ament_package()
