@@ -117,6 +117,15 @@ def analyse(prefix, wall_dist, direction, lidar_offset, margin, require_constrai
                 timeline.append([round(ti, 2), si])
                 last = si
         out["state_timeline_[t_s,state]"] = timeline[:40]
+        if require_constraints:
+            # evidence is incomplete when CP did not enforce during the approach (DISABLED, OBSERVER_ONLY,
+            # NOT_READY): a result then says nothing about the algorithm
+            t_end = t[min(range(start, len(t)), key=lambda i: gap[i])]
+            ends = ct[1:] + [float("inf")]  # a row holds its state until the next row
+            bad = [(round(ti, 2), si) for ti, te, si in zip(ct, ends, st)
+                   if ti <= t_end and te >= t[start] and si in (0, 1, 2)]
+            if bad:
+                out["error"] = "CP was not enforcing during the approach (first [t_s, state]: %s)" % (bad[0],)
         first_brake = next((ti for ti, si in zip(ct, st) if si == 4), None)
         out["t_first_braking_s"] = None if first_brake is None else round(first_brake, 2)
     except FileNotFoundError:

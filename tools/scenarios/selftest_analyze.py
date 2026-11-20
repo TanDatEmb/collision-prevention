@@ -12,7 +12,7 @@ import tempfile
 HERE = os.path.dirname(os.path.abspath(__file__))
 
 
-def write_run(prefix, positions_along, dt=0.02):
+def write_run(prefix, positions_along, dt=0.02, first_state=3):
     with open(prefix + "vehicle_local_position_0.csv", "w", newline="") as f:
         w = csv.writer(f)
         w.writerow(["timestamp", "x", "y", "vx", "vy"])
@@ -24,7 +24,7 @@ def write_run(prefix, positions_along, dt=0.02):
     with open(prefix + "cp_brake_constraints_0.csv", "w", newline="") as f:
         w = csv.writer(f)
         w.writerow(["timestamp", "state"])
-        w.writerow([0, 3])
+        w.writerow([0, first_state])
         w.writerow([int(len(positions_along) * 0.5 * 0.02 * 1e6), 4])
 
 
@@ -67,12 +67,12 @@ def crash_run(dt=0.02, total_s=10.0):
     return [5.0 * i * dt for i in range(int(total_s / dt))]
 
 
-def run(name, positions, wall_dist, expect):
+def run(name, positions, wall_dist, expect, first_state=3, extra=()):
     with tempfile.TemporaryDirectory() as d:
         prefix = os.path.join(d, "log_0_")
-        write_run(prefix, positions)
+        write_run(prefix, positions, first_state=first_state)
         p = subprocess.run([sys.executable, os.path.join(HERE, "analyze_stop.py"), prefix, "--wall-dist",
-                            str(wall_dist), "--margin", "2.0"], capture_output=True, text=True)
+                            str(wall_dist), "--margin", "2.0", *extra], capture_output=True, text=True)
         import json
         res = json.loads(p.stdout)
     ok = (res.get("criterion_a_margin_kept"), res.get("criterion_b_at_rest_before_wall"),
@@ -91,5 +91,7 @@ results = [
     run("flies through the wall (never stops)", crash_run(), 20.0, (False, False, True, "FAIL")),
     run("oscillates around the stop point", oscillating_run(), 30.0, (True, False, False, "FAIL")),
     run("never approaches the wall (evidence incomplete)", [0.0] * 500, 22.0, (None, None, None, "INVALID")),
+    run("CP disabled during the approach (evidence incomplete)", stop_run(stop_at=17.0), 22.0,
+        (True, True, True, "INVALID"), first_state=0, extra=("--require-constraints",)),
 ]
 sys.exit(0 if all(results) else 1)
