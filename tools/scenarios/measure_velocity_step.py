@@ -8,7 +8,8 @@ usage:
 `fly` takes off, then in Offboard mode commands east velocity steps 0 -> +V -> 0 -> -V -> 0 for each V
 (the sign alternates so the vehicle stays near the origin) and prints one JSON line. Offboard is used
 because the limiter hook is not active there: the response is the vehicle's own, not the limiter's.
-`analyze` reads the ulog2csv output (`vehicle_local_position_setpoint_0.csv`, `vehicle_local_position_0.csv`)
+`analyze` (INVALID, exit 2, when a response has not settled or has a sample gap above --max-gap-s)
+reads the ulog2csv output (`vehicle_local_position_setpoint_0.csv`, `vehicle_local_position_0.csv`)
 and prints, for every step down to zero, the equivalent lag: the extra distance travelled after the step
 divided by the speed before it. It is the lag that, put in front of an ideal instant stop, gives the same
 stopping distance, so it is the quantity the stopping model needs. The same output lists the time to 63 %
@@ -117,10 +118,11 @@ def analyze(a):
                 continue
             sign = 1.0 if v0 > 0 else -1.0
             t0 = ts[i]
-            area, t63, settled = 0.0, None, None
+            area, t63, settled, worst_gap = 0.0, None, None, 0.0
             for k in range(j + 1, len(tp)):
                 if tp[k] < t0:
                     continue
+                worst_gap = max(worst_gap, tp[k] - tp[k - 1])  # the pair that spans the step counts too
                 y = sign * ps["vy"][k]
                 dt = tp[k] - max(tp[k - 1], t0)
                 area += max(0.0, y) * dt
@@ -132,7 +134,8 @@ def analyze(a):
                 if tp[k] - t0 > 15.0:
                     break
             steps.append({"t_s": round(t0, 2), "speed_before_m_s": round(abs(v0), 2),
-                          "equivalent_lag_s": round(area / abs(v0), 3),
+                          "equivalent_lag_s": round(area / abs(v0), 3), "_lag_raw": area / abs(v0),
+                          "max_sample_gap_s": round(worst_gap, 3),
                           "t63_s": None if t63 is None else round(t63, 3),
                           "settle_s": None if settled is None else round(settled, 3)})
     wanted = [round(v, 1) for v in a.speeds]
@@ -140,16 +143,23 @@ def analyze(a):
     out = {"steps_down_to_zero": kept, "all_steps_found": len(steps)}
     # a response that did not settle (the log or the 15 s window ended first) has a partial stopping distance:
     # it would understate the lag, so it is no evidence and the measurement is rejected
-    incomplete = [s for s in kept if s["settle_s"] is None]
-    missing = [w for w in wanted if not any(abs(s["speed_before_m_s"] - w) < 0.5 and s["settle_s"] is not None
-                                            for s in kept)]
+    def complete(s):
+        return s["settle_s"] is not None and s["max_sample_gap_s"] <= a.max_gap_s
+    incomplete = [s for s in kept if not complete(s)]
+    missing = [w for w in wanted if not any(abs(s["speed_before_m_s"] - w) < 0.5 and complete(s) for s in kept)]
     if incomplete or missing:
-        out["error"] = "INVALID: %d step(s) did not settle, no complete step for speeds %s" % (len(incomplete), missing)
+        out["error"] = ("INVALID: %d step(s) did not settle or have a sampling gap above %.2f s, no complete step "
+                        "for speeds %s" % (len(incomplete), a.max_gap_s, missing))
+        for s in kept:
+            s.pop("_lag_raw")
         print(json.dumps(out, indent=2))
         return 2
-    worst = max(s["equivalent_lag_s"] for s in kept)
-    out["worst_equivalent_lag_s"] = worst
-    out["t_lat_rounded_up_s"] = round(math.ceil(worst / ROUND_UP_S - 1e-9) * ROUND_UP_S, 2)
+    # the upward rounding works on the unrounded lag; only the displayed figures are rounded
+    worst_raw = max(s["_lag_raw"] for s in kept)
+    for s in kept:
+        s.pop("_lag_raw")
+    out["worst_equivalent_lag_s"] = round(worst_raw, 3)
+    out["t_lat_rounded_up_s"] = round(math.ceil(worst_raw / ROUND_UP_S - 1e-9) * ROUND_UP_S, 2)
     print(json.dumps(out, indent=2))
     return 0
 
@@ -166,6 +176,8 @@ def main():
     f.add_argument("--hover-s", type=float, default=15.0)
     n = sub.add_parser("analyze")
     n.add_argument("prefix")
+    n.add_argument("--max-gap-s", type=float, default=0.2,
+                   help="bench value [s]: largest gap between position samples inside a response")
     n.add_argument("--speeds", type=lambda s: [float(v) for v in s.split(",")], default=[3.0, 5.0, 8.0])
     a = ap.parse_args()
     return fly(a) if a.cmd == "fly" else analyze(a)

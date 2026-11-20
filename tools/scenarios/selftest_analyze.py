@@ -187,5 +187,39 @@ results.append(lag_case("step response: first-order lag 0.5 s", 0.0, 0.5, 0.5))
 results.append(lag_case("step response: delay 0.2 s plus lag 0.4 s", 0.2, 0.4, 0.6))
 results.append(lag_case("step response: log ends before the vehicle stops", 0.0, 0.5, None, rows=505, expect_code=2))
 
+def ramp_case(name, ramp_s, expect_t_lat, expect_code=0, gap=False):
+    """measure_velocity_step.py analyze on a 5 m/s -> 0 step answered by a linear ramp down over ramp_s: the
+    equivalent lag is ramp_s / 2 (less one half sample). The upward rounding must work on the unrounded lag,
+    and position samples missing during the response must be rejected, not integrated across."""
+    with tempfile.TemporaryDirectory() as d:
+        prefix = os.path.join(d, "log_0_")
+        with open(prefix + "vehicle_local_position_setpoint_0.csv", "w", newline="") as f:
+            w = csv.writer(f)
+            w.writerow(["timestamp", "vy"])
+            for n in range(1000):
+                w.writerow([int(n * DT * 1e6), 5.0 if n * DT < 10.0 else 0.0])
+        with open(prefix + "vehicle_local_position_0.csv", "w", newline="") as f:
+            w = csv.writer(f)
+            w.writerow(["timestamp", "vy"])
+            for n in range(1000):
+                t = n * DT
+                if gap and 10.0 < t < 14.0:
+                    continue
+                after = t - 10.0
+                w.writerow([int(t * 1e6), 5.0 if after < 0.0 else max(0.0, 5.0 * (1.0 - after / ramp_s))])
+        p = subprocess.run([sys.executable, os.path.join(HERE, "measure_velocity_step.py"), "analyze", prefix,
+                            "--speeds", "5"], capture_output=True, text=True)
+    try:
+        got = json.loads(p.stdout).get("t_lat_rounded_up_s")
+    except ValueError:
+        got = None
+    ok = got == expect_t_lat and p.returncode == expect_code
+    print(("PASS" if ok else "FAIL"), "%-58s" % name, "got", got, "expected", expect_t_lat)
+    return ok
+
+
+results.append(ramp_case("lag 0.6004 s rounds up to 0.65, not 0.6", 1.2202, 0.65))
+results.append(ramp_case("position samples missing during the response", 1.2, None, expect_code=2, gap=True))
+
 print("%d of %d cases pass" % (sum(results), len(results)))
 sys.exit(0 if all(results) else 1)
