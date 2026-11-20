@@ -130,7 +130,7 @@ flowchart LR
 | `obstacle_sector_map` (pure C++) | Reference impl | Validation, masked/return-kind handling, sector classification, nearest projected range; no ROS or PX4 types | Frames, units, safety policy, sensor tags | SYS-CP-004, 011, 015 |
 | `px4_obstacle_bridge` | Reference impl | FLU/CCW to BODY_FRD/CW, cm conversion, fail-closed encoding | Filtering to improve results | SYS-CP-002, NFR-CP-002 |
 | Orin node (`obstacle_sector_node`) | Pipeline, platform config loader and ROS node class; no executable and no sensor source yet | One process composing source, map, bridge; publishes `/fmu/in/obstacle_distance` | Safety policy | SYS-CP-016, NFR-CP-003 |
-| `cp_brake` (PX4 module) | Not implemented, ADR 0014 | Input validation, freshness, stopping model, sector caps, state machine | Planning, attitude, sensor filtering | SYS-CP-001, 003, 007, 008, 012, 013, 014 |
+| `cp_brake` (PX4 module) | Fork PRs #1 to #6: checks, caps, limiter, state machine; no heading history and no hook yet, ADR 0014 | Input validation, freshness, stopping model, sector caps, state machine | Planning, attitude, sensor filtering | SYS-CP-001, 003, 007, 008, 012, 013, 014 |
 | Horizontal limiter hook (PX4) | Not implemented, ADR 0014 | Apply caps to the final horizontal setpoint | Sensor, DDS, mode logic | SYS-CP-005, 006, 012 |
 | Existing PX4 modes and failsafes | Existing | Mode and failsafe handling | CP-owned mode logic | SYS-CP-008 |
 
@@ -363,7 +363,7 @@ SITL fidelity gaps:
 | OPEN-029 | X500 SITL model name and lidar mount pose | SE | TBD | G4 |
 | OPEN-030 | Measured rate and latency of `VehicleOdometry` for deskew and the interpolation scheme (source: ADR 0018) | Perception + PX4 | TBD | G3 |
 | OPEN-031 | Clear evidence when the ray origin moves during a scan: origin-aware evidence in the map, or a conservative filter in acquisition (chosen, ADR 0018); its threshold value | Perception + SE | TBD | G3 |
-| OPEN-032 | Staleness threshold and publish rate of the `cp_brake_constraints` output; heading history source and depth; sentinel until the G4 SITL measurements | PX4 + Controls | TBD | G4 |
+| OPEN-032 | Staleness threshold and publish rate of the `cp_brake_constraints` output; heading history source and depth; sentinel until the G4 SITL measurements; until then the module evaluates and publishes every 50 ms (an implementation value of fork PR #6, not approved) | PX4 + Controls | TBD | G4 |
 | OPEN-033 | Numeric limits for judging the sync from `timesync_status` at PX4 and for an excessive map age; the Orin-side rejection of a negative age is implemented in a separate issue (structure decided) | PX4 + Software Integration | TBD | G5 |
 | OPEN-035 | Hook interaction with FlightTask feedback of the published setpoint, the XY velocity integrator and the tilt limit | Controls + PX4 | TBD | G4 |
 | OPEN-036 | Vertical collision envelope as a height band: how a no-return ray, which has no endpoint, is tested against it; builder change from the elevation band | Perception + SE | TBD | G3 |
@@ -414,5 +414,7 @@ free, 5,252 bytes more than without the module; on the commit the pointer moves 
 is 1,885,476 bytes, 80,604 free (the embedded version string differs). `px4_fmu-v6x_default` is
 unchanged and has no `cp_brake`. Still undecided: any flash margin and any size target.
 
-#64 and #65 add code to the multicopter image: its size with them is not measured. Any flash
-margin and any size target stay TBD until approved by the owner.
+#64 (the state machine, fork PR `TanDatEmb/PX4-Autopilot#6`) is in the image: on the pointer
+commit `2646f97dce` it is 1,886,276 bytes (95.94%), 79,804 bytes free, 800 bytes more than on
+`e8ed65e026` (measured 2026-11-20). #65 adds code whose size is not measured. Any flash margin and
+any size target stay TBD until approved by the owner.
