@@ -17,9 +17,12 @@ namespace obstacle_sector_node
 /// `ros_gz_bridge`) as one ray frame.
 ///
 /// - A finite range in `[range_min, range_max)` is a return.
-/// - A range at or beyond `range_max`, or `+inf`, is a qualified no-return. This is a simulation
-///   rule: an ideal simulated lidar has no dropout, so a beam that hits nothing is clear evidence
-///   (the fidelity gap listed in `docs/architecture.md`, section 7).
+/// - A range at or beyond `range_max`, or `+inf`, is a qualified no-return only when `range_max`
+///   is finite and at least the map's own range (`obstacle_sector_map::kMaxDistanceM`, 40 m): an
+///   ideal simulated lidar has no dropout, so a beam that hits nothing is clear evidence up to its
+///   limit (the fidelity gap listed in `docs/architecture.md`, section 7), but a scan that reaches
+///   less far says nothing about the space between its limit and 40 m. Then the ray is invalid,
+///   never free (the Gazebo 2D lidar has `range_max` 30 m, so its empty sectors are unknown).
 /// - Anything else (NaN, `-inf`, a range below `range_min`, zero, negative) is invalid. It is never
 ///   read as free space.
 /// - Azimuth is the scan angle (counter-clockwise from the front, FLU), elevation is 0.

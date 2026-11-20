@@ -36,9 +36,12 @@ The executable `obstacle_sector_node` reads `sensor_msgs/LaserScan` from `scan` 
 whose values are still TBD, is refused), `scan_topic` (default `scan`), `source_wait_s` (default 1,
 how long it waits for a scan before the diagnostics say "source ended"), `sector_map_rate_hz`.
 
-In a scan, a range inside `[range_min, range_max)` is a return, a range at or beyond `range_max`
+In a scan, a range inside `[range_min, range_max)` is a return. A range at or beyond `range_max`
 or `+inf` is a qualified no-return (ideal simulation, a fidelity gap of `docs/architecture.md`
-section 7), and anything else is invalid, never free. Azimuth is the scan angle, elevation is 0.
+section 7) only when `range_max` is at least the map's 40 m; a lidar that reaches less far says
+nothing about the space beyond its limit, so those rays are invalid and the sector stays unknown
+(the Gazebo 2D lidar has `range_max` 30 m, so a sector with no return is 65535, not 4001). Anything
+else is invalid, never free. Azimuth is the scan angle, elevation is 0.
 
 ```bash
 # terminal 1: PX4 SITL with the x500 and a 2D lidar. SIM_GZ_EN_LIDAR=0 stops PX4's own Gazebo

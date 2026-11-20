@@ -25,7 +25,8 @@ namespace
 constexpr float kInf = std::numeric_limits<float>::infinity();
 constexpr float kNaN = std::numeric_limits<float>::quiet_NaN();
 
-LaserScan makeScan(const std::vector<float> & ranges, float angle_min = 0.0F)
+LaserScan makeScan(
+  const std::vector<float> & ranges, float angle_min = 0.0F, float range_max = 40.0F)
 {
   LaserScan scan;
   scan.header.stamp.sec = 5;
@@ -35,7 +36,7 @@ LaserScan makeScan(const std::vector<float> & ranges, float angle_min = 0.0F)
   scan.angle_max = angle_min + 0.1F * static_cast<float>(ranges.size());
   scan.time_increment = 0.0F;
   scan.range_min = 0.2F;
-  scan.range_max = 10.0F;
+  scan.range_max = range_max;
   scan.ranges = ranges;
   return scan;
 }
@@ -71,12 +72,45 @@ TEST(LaserScanToFrameTest, EachRayHasItsOwnAngleCounterClockwiseFromTheFront)
   EXPECT_NEAR(frame.rays[2].azimuth_rad, 0.1F, 1e-6F);
 }
 
-TEST(LaserScanToFrameTest, ARangeAtOrBeyondTheMaximumOrInfiniteIsAQualifiedNoReturn)
+TEST(
+  LaserScanToFrameTest,
+  ARangeAtOrBeyondTheMaximumOrInfiniteIsAQualifiedNoReturnWhenTheScanCoversTheMap)
 {
-  const auto frame = laserScanToFrame(makeScan({kInf, 10.0F, 11.0F}), true);
+  // range_max 40 m is the map's own limit (obstacle_sector_map::kMaxDistanceM).
+  const auto frame = laserScanToFrame(makeScan({kInf, 40.0F, 41.0F}), true);
   ASSERT_EQ(frame.rays.size(), 3U);
   for (const auto & ray : frame.rays) {
     EXPECT_EQ(ray.return_kind, RayReturnKind::kQualifiedNoReturn);
+  }
+}
+
+TEST(LaserScanToFrameTest, ANoReturnIsNotClearWhenTheScanReachesLessFarThanTheMap)
+{
+  // A lidar with range_max 30 m saw nothing up to 30 m and says nothing about 30 to 40 m.
+  for (float range_max : {10.0F, 30.0F, 39.99F}) {
+    const auto frame =
+      laserScanToFrame(makeScan({kInf, range_max, range_max + 1.0F}, 0.0F, range_max), true);
+    ASSERT_EQ(frame.rays.size(), 3U);
+    for (const auto & ray : frame.rays) {
+      EXPECT_EQ(ray.return_kind, RayReturnKind::kInvalid) << "range_max " << range_max;
+    }
+  }
+}
+
+TEST(LaserScanToFrameTest, AReturnStaysAReturnWhateverTheScanRange)
+{
+  const auto frame = laserScanToFrame(makeScan({2.0F, 29.9F}, 0.0F, 30.0F), true);
+  ASSERT_EQ(frame.rays.size(), 2U);
+  EXPECT_EQ(frame.rays[0].return_kind, RayReturnKind::kReturn);
+  EXPECT_EQ(frame.rays[1].return_kind, RayReturnKind::kReturn);
+}
+
+TEST(LaserScanToFrameTest, AScanWithoutAUsableMaximumNeverQualifiesANoReturn)
+{
+  for (float range_max : {kNaN, kInf, 0.0F, -1.0F}) {
+    const auto frame = laserScanToFrame(makeScan({kInf, 5.0F}, 0.0F, range_max), true);
+    ASSERT_EQ(frame.rays.size(), 2U);
+    EXPECT_EQ(frame.rays[0].return_kind, RayReturnKind::kInvalid);
   }
 }
 

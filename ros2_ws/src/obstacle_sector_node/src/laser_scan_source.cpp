@@ -16,15 +16,18 @@ using obstacle_sector_map::RaySample;
 
 constexpr double kNanosecondsPerSecond{1.0e9};
 
-RayReturnKind classify(float range_m, float range_min_m, float range_max_m)
+RayReturnKind classify(
+  float range_m, float range_min_m, float range_max_m, bool scan_covers_map_range)
 {
   if (std::isnan(range_m)) {
     return RayReturnKind::kInvalid;
   }
   if (range_m >= range_max_m) {
-    return RayReturnKind::kQualifiedNoReturn;  // includes +inf
+    // Nothing was seen up to range_max_m. That is clear evidence only for the map's whole range:
+    // a shorter scan says nothing about what lies between its limit and 40 m (+inf comes here).
+    return scan_covers_map_range ? RayReturnKind::kQualifiedNoReturn : RayReturnKind::kInvalid;
   }
-  if (range_m >= range_min_m && range_m > 0.0F) {
+  if (std::isfinite(range_m) && range_m >= range_min_m && range_m > 0.0F) {
     return RayReturnKind::kReturn;
   }
   return RayReturnKind::kInvalid;  // below range_min, zero, negative, -inf
@@ -42,6 +45,8 @@ livox_ray_source::RayFrame laserScanToFrame(
   const uint64_t header_ns = static_cast<uint64_t>(scan.header.stamp.sec) * 1'000'000'000U +
                              static_cast<uint64_t>(scan.header.stamp.nanosec);
   const bool has_time = header_ns != 0U;
+  const bool scan_covers_map_range =
+    std::isfinite(scan.range_max) && scan.range_max >= obstacle_sector_map::kMaxDistanceM;
   const double increment_s = std::isfinite(scan.time_increment) && scan.time_increment > 0.0F
                                ? static_cast<double>(scan.time_increment)
                                : 0.0;
@@ -52,7 +57,8 @@ livox_ray_source::RayFrame laserScanToFrame(
     ray.azimuth_rad = scan.angle_min + static_cast<float>(index) * scan.angle_increment;
     ray.elevation_rad = 0.0F;
     ray.masked = false;
-    ray.return_kind = classify(scan.ranges[index], scan.range_min, scan.range_max);
+    ray.return_kind =
+      classify(scan.ranges[index], scan.range_min, scan.range_max, scan_covers_map_range);
     ray.timestamp_ns =
       has_time ? header_ns + static_cast<uint64_t>(std::llround(
                                static_cast<double>(index) * increment_s * kNanosecondsPerSecond))
