@@ -230,7 +230,7 @@ results.append(run("reordered constraint timestamps hide SAFE_STOP", series(stop
                    states=((0, 3), (0.3, 5), (0.4, 4)), extra=REQ, swap_constraint_rows=(2, 3)))
 
 
-def command_case(name, command, actual, expect_code):
+def command_case(name, command, actual, expect_code, swap_position_rows=None):
     """measure_velocity_step.py analyze with explicit setpoint and speed functions of time (50 Hz, 20 s)."""
     with tempfile.TemporaryDirectory() as d:
         prefix = os.path.join(d, "log_0_")
@@ -238,8 +238,11 @@ def command_case(name, command, actual, expect_code):
             with open(prefix + fname, "w", newline="") as f:
                 w = csv.writer(f)
                 w.writerow(["timestamp", "vy"])
-                for n in range(1000):
-                    w.writerow([int(n * DT * 1e6), fn(n * DT)])
+                lines = [[int(n * DT * 1e6), fn(n * DT)] for n in range(1000)]
+                if swap_position_rows and fname == "vehicle_local_position_0.csv":
+                    i, j = swap_position_rows
+                    lines[i], lines[j] = lines[j], lines[i]
+                w.writerows(lines)
         p = subprocess.run([sys.executable, os.path.join(HERE, "measure_velocity_step.py"), "analyze", prefix,
                             "--speeds", "5"], capture_output=True, text=True)
     ok = p.returncode == expect_code
@@ -255,6 +258,13 @@ results.append(command_case("stop during a commanded reversal is not the respons
                             lambda t: 5.0 if t < 12 else (5.0 - 5.0 * (t - 12) if t < 14 else -5.0), 2))
 results.append(command_case("clean stop is accepted", lambda t: 5.0 if t < 10 else 0.0,
                             lambda t: 5.0 if t < 10 else 5.0 * math.exp(-(t - 10) / 0.5), 0))
+
+results.append(command_case("position rows reordered during the response", lambda t: 5.0 if t < 10 else 0.0,
+                            lambda t: 5.0 if t < 10 else 5.0 * math.exp(-(t - 10) / 0.5), 2,
+                            swap_position_rows=(525, 526)))
+results.append(command_case("position control takes over before the stop", lambda t: 5.0 if t < 10 else
+                            (0.0 if t < 12 else float("nan")),
+                            lambda t: 5.0 if t < 12 else max(0.0, 5.0 - 5.0 * (t - 12)), 2))
 
 print("%d of %d cases pass" % (sum(results), len(results)))
 sys.exit(0 if all(results) else 1)

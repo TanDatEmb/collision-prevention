@@ -106,11 +106,40 @@ def read(path, columns):
     return {c: [row[i] for row in kept] for i, c in enumerate(columns)}
 
 
+def read_setpoint(path):
+    """(time, vy) of every setpoint row; vy is NaN where PX4 does not control velocity (position control)."""
+    with open(path, newline="") as f:
+        rows = list(csv.DictReader(f))
+    t, vy = [], []
+    for r in rows:
+        try:
+            ti = float(r["timestamp"])
+        except (KeyError, ValueError, TypeError):
+            continue
+        try:
+            v = float(r["vy"])
+        except (KeyError, ValueError, TypeError):
+            v = float("nan")
+        if math.isfinite(ti):
+            t.append(ti)
+            vy.append(v if math.isfinite(v) else float("nan"))
+    if len(t) < 10:
+        raise ValueError("fewer than 10 rows in " + path)
+    return {"timestamp": t, "vy": vy}
+
+
 def analyze(a):
-    sp = read(a.prefix + "vehicle_local_position_setpoint_0.csv", ["timestamp", "vy"])
-    ps = read(a.prefix + "vehicle_local_position_0.csv", ["timestamp", "vy"])
+    try:
+        sp = read_setpoint(a.prefix + "vehicle_local_position_setpoint_0.csv")
+        ps = read(a.prefix + "vehicle_local_position_0.csv", ["timestamp", "vy"])
+    except (OSError, ValueError) as e:
+        print(json.dumps({"error": "INVALID: %s" % e}))
+        return 2
     ts = [v * 1e-6 for v in sp["timestamp"]]
     tp = [v * 1e-6 for v in ps["timestamp"]]
+    if any(b < x for x, b in zip(ts, ts[1:])) or any(b < x for x, b in zip(tp, tp[1:])):
+        print(json.dumps({"error": "INVALID: time goes backwards in the setpoint or position log"}))
+        return 2
     steps = []
     for i in range(1, len(ts)):
         # a step to zero: the setpoint was beyond STEP_MIN and is now within the settle band of zero
@@ -121,9 +150,10 @@ def analyze(a):
                 continue
             sign = 1.0 if v0 > 0 else -1.0
             t0 = ts[i]
-            # the response is bounded by the next velocity command (or MAX_RESPONSE_S): a stop that happens
+            # the response is bounded by the next velocity command or a switch away from velocity control (or MAX_RESPONSE_S): a stop that happens
             # during another commanded manoeuvre is not the response to this step
-            t_next = next((ts[m] for m in range(i + 1, len(ts)) if abs(sp["vy"][m]) >= SETTLE_BAND), float("inf"))
+            # a NaN setpoint (position control took over) is a boundary too, not a continuing zero command
+            t_next = next((ts[m] for m in range(i + 1, len(ts)) if not abs(sp["vy"][m]) < SETTLE_BAND), float("inf"))
             wend = min(t_next, t0 + MAX_RESPONSE_S, tp[-1])
             idx = [k for k in range(j + 1, len(tp)) if t0 <= tp[k] <= wend]
             ys = [sign * ps["vy"][k] for k in idx]
