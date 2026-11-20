@@ -164,7 +164,10 @@ TEST(SectorMapBuilderTest, UsesHorizontalProjectedRangeForClassification)
   EXPECT_EQ(too_close_builder.finalize().sectors[0].state, SectorState::kTooClose);
 }
 
-TEST(SectorMapBuilderTest, ReturnBeyondQualifiedRangeIsNotClearEvidence)
+// A return beyond the qualified range (40 m) proves that the ray path up to there is empty, like a
+// qualified no-return. It is never dropped and never an obstacle: 40 m is the range at which a dark
+// target is still detected, not a limit of the sensor.
+TEST(SectorMapBuilderTest, ReturnBeyondQualifiedRangeIsClearEvidence)
 {
   SectorMapBuilder builder{kConfig};
   builder.reset(true);
@@ -172,24 +175,91 @@ TEST(SectorMapBuilderTest, ReturnBeyondQualifiedRangeIsNotClearEvidence)
   builder.addRay(makeReturn(60.0F));
 
   const auto sector = builder.finalize().sectors[0];
-  EXPECT_EQ(sector.state, SectorState::kUnknown);
+  EXPECT_EQ(sector.state, SectorState::kObservedClear);
   EXPECT_EQ(sector.contributing_ray_count, 2U);
-  EXPECT_EQ(sector.clear_ray_count, 0U);
+  EXPECT_EQ(sector.clear_ray_count, 2U);
 }
 
-TEST(SectorMapBuilderTest, OnlyQualifiedNoReturnCountsTowardClearCoverage)
+TEST(SectorMapBuilderTest, FarReturnsStillNeedTheCoverageCount)
+{
+  SectorMapBuilder builder{kConfig};
+  builder.reset(true);
+  builder.addRay(makeReturn(50.0F));
+
+  const auto sector = builder.finalize().sectors[0];
+  EXPECT_EQ(sector.state, SectorState::kUnknown);
+  EXPECT_EQ(sector.clear_ray_count, 1U);
+}
+
+TEST(SectorMapBuilderTest, NoReturnAndFarReturnTogetherMeetTheCoverage)
 {
   SectorMapBuilder builder{kConfig};
   builder.reset(true);
   builder.addRay(makeNoReturn());
   builder.addRay(makeReturn(50.0F));
-  EXPECT_EQ(builder.finalize().sectors[0].state, SectorState::kUnknown);
 
-  builder.addRay(makeNoReturn());
   const auto sector = builder.finalize().sectors[0];
   EXPECT_EQ(sector.state, SectorState::kObservedClear);
   EXPECT_EQ(sector.clear_ray_count, 2U);
-  EXPECT_EQ(sector.contributing_ray_count, 3U);
+  EXPECT_EQ(sector.contributing_ray_count, 2U);
+}
+
+TEST(SectorMapBuilderTest, NearerObstacleWinsOverFarReturns)
+{
+  SectorMapBuilder builder{kConfig};
+  builder.reset(true);
+  builder.addRay(makeReturn(50.0F));
+  builder.addRay(makeReturn(20.0F));
+  builder.addRay(makeReturn(60.0F));
+
+  const auto sector = builder.finalize().sectors[0];
+  ASSERT_EQ(sector.state, SectorState::kOccupied);
+  EXPECT_NEAR(sector.distance_m, 20.0F, 1.0e-5F);
+}
+
+TEST(SectorMapBuilderTest, TooCloseWinsOverFarReturns)
+{
+  SectorMapBuilder builder{kConfig};
+  builder.reset(true);
+  builder.addRay(makeReturn(50.0F));
+  builder.addRay(makeReturn(0.05F));
+  builder.addRay(makeReturn(60.0F));
+
+  EXPECT_EQ(builder.finalize().sectors[0].state, SectorState::kTooClose);
+}
+
+TEST(SectorMapBuilderTest, FarReturnsWithoutPacketContinuityAreNotClear)
+{
+  SectorMapBuilder builder{kConfig};
+  builder.reset(false);
+  builder.addRay(makeReturn(50.0F));
+  builder.addRay(makeReturn(60.0F));
+
+  EXPECT_EQ(builder.finalize().sectors[0].state, SectorState::kUnknown);
+}
+
+TEST(SectorMapBuilderTest, FarReturnIsJudgedByItsHorizontalProjection)
+{
+  constexpr float kSixtyDegreesRad{1.0471975511965976F};
+  const SectorMapConfig wide_elevation_config{-1.2F, 1.2F, 1U};
+
+  // 100 m at 60 degrees is 50 m horizontally: beyond the qualified range, so clear evidence
+  SectorMapBuilder clear_builder{wide_elevation_config};
+  clear_builder.reset(true);
+  auto far_elevated = makeReturn(100.0F);
+  far_elevated.elevation_rad = kSixtyDegreesRad;
+  clear_builder.addRay(far_elevated);
+  EXPECT_EQ(clear_builder.finalize().sectors[0].state, SectorState::kObservedClear);
+
+  // 70 m at 60 degrees is 35 m horizontally: an obstacle
+  SectorMapBuilder occupied_builder{wide_elevation_config};
+  occupied_builder.reset(true);
+  auto near_elevated = makeReturn(70.0F);
+  near_elevated.elevation_rad = kSixtyDegreesRad;
+  occupied_builder.addRay(near_elevated);
+  const auto occupied = occupied_builder.finalize().sectors[0];
+  ASSERT_EQ(occupied.state, SectorState::kOccupied);
+  EXPECT_NEAR(occupied.distance_m, 35.0F, 1.0e-4F);
 }
 
 TEST(SectorMapBuilderTest, RejectsNonFiniteInvalidMaskedAndVerticalOutliers)

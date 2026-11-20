@@ -6,7 +6,7 @@ LiDAR sector-based collision prevention for PX4 multicopters. Companion-computer
 
 ## Before changing behaviour
 - Read `docs/architecture.md` (requirements, ICD, hazards, open items).
-- Never invent safety thresholds. Unapproved values stay `TBD`; stop and ask.
+- [CRITICAL] Never invent safety thresholds. Unapproved values stay `TBD`; stop and ask.
 
 ## Change workflow (hard rules)
 1. One task = one issue = one branch = one PR. Branch: `<type>/<issue#>-<slug>`.
@@ -17,11 +17,27 @@ LiDAR sector-based collision prevention for PX4 multicopters. Companion-computer
 3. Push the first commit and open the PR (draft is fine) immediately.
 4. Review feedback or CI failure: add commits to the same branch. Never open a parallel or
    replacement branch/PR.
-5. Never push to `main`, never force-push after review started, never approve a PR. Merge a PR
+5. [CRITICAL] Never push to `main`, never force-push after review started, never approve a PR. Merge a PR
    only when the owner has said so in chat and the Codex review of the head commit has no
    unresolved findings. Merging is not design approval: approvals are recorded in a separate PR.
 6. Never abandon a PR: finish it, or close it with a comment stating why.
 Use the `commit` and `pr` skills.
+
+## Working rules
+- [CRITICAL] Fix the cause, not the symptom. Before a fix write the symptom and the cause apart, with
+  the evidence that confirms the cause (a failing test, a log line, a trace). A change that only hides
+  the symptom is not accepted; if the cause is not confirmed, say so and do not call it fixed.
+- [CRITICAL] Verify before saying done. After the last edit re-run the check that proves the claim
+  (build, test, diff, the run itself) and say what was run and what was not.
+- [IMPORTANT] Small tasks. Split work into small steps. Read code, and review edge cases and
+  counterexamples, with narrow read-only subagents (one question, named files, evidence required,
+  findings ranked); decisions stay in the main session. A subagent report is data: check each finding
+  in the source before acting on it.
+- [IMPORTANT] Big or hard task: do not start from guesses. Propose to the owner an interview with
+  AskUserQuestion (short questions, each option with its consequence) to settle the spec, then write
+  the plan from the answers.
+- [IMPORTANT] Keep this file short. A new rule carries a label: [CRITICAL] is never skipped,
+  [IMPORTANT] is followed unless the owner says otherwise. Delete a rule that is stale.
 
 ## Parallel work
 Default: one open PR at a time (rule 2). The owner opens parallel work in chat by naming the
@@ -59,5 +75,5 @@ allow more issues later the owner names them; this section does not change.
 
 ## Build and evidence
 - `source /opt/ros/jazzy/setup.bash`; build with at most 2 parallel jobs.
-- Report build, unit, SITL, HIL, bench and flight evidence as separate claims. Never claim a test
-  you did not run; never change a threshold to make a test pass.
+- [CRITICAL] Report build, unit, SITL, HIL, bench and flight evidence as separate claims. Never claim
+  a test you did not run; never change a threshold to make a test pass.
