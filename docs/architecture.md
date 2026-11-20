@@ -32,6 +32,12 @@ mitigation inside the ODD, not a guarantee.
 | Coverage | 360 degrees azimuth inside the qualified vertical FOV | Outside that FOV |
 | Environment | Light rain <= 2.5 mm/h, wind <= 5 m/s, no fog or dust, clean window | Anything unqualified |
 
+ODD gaps (SE review, 2026-11-20; proposed, each is an open item for the owner): the table above
+states no minimum height above ground (OPEN-038), no attitude envelope over which the sensor must
+still see the direction of motion (OPEN-039), no terrain or vegetation classes that count as
+obstacles (OPEN-040) and no policy for isolated returns (OPEN-041). A scenario below marked "Not
+specified" carries no claim until its gap is decided.
+
 Claims: (1) mitigation of static obstacles inside the ODD; (2) on loss of the observation
 contract free space is never assumed and safe-stop applies while required PX4 state is valid;
 (3) non-claim: no guarantee once perception, time, frame, estimator or authority is lost.
@@ -46,6 +52,52 @@ Verified facts (PX4 1.17 at `f65ddce`, `px4_msgs` at `86d8239`):
   The stock CP range stream times out after 0.5 s.
 - `gz_x500_lidar_2d` is a smoke-test model: about 270 degrees, rays averaged per 5 degrees.
 - Seven required message definitions are byte-identical (`tools/check_msg_parity.sh`).
+
+### Operational scenarios (proposed, SE review 2026-11-20)
+
+The catalogue extends the ODD with the cases that decide whether V1 works in the field. Expected
+behaviour is stated with the existing requirements and the proposed ones below (SYS-CP-017 to 027,
+HZ-CP-016 to 023). "Today": Specified (a requirement and a design exist), Partial, Not specified (no
+requirement, so no claim), Out of ODD (a stated non-claim). Lanes: UT unit test, GZ Gazebo, RPL
+replay of captured data, HIL, FLT flight (section 7). A scenario counts as evidence only after the
+owner approves its pass criterion (SYS-CP-025, OPEN-043).
+
+| ID | Situation | Expected V1 behaviour | Trace | Lane | Today |
+| --- | --- | --- | --- | --- | --- |
+| OS-01 | Level approach to a large flat wall at 3 to 12 m/s, Position and Mission | Speed falls so that the vehicle is at rest at least `CPB_MARGIN` before the wall, without oscillation (SITL proof criteria a to c) | SYS-CP-001, 005, 012, PERF-01, 02, SAFE-01 | GZ, FLT | Specified |
+| OS-02 | Oblique wall, inside corner, outside corner, two obstacles at different bearings | Each sector limits only the motion entering it; no sliding; an empty feasible set gives zero horizontal output | SYS-CP-010, 012 | UT, GZ | Partial: unit tests only |
+| OS-03 | Pole or post 0.15 to 0.5 m wide, 5 to 40 m ahead, in the path and at its edge | Detected and stopped for a width >= 0.30 m (DET-01); a narrower target is outside the claim and is stated as such | DET-01, HZ-CP-002 | GZ, RPL, FLT | Partial: DET-01 only |
+| OS-04 | Obstacle covers only part of a 5 degree sector (building edge, pole, vehicle) | The sector takes the nearest return and its cap applies to the whole sector; the quantization error is half a sector (1.59 m at 36.5 m) | SYS-CP-011, ICD-CP-03 | UT, GZ | Specified |
+| OS-05 | Obstacle appears suddenly (from behind another obstacle or around a corner) | The cap tightens at once on the first valid return; stopping is claimed only if the obstacle appears outside the stopping envelope | SYS-CP-013, HZ-CP-001, ADR 0008 | GZ | Partial: envelope only |
+| OS-06 | Obstacle closer than 0.10 m: (a) with a valid return; (b) inside the sensor blind zone with no usable return (zero depth) | (a) The sector reports too close: cap 0. (b) Those rays are invalid and give no evidence; the blind zone lies inside the body and self-mask clearance that the 2.0 m margin already excludes (SAFE-01), so it is covered by the margin, not by detection | ICD-CP-03, SAFE-01, HZ-CP-013 | UT | Specified (a); (b) relies on the margin |
+| OS-07 | Low reflectivity (< 10%), glass, water, mirror-like surface | Outside the detection claim; a no-return must not make such a sector clear unless the evidence rule of ADR 0004 holds | DET-01, HZ-CP-013, SYS-CP-011 | RPL, FLT | Partial |
+| OS-08 | Wire, cable, thin branch | Outside the ODD; stated as a non-claim in the operator documentation | SYS-CP-022, HZ-CP-022 | Review | Out of ODD |
+| OS-09 | Tree with foliage, hedge, bushes | Not decided whether foliage is an obstacle class (partial returns, thin branches) | HZ-CP-002, OPEN-040 | RPL, FLT | Not specified |
+| OS-10 | Moving obstacle (person, vehicle, bird) | Outside the ODD | Scope | none | Out of ODD |
+| OS-11 | Forward acceleration (nose down) at low height over level ground | The ground ahead is not an obstacle and does not lower the cap | HZ-CP-017, SYS-CP-017, 019, REL-01 | GZ, FLT | Not specified |
+| OS-12 | Braking (nose up) toward an obstacle at flight level | The obstacle stays inside the field of view over the attitude envelope; where part of the envelope leaves it, the certified free distance shrinks and the vehicle slows; with no evidence the cap is 0 | HZ-CP-016, SYS-CP-004, 018 | GZ, FLT | Not specified |
+| OS-13 | Roll while moving sideways or turning | As OS-11 and OS-12 for the lateral sectors | HZ-CP-016, 017 | GZ | Not specified |
+| OS-14 | Gust within the ODD (wind <= 5 m/s) | The attitude excursion is handled as OS-11 to OS-13 | ENV-01, SYS-CP-018 | GZ with wind, FLT | Partial: ENV-01 only |
+| OS-15 | Cruise near the minimum height above ground | Defined for a height at or above the minimum; below it, behaviour to be decided | OPEN-038, SYS-CP-019 | GZ | Not specified |
+| OS-16 | Rising ground or slope ahead | Decide whether a slope is an obstacle and from which angle | OPEN-040 | GZ, FLT | Not specified |
+| OS-17 | Overhang, bridge or canopy above the path; low wall or fence below it | Inside the vertical collision envelope it is an obstacle, outside it is ignored | OPEN-036, SYS-CP-020 | GZ | Partial |
+| OS-18 | Climb or descent while moving horizontally | Horizontal caps only; no vertical collision claim | SYS-CP-010 | none | Out of ODD |
+| OS-19 | Isolated or sparse returns (light rain, dust, insects) | The support a return needs before it counts, and its latency, are explicit; today one return in the envelope makes the sector occupied | HZ-CP-006, 019, REL-01, SYS-CP-021 | RPL, GZ with injection, FLT | Not specified |
+| OS-20 | Rain at the ODD limit, dirty or blocked window | Degrades; the response follows the evidence the sensor still returns (returns outside the mask are obstacles or too close, missing returns leave sectors unknown), not an assumed end of the sample stream; the limits are qualified by OPEN-008 | ENV-01, SYS-CP-004, 011 | FLT | Partial |
+| OS-21 | Self-returns from propellers, legs, mount, payload | Static self-mask; masked rays are neither obstacle nor clear evidence | SYS-CP-015 | UT, RPL | Specified |
+| OS-22 | Lost packets or partial frame | A discontinuous frame gives no clear evidence (ICD-CP-06): sectors with credible obstacle returns stay occupied at their nearest range, the others are unknown and their cap is 0 | SYS-CP-004, 011, ICD-CP-06 | UT, GZ | Specified |
+| OS-23 | Sample stream stops in flight (sensor or process failure, or only frames with no valid ray) | No map is published, `obstacle_distance` goes stale, SAFE_STOP at 0.5 s sample age | PERF-04, SYS-CP-007 | GZ, HIL | Specified |
+| OS-24 | Time sync lost or clock jump | The map is rejected, its sectors are unknown, safe stop follows | SYS-CP-016, ICD-CP-02 | HIL | Specified |
+| OS-25 | Mode change away from Position or Mission while enforcing (Hold, RTL, Land, Offboard, manual) | The hook is transparent and the vehicle is released (owner scope, 2026-11-19); the release is logged and stated as a non-claim | ADR 0007, HZ-CP-020, SYS-CP-023 | GZ | Partial: the consequence is not recorded (#113) |
+| OS-26 | Takeoff, landing, ground contact | Takeoff: CP is observer-only before `TAKEOFF_STATE_FLIGHT`. Landing: an intentional landing or descent needs the pilot's explicit, logged CP disable first; a landing without it is not covered | SYS-CP-014, HZ-CP-015, ADR 0009 | GZ | Specified (the disable procedure is OS-27) |
+| OS-27 | Pilot enables, disables or overrides CP in flight | Procedure not defined | HZ-CP-009, OPEN-020 | FLT | Not specified (accepted G1 exception) |
+| OS-28 | PX4 state becomes valid for the first time in flight (heading good) | A defined start-up: no latched SAFE_STOP without a stated reason and a way out | HZ-CP-021, SYS-CP-024 | GZ | Not specified (#112) |
+| OS-29 | Estimator or heading invalid in flight | `UNQUALIFIED`, no CP action, PX4 failsafes act | SYS-CP-007, ADR 0007 | GZ | Specified |
+| OS-30 | Mission waypoint beyond an obstacle (persistent blockage) | Stays braking, the constraint is retained, the operator is told, no mode change; no timeout is defined | SYS-CP-008, HZ-CP-008 | GZ | Specified |
+| OS-31 | Another PX4 failsafe acts at the same time (RC loss, battery, geofence) | PX4 owns the failsafe; the interplay with the hook is not specified | ADR 0007 | GZ | Partial |
+| OS-32 | Pilot holds full stick toward an obstacle in Position mode | The caps limit the setpoint; the stick does not override them | SYS-CP-001, 005 | GZ | Specified |
+| OS-33 | Cruise above the obstacles with nothing in view (open sky, ground far below) | Near-horizon no-return rays and ground returns below the band certify a free distance; the vehicle flies at the speed that distance allows and is not stopped for lack of returns | SYS-CP-011, 020 | GZ, FLT | Not specified |
+| OS-34 | Flying sideways or backward in Position mode | Lower lateral and rear speeds than forward (owner, 2026-11-20); behind the vehicle only the part of the envelope above the lidar is observed (10 degree pitched-down mount), so obstacles lower than the lidar behind are a stated non-claim | SYS-CP-018, 022, OPEN-039 | GZ | Not specified |
 
 ## 2. Requirements
 
@@ -81,6 +133,23 @@ Verified facts (PX4 1.17 at `f65ddce`, `px4_msgs` at `86d8239`):
 | NFR-CP-003 | Expose health, reason, age and counters | Baseline | SITL | Draft |
 | NFR-CP-004 | Safe-stop when the latency envelope is exceeded | HZ-CP-011 | HIL | Draft |
 
+Proposed requirements (SE review 2026-11-20). They stay `Proposed` until the owner approves them in
+a separate PR; every value in them is TBD.
+
+| ID | Requirement | Source | Verify | Status |
+| --- | --- | --- | --- | --- |
+| SYS-CP-017 | Rays are expressed in a gravity-aligned, yaw-only frame at the map reference time, so the sector map does not depend on roll and pitch | ICD-CP-06, ADR 0015, 0019, HZ-CP-017 | UT, GZ | Proposed; designed, not implemented (#57) |
+| SYS-CP-018 | Over the attitude envelope of the ODD (OPEN-039) the horizon in the direction of motion stays inside the sensor field of view, by the mount pose and by braking limits set per direction; where part of the envelope is not observed, the sector's certified free distance covers only what is observed, and with no evidence the sector is unknown (cap 0), never clear | HZ-CP-016 | Analysis, GZ, FLT | Proposed |
+| SYS-CP-019 | A ground return is not an obstacle for a vehicle at or above the minimum height (OPEN-038); it is rejected by the vertical envelope in the gravity-aligned frame, not by range | HZ-CP-017 | UT, GZ | Proposed |
+| SYS-CP-020 | The distance of a sector is the smaller of the confirmed obstacle distance and the free distance certified by rays covering both halves of the vertical collision envelope; the sector is clear only when that free distance reaches the qualified range, and rays at one elevation certify only the part of the envelope they cross | HZ-CP-018, OPEN-036 | UT | Proposed |
+| SYS-CP-021 | The support a return needs before it counts as obstacle evidence (rays, time) is explicit, set from measured false-brake and miss rates, and its latency is in the budget | HZ-CP-006, 019, REL-01, PERF-03 | RPL, GZ, FLT | Proposed; value TBD (OPEN-041) |
+| SYS-CP-022 | The operator documentation lists the obstacle classes outside the claim: wires, thin branches, foliage unless qualified, low reflectivity, dynamic obstacles | HZ-CP-022, DET-01 | Review | Proposed |
+| SYS-CP-023 | Every release of the constraint by a mode change is logged and shown to the operator; the behaviour afterwards is PX4's | ADR 0007, HZ-CP-020 | GZ | Proposed (#113) |
+| SYS-CP-024 | The change from invalid to valid PX4 state in flight gives a defined start-up: no latched SAFE_STOP without a stated reason and a stated way out | HZ-CP-021, SYS-CP-007 | GZ | Proposed (#112) |
+| SYS-CP-025 | A scenario counts as evidence only after the owner approves its pass criterion; a scenario without one is exploratory and carries no claim | ADR 0011 | Review | Proposed |
+| SYS-CP-026 | The range used for a cap is corrected for the distance moved toward the sector since the sample time (ICD-CP-04) | HZ-CP-023, HZ-CP-001 | UT, GZ | Proposed; designed, not implemented (#115) |
+| SYS-CP-027 | The stopping model inputs (`CPB_T_LAT`, `CPB_A_BRK`, `CPB_JERK`) are set from measurement, and the achieved stopping distance is compared with the model across the speed range; a shortfall invalidates the speed claim | PERF-01, 02, OPEN-002, 003, 004 | GZ, FLT | Proposed |
+
 Stopping envelope (screening, not an oracle): jerk-limited braking from 12 m/s is about 28.5 m;
 with the 0.5 s freshness gate and 2.0 m margin the envelope is `28.5 + 12 * 0.5 + 2.0 = 36.5 m`
 (34.7 m at 350 ms). Half-sector quantization at 36.5 m is `36.5 * tan(2.5 deg) = 1.59 m`. If
@@ -105,6 +174,19 @@ measured range is below 40 m or errors exceed the residual margin, the 12 m/s cl
 | HZ-CP-013 | Empty Cartesian data read as clear | Zero-depth sample loses direction | Raw rays, positive coverage: SYS-CP-011 |
 | HZ-CP-014 | Brake/release chatter on transient return | Immediate release | Dwell and bounded rise: SYS-CP-013, PERF-05 |
 | HZ-CP-015 | Horizontal constraint during takeoff or landing | Removes PX4 correction authority | Observer-only: SYS-CP-014 |
+
+Proposed hazards (SE review 2026-11-20; `Proposed` until the owner approves them):
+
+| ID | Hazard | Cause | Safety constraint, requirement |
+| --- | --- | --- | --- |
+| HZ-CP-016 | The obstacle ahead leaves the sensor field of view when the vehicle pitches or rolls: a level Mid-360S sees -7 to 52 degrees (ICD-CP-01), so a nose-up pitch above 7 degrees puts the horizon below the field of view (mount pose: OPEN-029) | Attitude, field of view, mount | Coverage over the attitude envelope, else unknown: SYS-CP-018 |
+| HZ-CP-017 | The ground is read as an obstacle, so the vehicle brakes or limits its own speed at low height | Pitch or roll without leveling, no ground rejection | Gravity-aligned frame, vertical envelope: SYS-CP-017, 019 |
+| HZ-CP-018 | A sector is called clear while part of the swept volume is not observed | Rays at some elevations only | Clear needs envelope coverage: SYS-CP-020 |
+| HZ-CP-019 | An isolated false return brakes the vehicle, or a filter hides or delays a real one | Isolated-return policy | Explicit support rule from measured rates: SYS-CP-021 |
+| HZ-CP-020 | A mode change releases the constraint while the vehicle still moves toward an obstacle | Hook transparent outside Position and Mission | Log, notify, state the non-claim: SYS-CP-023 |
+| HZ-CP-021 | CP latches SAFE_STOP when the PX4 state becomes valid in flight | State machine start-up | Defined start-up: SYS-CP-024 |
+| HZ-CP-022 | The operator expects protection from obstacle classes outside the claim | Unstated limits | Documented non-claims: SYS-CP-022 |
+| HZ-CP-023 | A cap uses a range older than the vehicle position: the vehicle has moved since the sample | Motion since the sample not corrected | Range correction and measured stopping distance: SYS-CP-026, 027 |
 
 Preliminary: no safety review, no residual-risk owners.
 
@@ -133,6 +215,38 @@ flowchart LR
 | `cp_brake` (PX4 module) | Fork PRs #1 to #6: checks, caps, limiter, state machine; no heading history and no hook yet, ADR 0014 | Input validation, freshness, stopping model, sector caps, state machine | Planning, attitude, sensor filtering | SYS-CP-001, 003, 007, 008, 012, 013, 014 |
 | Horizontal limiter hook (PX4) | Not implemented, ADR 0014 | Apply caps to the final horizontal setpoint | Sensor, DDS, mode logic | SYS-CP-005, 006, 012 |
 | Existing PX4 modes and failsafes | Existing | Mode and failsafe handling | CP-owned mode logic | SYS-CP-008 |
+
+### Feature decomposition (proposed, SE review 2026-11-20)
+
+| ID | Feature | Allocated to | Today | Reqs |
+| --- | --- | --- | --- | --- |
+| FEAT-01 | Lidar acquisition with per-point time | `livox_ray_source` | Exists; real-lidar checks open (#58) | SYS-CP-016 |
+| FEAT-02 | Time alignment of the map and PX4 | Orin node, `cp_brake` | Exists; limits TBD (OPEN-033) | SYS-CP-016, ICD-CP-02 |
+| FEAT-03 | Static self-mask | `livox_ray_source` | Exists | SYS-CP-015 |
+| FEAT-04 | Pose-based deskew | `livox_ray_source` | Missing (#57) | SYS-CP-016 |
+| FEAT-05 | Gravity-aligned leveling (roll and pitch removed) | `livox_ray_source` | Missing; no lidar-side package has an attitude input | SYS-CP-017 |
+| FEAT-06 | Vertical envelope and ground rejection | `livox_ray_source`, `obstacle_sector_map` | Partial: elevation band only (OPEN-036) | SYS-CP-019, 020 |
+| FEAT-07 | Evidence classification and isolated-return policy | `livox_ray_source`, `obstacle_sector_map` | Partial: return, no-return and invalid exist; one return makes a sector occupied, no support rule | SYS-CP-011, 021 |
+| FEAT-08 | Sector map: nearest range, coverage, too close | `obstacle_sector_map` | Exists, unit tests | SYS-CP-004, 011 |
+| FEAT-09 | Wire encoding and transport | `px4_obstacle_bridge`, Orin node | Exists | SYS-CP-002 |
+| FEAT-10 | Input validation and freshness | `cp_brake` | Exists | SYS-CP-004, 007 |
+| FEAT-11 | Heading and travelled distance at the sample time | `cp_brake` | Partial: heading history exists (#94); the travelled distance is not implemented, the module passes 0 (#115) | SYS-CP-016, 026 |
+| FEAT-12 | Cap law: stopping model per sector | `cp_brake` | Exists; `CPB_T_LAT` unmeasured | SYS-CP-001, 012, 027 |
+| FEAT-13 | Release policy: dwell and rise | `cp_brake` | Exists | SYS-CP-013 |
+| FEAT-14 | State machine and start-up | `cp_brake` | Exists; start-up open (#112) | SYS-CP-007, 014, 024 |
+| FEAT-15 | Setpoint limiting hook | `mc_pos_control` | In review, held (fork PR #8) | SYS-CP-005, 006, 012 |
+| FEAT-16 | Mode scope and release | hook, `cp_brake` | Partial: Position and Mission only; release not recorded (#113) | SYS-CP-008, 023 |
+| FEAT-17 | Logging, status, diagnostics | `cp_brake`, hook, Orin node | Partial | SYS-CP-009, NFR-CP-003 |
+| FEAT-18 | Configuration and platform values | `config/platforms`, `CPB_` parameters | Partial: values TBD, sentinels fail safe | SYS-CP-007, OPEN-005 |
+| FEAT-19 | Pilot procedure: enable, disable, acknowledge | Operations | Not specified | HZ-CP-009, OPEN-020 |
+| FEAT-20 | Verification infrastructure: worlds, sensor models, replay, noise injection, scenario harness | tests, tools | Partial: unit tests and a Gazebo software-flow run | SYS-CP-025, ADR 0011 |
+
+The "Today" column was checked in the sources on 2026-11-20: no attitude or gravity input exists in
+`livox_ray_source`, `obstacle_sector_map`, `obstacle_sector_node` or `px4_obstacle_bridge`;
+`CpBrake.cpp` calls `sectorSpeedCap(..., 0.f, ...)`, so the travelled-distance argument of the
+stopping model is unused; `HeadingHistory` stores heading only; the builder makes a sector occupied
+from one return inside the elevation band and needs `coverage_min_rays_per_sector` returns without
+obstacle for clear.
 
 Operational states (reason flags carry the cause): `DISABLED`, `OBSERVER_ONLY`, `NOT_READY`,
 `ACTIVE_CLEAR`, `BRAKING`, `SAFE_STOP`. `SAFE_STOP` leaves only through pilot acknowledgement and
@@ -388,6 +502,12 @@ SITL fidelity gaps:
 | OPEN-035 | Hook interaction with FlightTask feedback of the published setpoint, the XY velocity integrator and the tilt limit; V1 handling decided by the owner on 2026-11-20: the hook is a stateless pure function applied identically on every `update()` call (PX4 calls it up to three times per cycle), the read-back of the limited setpoint by `FlightTask` is accepted, the XY velocity integrator gets no special handling, and any windup seen in SITL is recorded | Controls + PX4 | TBD | G4 |
 | OPEN-036 | Vertical collision envelope as a height band: how a no-return ray, which has no endpoint, is tested against it; builder change from the elevation band | Perception + SE | TBD | G3 |
 | OPEN-037 | `fmu-v6x` FLASH budget: `cp_brake` does not fit the board image; decided 2026-11-20: build `fmu-v6x` with the PX4 multicopter variant; `cp_brake` is enabled and builds there (fork PR #5, #93; facts and options below) | Project Owner + PX4 | TBD | #64, #65, #66 on `fmu-v6x` |
+| OPEN-038 | Minimum height above ground in cruise inside the ODD, and the behaviour below it (proposed, SE review 2026-11-20) | SE + Operations | TBD | G4 |
+| OPEN-039 | Attitude envelope (pitch and roll limits from braking, acceleration and wind) over which the horizon in the direction of motion must stay in the field of view; sensor mount pitch (OPEN-029); the owner chose in chat on 2026-11-20 a mount pitched down 10 degrees and lower lateral and rear speeds, to be recorded in the approval PR (proposed) | SE + Mechanical + Controls | TBD | G4 |
+| OPEN-040 | Terrain and vegetation classes counted as obstacles: slope angle, foliage, hedges, water, glass (proposed) | SE + Perception | TBD | G4 |
+| OPEN-041 | Treatment of isolated returns: support needed (rays, time), measured false-brake and miss rates, latency cost (proposed) | Perception + SE + Test | TBD | G4 |
+| OPEN-042 | Start-up rule when the PX4 state becomes valid in flight (#112) and release behaviour on a mode change (#113) (proposed) | SE + PX4 + Operations | TBD | G4 |
+| OPEN-043 | Owner approval of a pass criterion for each operational scenario used as evidence (proposed) | Project Owner + SE | TBD | G4 |
 
 OPEN-022 and 023 block any operational clear-sector claim. OPEN-002 to OPEN-008 block the
 12 m/s claim. Neither blocks the implementation and SITL work that produces the evidence.
