@@ -8,6 +8,7 @@
   <buildtool_depend>ament_cmake</buildtool_depend>
   <depend>obstacle_sector_map</depend>
   <depend>yaml-cpp</depend>
+  <depend>livox_sdk2</depend>
   <test_depend>ament_cmake_gtest</test_depend>
   <export>
     <build_type>ament_cmake</build_type>

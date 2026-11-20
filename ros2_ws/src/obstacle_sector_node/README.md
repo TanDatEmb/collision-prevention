@@ -1,7 +1,7 @@
 # obstacle_sector_node
 
 Orin side of the sector pipeline: a ROS-free pipeline, a platform config loader, a ROS 2 node
-class and an executable for a planar scan (the Gazebo 2D lidar). The Livox source is issue #58.
+class and an executable for a planar scan (the Gazebo 2D lidar) or a Livox Mid-360(S) (SDK2).
 
 ## Input contract
 - A `livox_ray_source::RaySource` (ICD-CP-06) and a `SectorMapConfig`.
@@ -28,6 +28,16 @@ class and an executable for a planar scan (the Gazebo 2D lidar). The Livox sourc
 auto config = obstacle_sector_node::loadSectorMapConfig("config/platforms/x500.yaml");
 rclcpp::spin(std::make_shared<obstacle_sector_node::ObstacleSectorNode>(std::move(source), config));
 ```
+
+## Run with a Livox Mid-360(S)
+`ros2 run obstacle_sector_node obstacle_sector_node --ros-args -p platform_config:=<yaml> -p
+source:=livox -p livox_config:=<Livox SDK2 JSON>` (the SDK's `mid360s_config.json` sample, with
+the host IP of this machine, works). `coverage_window_ms` is the frame window (default 100, the
+ICD value); `configure_point_type` (default true) lets the node ask the lidar for spherical points
+once, which is the only parameter it writes (see `livox_ray_source`). Every 5 s the log shows the
+packet counters: `unsynchronized` counts packets whose time is not PTP; their rays carry time 0, no
+frame forms and the diagnostics say "source ended". The lidar must be synchronized by PTP
+(`time_type` 1, ADR 0003), for example with `ptp4l` as master on the lidar's port.
 
 ## Run in Gazebo SITL
 The executable `obstacle_sector_node` reads `sensor_msgs/LaserScan` from `scan` (parameter
