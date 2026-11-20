@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <vector>
 
+#include "livox_ray_source/ray_source.hpp"
 #include "obstacle_sector_map/types.hpp"
 
 namespace livox_ray_source
@@ -58,6 +59,25 @@ public:
 private:
   bool _has_previous{false};
   uint16_t _previous{0U};
+};
+
+/// Turns a decoded packet into stream samples for a frame segmenter.
+///
+/// A ray without a usable time (timestamp 0: the lidar is not PTP synchronized) is dropped here:
+/// the segmenter only closes a frame on a ray with a time, so it would collect such rays without
+/// bound (200,000 points per second), and the sector map would reject them anyway (SYS-CP-016,
+/// ADR 0003). The drop is a gap in the stream, so the next ray that is handed on carries
+/// `continuity_break`, as does the first ray after a `udp_cnt` gap; a break is never lost because
+/// the packet it belonged to had no usable ray.
+class PacketSampler
+{
+public:
+  /// Appends the rays of `packet` that have a time to `out`; `udp_break` is true when packets were
+  /// lost just before this one. Returns the number of rays dropped.
+  std::size_t append(const DecodedPacket & packet, bool udp_break, std::vector<StreamSample> & out);
+
+private:
+  bool _pending_break{false};
 };
 
 }  // namespace livox_ray_source

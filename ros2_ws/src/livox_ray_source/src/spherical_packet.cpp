@@ -97,4 +97,21 @@ bool UdpContinuityTracker::update(uint16_t udp_cnt)
   return is_break;
 }
 
+std::size_t PacketSampler::append(
+  const DecodedPacket & packet, bool udp_break, std::vector<StreamSample> & out)
+{
+  _pending_break = _pending_break || udp_break;
+  std::size_t dropped = 0U;
+  for (const auto & ray : packet.rays) {
+    if (ray.timestamp_ns == 0U) {
+      ++dropped;
+      _pending_break = true;
+      continue;
+    }
+    out.push_back(StreamSample{ray, _pending_break});
+    _pending_break = false;
+  }
+  return dropped;
+}
+
 }  // namespace livox_ray_source

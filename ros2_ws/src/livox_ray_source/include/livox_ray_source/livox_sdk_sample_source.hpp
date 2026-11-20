@@ -26,13 +26,15 @@ struct SdkSourceStats
   uint64_t not_spherical_packets{0U};   ///< the lidar still sends another point type
   uint64_t unsynchronized_packets{0U};  ///< time type is not PTP: rays carry time 0
   uint64_t continuity_breaks{0U};
+  uint64_t dropped_rays{0U};  ///< rays without a usable time, not handed on
 };
 
 /// Spherical samples of a Livox Mid-360(S) through the Livox SDK2, as a stream of StreamSample.
 ///
-/// Each point packet that the SDK delivers is decoded by `decodeSphericalPacket` and every ray is
-/// given to `sink`, in order, from the SDK's thread (so the sink must be thread safe). A packet
-/// that follows a gap in `udp_cnt` marks its first ray with `continuity_break`.
+/// Each point packet that the SDK delivers is decoded by `decodeSphericalPacket` and its rays are
+/// given to `sink`, in order, from the SDK's thread (so the sink must be thread safe). A ray without
+/// a usable time (the lidar is not PTP synchronized) is not given to the sink (`PacketSampler`);
+/// the next ray that is, and the first ray after a gap in `udp_cnt`, carries `continuity_break`.
 ///
 /// When `configure_point_type` is true and the lidar sends another point type, this source asks
 /// the lidar for spherical points once per detection: one read, and one write (the point data

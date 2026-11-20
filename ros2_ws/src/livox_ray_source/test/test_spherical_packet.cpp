@@ -6,11 +6,15 @@
 #include <string>
 #include <vector>
 
+#include "livox_ray_source/frame_segmenter.hpp"
 #include "livox_ray_source/spherical_packet.hpp"
 
 using livox_ray_source::DecodedPacket;
 using livox_ray_source::decodeSphericalPacket;
 using livox_ray_source::DecodeStatus;
+using livox_ray_source::FrameSegmenter;
+using livox_ray_source::PacketSampler;
+using livox_ray_source::StreamSample;
 using livox_ray_source::UdpContinuityTracker;
 using obstacle_sector_map::RayReturnKind;
 
@@ -263,6 +267,86 @@ TEST(DecodeSphericalPacketTest, TheSameRealPacketOnPtpTimeSpreadsItsPointsOver47
   ASSERT_EQ(packet.status, DecodeStatus::kOk);
   EXPECT_EQ(packet.rays.front().timestamp_ns, 5'055'226'547'740U);
   EXPECT_EQ(packet.rays.back().timestamp_ns, 5'055'226'547'740U + 475'000U);
+}
+
+DecodedPacket decodeThree(uint8_t time_type, uint16_t udp_cnt = 1U)
+{
+  const auto bytes = makePacket(
+    {{1000U, 9000U, 0U}, {2000U, 9000U, 100U}, {3000U, 9000U, 200U}}, 3U, time_type, 20U, udp_cnt);
+  return decodeSphericalPacket(bytes.data(), bytes.size());
+}
+
+TEST(PacketSamplerTest, RaysWithATimeAreHandedOnInOrderAndUnbroken)
+{
+  PacketSampler sampler;
+  std::vector<StreamSample> out;
+  EXPECT_EQ(sampler.append(decodeThree(1U), false, out), 0U);
+  ASSERT_EQ(out.size(), 3U);
+  EXPECT_FLOAT_EQ(out[0].ray.range_m, 1.0F);
+  EXPECT_FLOAT_EQ(out[2].ray.range_m, 3.0F);
+  EXPECT_LT(out[0].ray.timestamp_ns, out[2].ray.timestamp_ns);
+  for (const auto & sample : out) {
+    EXPECT_FALSE(sample.continuity_break);
+  }
+}
+
+TEST(PacketSamplerTest, RaysWithoutATimeAreDroppedAndCounted)
+{
+  PacketSampler sampler;
+  std::vector<StreamSample> out;
+  EXPECT_EQ(sampler.append(decodeThree(0U), false, out), 3U);
+  EXPECT_TRUE(out.empty());
+}
+
+TEST(PacketSamplerTest, AUdpGapMarksOnlyTheFirstRayOfThePacket)
+{
+  PacketSampler sampler;
+  std::vector<StreamSample> out;
+  static_cast<void>(sampler.append(decodeThree(1U), true, out));
+  ASSERT_EQ(out.size(), 3U);
+  EXPECT_TRUE(out[0].continuity_break);
+  EXPECT_FALSE(out[1].continuity_break);
+  EXPECT_FALSE(out[2].continuity_break);
+}
+
+TEST(PacketSamplerTest, ABreakOrADropBeforeTheNextUsableRayIsNotForgotten)
+{
+  PacketSampler sampler;
+  std::vector<StreamSample> out;
+  // The lidar loses its time, and a packet is also missing in the middle of that.
+  static_cast<void>(sampler.append(decodeThree(0U), false, out));
+  static_cast<void>(sampler.append(decodeThree(0U), true, out));
+  EXPECT_TRUE(out.empty());
+  // The first ray after the gap carries the break, the rest do not.
+  static_cast<void>(sampler.append(decodeThree(1U), false, out));
+  ASSERT_EQ(out.size(), 3U);
+  EXPECT_TRUE(out[0].continuity_break);
+  EXPECT_FALSE(out[1].continuity_break);
+  // And it is spent once reported.
+  out.clear();
+  static_cast<void>(sampler.append(decodeThree(1U), false, out));
+  ASSERT_EQ(out.size(), 3U);
+  EXPECT_FALSE(out[0].continuity_break);
+}
+
+TEST(PacketSamplerTest, AStreamWithoutTimeBuffersNothingInTheSegmenter)
+{
+  // 200,000 points per second without PTP: the segmenter must not collect them (it only closes a
+  // frame on a ray with a time, so it would grow without bound).
+  PacketSampler sampler;
+  FrameSegmenter segmenter(100'000'000U);
+  std::vector<StreamSample> out;
+  std::size_t forwarded = 0U;
+  for (uint16_t packet = 0U; packet < 5000U; ++packet) {
+    out.clear();
+    static_cast<void>(sampler.append(decodeThree(0U, packet), packet % 97U == 0U, out));
+    for (const auto & sample : out) {
+      static_cast<void>(segmenter.push(sample));
+      ++forwarded;
+    }
+  }
+  EXPECT_EQ(forwarded, 0U);
+  EXPECT_FALSE(segmenter.flush().has_value());
 }
 
 }  // namespace

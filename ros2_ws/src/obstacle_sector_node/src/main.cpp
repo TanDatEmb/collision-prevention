@@ -132,12 +132,13 @@ int main(int argc, char ** argv)
         RCLCPP_INFO(
           node->get_logger(),
           "livox packets %lu, decoded %lu, rejected %lu, not spherical %lu, unsynchronized %lu, "
-          "continuity breaks %lu; frames %lu, messages %lu, encode failures %lu",
+          "continuity breaks %lu, rays dropped for no time %lu; frames %lu, messages %lu, encode "
+          "failures %lu",
           asUnsigned(stats.packets), asUnsigned(stats.decoded_packets),
           asUnsigned(stats.rejected_packets), asUnsigned(stats.not_spherical_packets),
           asUnsigned(stats.unsynchronized_packets), asUnsigned(stats.continuity_breaks),
-          asUnsigned(node->stats().frames), asUnsigned(node->stats().messages),
-          asUnsigned(node->stats().encode_failures));
+          asUnsigned(stats.dropped_rays), asUnsigned(node->stats().frames),
+          asUnsigned(node->stats().messages), asUnsigned(node->stats().encode_failures));
       });
       if (!livox->start()) {
         throw std::runtime_error("the Livox SDK did not start");

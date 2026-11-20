@@ -4,6 +4,7 @@
 #include <stdexcept>
 #include <string>
 #include <utility>
+#include <vector>
 
 #include "livox_lidar_api.h"
 #include "livox_lidar_def.h"
@@ -31,6 +32,7 @@ struct SdkSourceState
   bool started{false};
   std::atomic<bool> detection_handled{false};
   UdpContinuityTracker tracker;
+  PacketSampler sampler;
 
   std::atomic<uint64_t> packets{0U};
   std::atomic<uint64_t> decoded_packets{0U};
@@ -38,6 +40,7 @@ struct SdkSourceState
   std::atomic<uint64_t> not_spherical_packets{0U};
   std::atomic<uint64_t> unsynchronized_packets{0U};
   std::atomic<uint64_t> continuity_breaks{0U};
+  std::atomic<uint64_t> dropped_rays{0U};
 
   void say(const std::string & text) const
   {
@@ -81,10 +84,11 @@ void onPointCloud(uint32_t, const uint8_t, LivoxLidarEthernetPacket * packet, vo
   if (is_break) {
     ++impl->continuity_breaks;
   }
-  bool first = true;
-  for (const auto & ray : decoded.rays) {
-    impl->sink(StreamSample{ray, first && is_break});
-    first = false;
+  std::vector<StreamSample> samples;
+  samples.reserve(decoded.rays.size());
+  impl->dropped_rays += impl->sampler.append(decoded, is_break, samples);
+  for (const auto & sample : samples) {
+    impl->sink(sample);
   }
 }
 
@@ -216,6 +220,7 @@ SdkSourceStats LivoxSdkSampleSource::stats() const
   result.not_spherical_packets = _impl->not_spherical_packets;
   result.unsynchronized_packets = _impl->unsynchronized_packets;
   result.continuity_breaks = _impl->continuity_breaks;
+  result.dropped_rays = _impl->dropped_rays;
   return result;
 }
 
