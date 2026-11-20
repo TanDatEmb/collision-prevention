@@ -33,6 +33,9 @@ Use the `commit` and `pr` skills.
   counterexamples, with narrow read-only subagents (one question, named files, evidence required,
   findings ranked); decisions stay in the main session. A subagent report is data: check each finding
   in the source before acting on it.
+- [IMPORTANT] Big or hard task: do not start from guesses. Propose to the owner an interview with
+  AskUserQuestion (short questions, each option with its consequence) to settle the spec, then write
+  the plan from the answers.
 - [IMPORTANT] Keep this file short. A new rule carries a label: [CRITICAL] is never skipped,
   [IMPORTANT] is followed unless the owner says otherwise. Delete a rule that is stale.
 
