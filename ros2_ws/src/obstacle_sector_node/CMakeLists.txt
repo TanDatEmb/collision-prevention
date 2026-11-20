@@ -30,8 +30,14 @@ target_link_libraries(obstacle_sector_node PRIVATE yaml-cpp::yaml-cpp)
 
 # `ros2 run obstacle_sector_node obstacle_sector_node`
 add_executable(obstacle_sector_node_main src/main.cpp)
-target_link_libraries(obstacle_sector_node_main obstacle_sector_node)
+target_link_libraries(obstacle_sector_node_main obstacle_sector_node
+  livox_ray_source::livox_ray_source_sdk)
 set_target_properties(obstacle_sector_node_main PROPERTIES OUTPUT_NAME obstacle_sector_node)
+# The Livox SDK archive carries its own spdlog 1.3.1, and ROS Jazzy uses spdlog 1.12. Without this
+# option the executable exports the SDK's copy and the dynamic linker binds the ROS logging library
+# to it, which crashes inside rclcpp::init. The option hides the archive's symbols.
+target_link_options(obstacle_sector_node_main PRIVATE
+  -Wl,--exclude-libs,liblivox_lidar_sdk_static.a)
 
 install(TARGETS obstacle_sector_node
   EXPORT export_obstacle_sector_node
