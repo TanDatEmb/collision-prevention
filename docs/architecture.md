@@ -284,12 +284,13 @@ source: ADR 0004.
 | Sector map rate | 10 Hz nominal | Approved baseline |
 | Wire load | one 72-sector message per 100 ms | Measure at HIL |
 | Orin CPU, memory, thermal | TBD: OPEN-028 | Open |
-| FMU CPU and scheduling | TBD: OPEN-028 | Open |
+| FMU CPU and scheduling | `cp_brake` and the hook together add at most 10 points of CPU load on top of PX4 multicopter flight (owner, 2026-11-19, from the owner's experience of 40 to 50% load on the Pixhawk 6X; not measured by the project) | Approved baseline, measured at G5 (OPEN-028) |
 
 Attitude response is in the measured braking envelope, not in PERF-03 (ADR 0005).
 
 Allocation and owners (owner decision 2026-11-19: G2 approves this allocation; values are measured
-and approved at G5, OPEN-004 and OPEN-028; no number is entered before then):
+and approved at G5, OPEN-004 and OPEN-028; no number is entered before then, except the FMU CPU
+ceiling above):
 
 | Budget item | Owner role | How it is measured |
 | --- | --- | --- |
@@ -366,12 +367,12 @@ SITL fidelity gaps:
 | OPEN-033 | Numeric limits for judging the sync from `timesync_status` at PX4 and for an excessive map age; the Orin-side rejection of a negative age is implemented in a separate issue (structure decided) | PX4 + Software Integration | TBD | G5 |
 | OPEN-035 | Hook interaction with FlightTask feedback of the published setpoint, the XY velocity integrator and the tilt limit | Controls + PX4 | TBD | G4 |
 | OPEN-036 | Vertical collision envelope as a height band: how a no-return ray, which has no endpoint, is tested against it; builder change from the elevation band | Perception + SE | TBD | G3 |
-| OPEN-037 | `fmu-v6x` FLASH budget: `cp_brake` does not fit the board image; owner decision on how to make room (facts and options below) | Project Owner + PX4 | TBD | #64, #65, #66 on `fmu-v6x` |
+| OPEN-037 | `fmu-v6x` FLASH budget: `cp_brake` does not fit the board image; decided 2026-11-20: build `fmu-v6x` with the PX4 multicopter variant; enabling and building `cp_brake` there is pending (facts and options below) | Project Owner + PX4 | TBD | #64, #65, #66 on `fmu-v6x` |
 
 OPEN-022 and 023 block any operational clear-sector claim. OPEN-002 to OPEN-008 block the
 12 m/s claim. Neither blocks the implementation and SITL work that produces the evidence.
 
-### OPEN-037 `fmu-v6x` FLASH budget (owner decision pending)
+### OPEN-037 `fmu-v6x` FLASH budget (owner decision 2026-11-20, build pending)
 
 Facts, as measured in the PX4 fork build `px4_fmu-v6x_default` on 2026-11-19 (fork PR
 `TanDatEmb/PX4-Autopilot#4`); no build was run in this repository for this entry:
@@ -381,12 +382,16 @@ Facts, as measured in the PX4 fork build `px4_fmu-v6x_default` on 2026-11-19 (fo
   took 5,372 bytes.
 - The review fix added 80 bytes and the link failed with `region FLASH overflowed by 52 bytes`.
 - #64 (heading history and state machine) and #65 (limiter hook) add more code, so they will not
-  fit either.
+  fit the default image either.
 - Taken in the fork PR: `cp_brake` is left out of the `fmu-v6x` board config and stays enabled for
-  `sitl`. Until this item is decided no claim that `cp_brake` or the hook runs on `fmu-v6x`
-  hardware can be made (build, HIL or flight).
+  `sitl`. Until `cp_brake` is built in the multicopter variant no claim that `cp_brake` or the
+  hook runs on `fmu-v6x` hardware can be made (build, HIL or flight).
 
-Options, none chosen (the owner decides; they may be combined):
+Options (the owner chose the first on 2026-11-20, see below; the others stay as the record of what
+was considered):
+- Build `fmu-v6x` with PX4's own multicopter variant (`px4_fmu-v6x_multicopter`,
+  `boards/px4/fmu-v6x/multicopter.px4board`), which leaves out the fixed-wing, VTOL and airspeed
+  modules.
 - Drop other PX4 modules from the fork's `fmu-v6x` config; the owner picks which.
 - Decide that `cp_brake` does not run on this board, and record what that means for SYS-CP-001
   and 005 on the target hardware.
@@ -394,5 +399,16 @@ Options, none chosen (the owner decides; they may be combined):
 - Reduce the module footprint; it must recover at least the 52 bytes of the reviewed module plus
   what #64 and #65 add (not yet measured). No byte target or margin is set here: TBD.
 
-Blocks #64, #65 and #66 on `fmu-v6x`. Which modules to drop, any flash margin and any size target
-stay TBD until approved by the owner.
+Owner decision, 2026-11-20: no VTOL airframe is in scope, so `fmu-v6x` is built with PX4's
+multicopter variant. This replaces the owner decision of 2026-11-19 that the VTOL modules stay,
+which was given before the variant was known. Measured in the fork tree on 2026-11-20
+(`px4_fmu-v6x_multicopter`, without `cp_brake`): 1,880,240 bytes used (95.63%), 85,840 bytes free,
+80,440 bytes less than the default image. `cp_brake` took 5,372 bytes before the review fix, which
+is about 6% of that margin. The board file `boards/px4/fmu-v6x/multicopter.px4board` switches off
+the fixed-wing, VTOL and airspeed modules, so a VTOL or fixed-wing airframe cannot run on this
+image; if one comes into scope this item is open again. Not done yet: enabling `cp_brake` in the
+multicopter variant and building it (a separate issue). Still undecided: any flash margin and any
+size target.
+
+Blocks #64, #65 and #66 on `fmu-v6x` until `cp_brake` is enabled and built in the multicopter
+variant. Any flash margin and any size target stay TBD until approved by the owner.
