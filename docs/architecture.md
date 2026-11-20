@@ -75,7 +75,7 @@ owner approves its pass criterion (SYS-CP-025, OPEN-043).
 | OS-09 | Tree with foliage, hedge, bushes | Not decided whether foliage is an obstacle class (partial returns, thin branches) | HZ-CP-002, OPEN-040 | RPL, FLT | Not specified |
 | OS-10 | Moving obstacle (person, vehicle, bird) | Outside the ODD | Scope | none | Out of ODD |
 | OS-11 | Forward acceleration (nose down) at low height over level ground | The ground ahead is not an obstacle and does not lower the cap | HZ-CP-017, SYS-CP-017, 019, REL-01 | GZ, FLT | Not specified |
-| OS-12 | Braking (nose up) toward an obstacle at flight level | The obstacle stays inside the field of view over the attitude envelope; where it does not, the sector is unknown and the cap is 0 | HZ-CP-016, SYS-CP-004, 018 | GZ, FLT | Not specified |
+| OS-12 | Braking (nose up) toward an obstacle at flight level | The obstacle stays inside the field of view over the attitude envelope; where part of the envelope leaves it, the certified free distance shrinks and the vehicle slows; with no evidence the cap is 0 | HZ-CP-016, SYS-CP-004, 018 | GZ, FLT | Not specified |
 | OS-13 | Roll while moving sideways or turning | As OS-11 and OS-12 for the lateral sectors | HZ-CP-016, 017 | GZ | Not specified |
 | OS-14 | Gust within the ODD (wind <= 5 m/s) | The attitude excursion is handled as OS-11 to OS-13 | ENV-01, SYS-CP-018 | GZ with wind, FLT | Partial: ENV-01 only |
 | OS-15 | Cruise near the minimum height above ground | Defined for a height at or above the minimum; below it, behaviour to be decided | OPEN-038, SYS-CP-019 | GZ | Not specified |
@@ -96,6 +96,8 @@ owner approves its pass criterion (SYS-CP-025, OPEN-043).
 | OS-30 | Mission waypoint beyond an obstacle (persistent blockage) | Stays braking, the constraint is retained, the operator is told, no mode change; no timeout is defined | SYS-CP-008, HZ-CP-008 | GZ | Specified |
 | OS-31 | Another PX4 failsafe acts at the same time (RC loss, battery, geofence) | PX4 owns the failsafe; the interplay with the hook is not specified | ADR 0007 | GZ | Partial |
 | OS-32 | Pilot holds full stick toward an obstacle in Position mode | The caps limit the setpoint; the stick does not override them | SYS-CP-001, 005 | GZ | Specified |
+| OS-33 | Cruise above the obstacles with nothing in view (open sky, ground far below) | Near-horizon no-return rays and ground returns below the band certify a free distance; the vehicle flies at the speed that distance allows and is not stopped for lack of returns | SYS-CP-011, 020 | GZ, FLT | Not specified |
+| OS-34 | Flying sideways or backward in Position mode | Lower lateral and rear speeds than forward (owner, 2026-11-20); behind the vehicle only the part of the envelope above the lidar is observed (10 degree pitched-down mount), so obstacles lower than the lidar behind are a stated non-claim | SYS-CP-018, 022, OPEN-039 | GZ | Not specified |
 
 ## 2. Requirements
 
@@ -137,9 +139,9 @@ a separate PR; every value in them is TBD.
 | ID | Requirement | Source | Verify | Status |
 | --- | --- | --- | --- | --- |
 | SYS-CP-017 | Rays are expressed in a gravity-aligned, yaw-only frame at the map reference time, so the sector map does not depend on roll and pitch | ICD-CP-06, ADR 0015, 0019, HZ-CP-017 | UT, GZ | Proposed; designed, not implemented (#57) |
-| SYS-CP-018 | Over the attitude envelope of the ODD (OPEN-039) the horizon in the direction of motion stays inside the sensor field of view; where it does not, the affected sectors are unknown (cap 0), never clear | HZ-CP-016 | Analysis, GZ, FLT | Proposed |
+| SYS-CP-018 | Over the attitude envelope of the ODD (OPEN-039) the horizon in the direction of motion stays inside the sensor field of view, by the mount pose and by braking limits set per direction; where part of the envelope is not observed, the sector's certified free distance covers only what is observed, and with no evidence the sector is unknown (cap 0), never clear | HZ-CP-016 | Analysis, GZ, FLT | Proposed |
 | SYS-CP-019 | A ground return is not an obstacle for a vehicle at or above the minimum height (OPEN-038); it is rejected by the vertical envelope in the gravity-aligned frame, not by range | HZ-CP-017 | UT, GZ | Proposed |
-| SYS-CP-020 | A sector is clear only when positive evidence covers the whole vertical collision envelope in that direction up to the qualified range; rays at one elevation do not make it clear | HZ-CP-018, OPEN-036 | UT | Proposed |
+| SYS-CP-020 | The distance of a sector is the smaller of the confirmed obstacle distance and the free distance certified by rays covering both halves of the vertical collision envelope; the sector is clear only when that free distance reaches the qualified range, and rays at one elevation certify only the part of the envelope they cross | HZ-CP-018, OPEN-036 | UT | Proposed |
 | SYS-CP-021 | The support a return needs before it counts as obstacle evidence (rays, time) is explicit, set from measured false-brake and miss rates, and its latency is in the budget | HZ-CP-006, 019, REL-01, PERF-03 | RPL, GZ, FLT | Proposed; value TBD (OPEN-041) |
 | SYS-CP-022 | The operator documentation lists the obstacle classes outside the claim: wires, thin branches, foliage unless qualified, low reflectivity, dynamic obstacles | HZ-CP-022, DET-01 | Review | Proposed |
 | SYS-CP-023 | Every release of the constraint by a mode change is logged and shown to the operator; the behaviour afterwards is PX4's | ADR 0007, HZ-CP-020 | GZ | Proposed (#113) |
@@ -501,7 +503,7 @@ SITL fidelity gaps:
 | OPEN-036 | Vertical collision envelope as a height band: how a no-return ray, which has no endpoint, is tested against it; builder change from the elevation band | Perception + SE | TBD | G3 |
 | OPEN-037 | `fmu-v6x` FLASH budget: `cp_brake` does not fit the board image; decided 2026-11-20: build `fmu-v6x` with the PX4 multicopter variant; `cp_brake` is enabled and builds there (fork PR #5, #93; facts and options below) | Project Owner + PX4 | TBD | #64, #65, #66 on `fmu-v6x` |
 | OPEN-038 | Minimum height above ground in cruise inside the ODD, and the behaviour below it (proposed, SE review 2026-11-20) | SE + Operations | TBD | G4 |
-| OPEN-039 | Attitude envelope (pitch and roll limits from braking, acceleration and wind) over which the horizon in the direction of motion must stay in the field of view; sensor mount pitch (OPEN-029) (proposed) | SE + Mechanical + Controls | TBD | G4 |
+| OPEN-039 | Attitude envelope (pitch and roll limits from braking, acceleration and wind) over which the horizon in the direction of motion must stay in the field of view; sensor mount pitch (OPEN-029); the owner chose in chat on 2026-11-20 a mount pitched down 10 degrees and lower lateral and rear speeds, to be recorded in the approval PR (proposed) | SE + Mechanical + Controls | TBD | G4 |
 | OPEN-040 | Terrain and vegetation classes counted as obstacles: slope angle, foliage, hedges, water, glass (proposed) | SE + Perception | TBD | G4 |
 | OPEN-041 | Treatment of isolated returns: support needed (rays, time), measured false-brake and miss rates, latency cost (proposed) | Perception + SE + Test | TBD | G4 |
 | OPEN-042 | Start-up rule when the PX4 state becomes valid in flight (#112) and release behaviour on a mode change (#113) (proposed) | SE + PX4 + Operations | TBD | G4 |
