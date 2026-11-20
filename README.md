@@ -35,7 +35,7 @@ ros2_ws/src/obstacle_sector_map   platform-neutral sector map library
 ros2_ws/src/obstacle_sector_node pipeline, config loader and ROS node class
 ros2_ws/src/px4_obstacle_bridge   ObstacleDistance encoder
 ros2_ws/src/px4_msgs              PX4 ROS 2 messages (submodule, pinned)
-ros2_ws/third_party/Livox-SDK2    Livox SDK2 (submodule, pinned, not yet used by code)
+ros2_ws/third_party/Livox-SDK2    Livox SDK2 (submodule, pinned; used by `livox_ray_source_sdk`)
 tools/check_msg_parity.sh      checks PX4 and px4_msgs message definitions match
 .agents/skills/                commit and pr skills (symlinked from .claude/skills/)
 .github/workflows/ci.yml       PR title check, format check, build and test
