@@ -9,13 +9,17 @@ moving, when the leg ends, or after --timeout seconds. It prints one JSON line w
 verdict comes from analyze_stop.py on the ULog, not from this script. Bench values only: nothing here
 is an approved platform value.
 
---toggle-cpb: set CPB_EN to 0 and then to 1 once in flight. This is the bench workaround of issue #112
-(the state machine latches SAFE_STOP when the PX4 state becomes valid in flight); a report that uses it
-must say so.
+The vehicle first takes off and hovers; with --px4-bin the runner then reads `px4-cp_brake status` and
+waits until cp_brake is enforcing (ACTIVE_CLEAR or BRAKING) before the leg starts. If the state machine
+has latched SAFE_STOP (issue #112, which happens only sometimes) it sets CPB_EN to 0 and then to 1,
+the bench workaround; a report that used it must say so (the JSON says `toggled`). The flag
+--toggle-cpb forces the toggle. Run with python3 without -I (pymavlink is a user package).
 """
 import argparse
 import json
 import math
+import re
+import subprocess
 import sys
 import time
 
@@ -34,6 +38,49 @@ def set_param(link, name, value, ptype):
         if msg is not None and msg.param_id.rstrip("\x00") == name:
             return msg.param_value
     return None
+
+
+def px4_param_set(px4_bin, name, value):
+    """Set a parameter through the PX4 shell client (px4-param next to px4-cp_brake). A MAVLink PARAM_SET
+    did not re-enable CPB_EN in the bench runs; the shell client does. None on a timeout."""
+    client = px4_bin.rsplit("/", 1)[0] + "/px4-param"
+    try:
+        return subprocess.run([client, "set", name, str(value)], capture_output=True, text=True,
+                              timeout=15).stdout.strip()
+    except subprocess.TimeoutExpired:
+        return None
+
+
+def toggle_cpb(px4_bin):
+    """CPB_EN 0 then 1 (bench workaround of issue #112); CPB_EN is set back to 1 even on an error."""
+    try:
+        px4_param_set(px4_bin, "CPB_EN", 0)
+        time.sleep(2)
+    finally:
+        for _ in range(3):
+            if px4_param_set(px4_bin, "CPB_EN", 1) is not None:
+                break
+
+
+def commander(px4_bin, *args):
+    """Run px4-commander next to px4-cp_brake (arm and takeoff worked through it where a MAVLink
+    takeoff command did not in the bench runs)."""
+    client = px4_bin.rsplit("/", 1)[0] + "/px4-commander"
+    try:
+        return subprocess.run([client, *args], capture_output=True, text=True, timeout=20).stdout.strip()
+    except subprocess.TimeoutExpired:
+        return None
+
+
+def cp_state(px4_bin):
+    """(state, safe_stop_latched) from `px4-cp_brake status`, or None when it cannot be read."""
+    try:
+        out = subprocess.run([px4_bin, "status"], capture_output=True, text=True, timeout=15).stdout
+    except (OSError, subprocess.SubprocessError):
+        return None
+    m = re.search(r"state: (\d+).*", out)
+    n = re.search(r"safe stop latched: (\d)", out)
+    return (int(m.group(1)), int(n.group(1))) if m and n else None
 
 
 def upload_mission(link, items):
@@ -63,49 +110,85 @@ def main():
     ap.add_argument("--distance", type=float, default=100.0, help="length of the leg east [m]")
     ap.add_argument("--altitude", type=float, default=12.0, help="takeoff altitude [m]")
     ap.add_argument("--timeout", type=float, default=120.0)
-    ap.add_argument("--toggle-cpb", action="store_true")
+    ap.add_argument("--toggle-cpb", action="store_true", help="always toggle CPB_EN 0 then 1 (issue #112)")
+    ap.add_argument("--px4-bin", default=None, help="path of px4-cp_brake; enables the wait for enforcing")
+    ap.add_argument("--hover-s", type=float, default=20.0, help="hover time before the leg [s]")
     a = ap.parse_args()
 
     link = mavutil.mavlink_connection(a.connect)
     link.wait_heartbeat(timeout=30)
-    result = {"speed_m_s": a.speed, "toggle_cpb": a.toggle_cpb}
+    result = {"speed_m_s_requested": a.speed, "error": None}
+    mav = mavutil.mavlink
 
-    # the headless simulator has no GCS link: without this the GCS failsafe disarms the vehicle
-    set_param(link, "NAV_DLL_ACT", 0, mavutil.mavlink.MAV_PARAM_TYPE_INT32)
+    def fail(message, code):
+        result["error"] = message
+        print(json.dumps(result))
+        return code
+
+    # the headless simulator has no GCS link (without NAV_DLL_ACT 0 the GCS failsafe disarms the vehicle);
+    # the leg speed is a bench value for this run; both must be confirmed or the run does not count
+    applied = {"NAV_DLL_ACT": set_param(link, "NAV_DLL_ACT", 0, mav.MAV_PARAM_TYPE_INT32),
+               "MPC_XY_CRUISE": set_param(link, "MPC_XY_CRUISE", a.speed, mav.MAV_PARAM_TYPE_REAL32)}
+    result["params_applied"] = applied
+    if applied["NAV_DLL_ACT"] != 0 or applied["MPC_XY_CRUISE"] is None or abs(applied["MPC_XY_CRUISE"] - a.speed) > 1e-3:
+        return fail("a parameter was not applied (NAV_DLL_ACT, MPC_XY_CRUISE)", 3)
 
     gp = link.recv_match(type="GLOBAL_POSITION_INT", blocking=True, timeout=30)
+    if gp is None:
+        return fail("no GLOBAL_POSITION_INT", 3)
     lat0, lon0 = gp.lat / 1e7, gp.lon / 1e7
     lon1 = lon0 + a.distance / (EARTH_M_PER_DEG * math.cos(math.radians(lat0)))
-    mav = mavutil.mavlink
-    items = [(mav.MAV_CMD_NAV_TAKEOFF, 0, lat0, lon0, a.altitude),
-             (mav.MAV_CMD_NAV_WAYPOINT, 0, lat0, lon1, a.altitude)]
-    result["mission_uploaded"] = upload_mission(link, items)
+    items = [(mav.MAV_CMD_NAV_WAYPOINT, 0, lat0, lon1, a.altitude)]
 
-    # leg speed: the mission cruise speed parameter, bench value for this run only
-    set_param(link, "MPC_XY_CRUISE", a.speed, mavutil.mavlink.MAV_PARAM_TYPE_REAL32)
-    link.mav.command_long_send(link.target_system, link.target_component, mav.MAV_CMD_COMPONENT_ARM_DISARM,
-                               0, 1, 21196, 0, 0, 0, 0, 0)
-    time.sleep(2)
-
-    if a.toggle_cpb:
-        while True:  # wait for flight before the toggle
-            lp = link.recv_match(type="LOCAL_POSITION_NED", blocking=True, timeout=5)
-            if lp is not None and -lp.z > 2.0:
-                break
-            link.mav.command_long_send(link.target_system, link.target_component, mav.MAV_CMD_MISSION_START,
-                                       0, 0, 0, 0, 0, 0, 0, 0)
-            time.sleep(1)
-        time.sleep(8)  # the PX4 heading must be good for control
-        result["cpb_en_off"] = set_param(link, "CPB_EN", 0, mav.MAV_PARAM_TYPE_INT32)
+    if a.px4_bin:
+        px4_param_set(a.px4_bin, "MIS_TAKEOFF_ALT", a.altitude)  # `commander takeoff` takes no altitude
+        result["arm"] = commander(a.px4_bin, "arm", "-f")
         time.sleep(1)
-        result["cpb_en_on"] = set_param(link, "CPB_EN", 1, mav.MAV_PARAM_TYPE_INT32)
+        result["takeoff"] = commander(a.px4_bin, "takeoff")
     else:
-        link.mav.command_long_send(link.target_system, link.target_component, mav.MAV_CMD_MISSION_START,
-                                   0, 0, 0, 0, 0, 0, 0, 0)
+        link.mav.command_long_send(link.target_system, link.target_component, mav.MAV_CMD_COMPONENT_ARM_DISARM,
+                                   0, 1, 21196, 0, 0, 0, 0, 0)
+        time.sleep(2)
+        link.mav.command_long_send(link.target_system, link.target_component, mav.MAV_CMD_NAV_TAKEOFF,
+                                   0, 0, 0, 0, float("nan"), float("nan"), float("nan"), gp.alt / 1000.0 + a.altitude)
+    airborne = False
+    deadline = time.time() + 60
+    while time.time() < deadline:
+        lp = link.recv_match(type="LOCAL_POSITION_NED", blocking=True, timeout=2)
+        if lp is not None and -lp.z > a.altitude - 1.0:
+            airborne = True
+            break
+    if not airborne:
+        return fail("the vehicle did not reach the takeoff altitude (not armed, or the takeoff was refused)", 4)
+    time.sleep(a.hover_s)  # the PX4 heading must be good for control before CP can enforce
+
+    result["toggled"] = False
+    if a.px4_bin:
+        deadline = time.time() + 60
+        while time.time() < deadline:
+            st = cp_state(a.px4_bin)
+            result["cp_state_before_leg"] = st
+            if st and st[0] in (3, 4):
+                break
+            if (st and st[1] == 1) or a.toggle_cpb:
+                toggle_cpb(a.px4_bin)
+                result["toggled"] = True
+                a.toggle_cpb = False
+                time.sleep(3)
+            time.sleep(2)
+        st = result.get("cp_state_before_leg")
+        if not (st and st[0] in (3, 4)):
+            return fail("cp_brake is not enforcing before the leg (state %s); the leg was not started" % (st,), 5)
+
+    result["mission_uploaded"] = upload_mission(link, items)
+    if not result["mission_uploaded"]:
+        return fail("the mission was not accepted", 6)
+    link.mav.command_long_send(link.target_system, link.target_component, mav.MAV_CMD_MISSION_START,
+                               0, 0, 0, 0, 0, 0, 0, 0)
 
     start = time.time()
     peak = 0.0
-    moved = False
+    moved = rested = False
     rest_since = None
     last = None
     while time.time() - start < a.timeout:
@@ -120,13 +203,16 @@ def main():
         if moved and speed < REST_SPEED:
             rest_since = rest_since or time.time()
             if time.time() - rest_since >= REST_HOLD_S:
+                rested = True
                 break
         else:
             rest_since = None
     result.update({"peak_speed_m_s": round(peak, 2), "last_xyz_m": [round(v, 2) for v in last] if last else None,
-                   "ended_at_rest": rest_since is not None, "duration_s": round(time.time() - start, 1)})
+                   "ended_at_rest": rested, "duration_s": round(time.time() - start, 1)})
+    if not moved:
+        return fail("the leg did not start: the vehicle never exceeded 0.5 m/s", 7)
     print(json.dumps(result))
-    return 0 if result["mission_uploaded"] and last else 2
+    return 0
 
 
 if __name__ == "__main__":
