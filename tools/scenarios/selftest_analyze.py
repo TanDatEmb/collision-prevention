@@ -150,7 +150,7 @@ for v, dur in ((0.5, 1.0), (0.15, 2.5)):  # moves again, then slows into the ban
         y += v * DT
         rows2.append((tt, y, v))
 results.append(run("rests, moves again, then slows into the band", rows2, "FAIL", wall=40.0))
-def lag_case(name, delay_s, tau_s, expect_s):
+def lag_case(name, delay_s, tau_s, expect_s, rows=1000, expect_code=0):
     """measure_velocity_step.py analyze on a synthetic 5 m/s -> 0 step with a delay and a first-order lag:
     the equivalent lag must equal delay + tau (the extra distance after the step divided by the speed)."""
     with tempfile.TemporaryDirectory() as d:
@@ -158,13 +158,13 @@ def lag_case(name, delay_s, tau_s, expect_s):
         with open(prefix + "vehicle_local_position_setpoint_0.csv", "w", newline="") as f:
             w = csv.writer(f)
             w.writerow(["timestamp", "vy"])
-            for n in range(1000):
+            for n in range(rows):
                 t = n * DT
                 w.writerow([int(t * 1e6), "nan" if n < 20 else (5.0 if t < 10.0 else 0.0)])
         with open(prefix + "vehicle_local_position_0.csv", "w", newline="") as f:
             w = csv.writer(f)
             w.writerow(["timestamp", "vy"])
-            for n in range(1000):
+            for n in range(rows):
                 t = n * DT
                 after = t - 10.0 - delay_s
                 v = 5.0 if after < 0.0 else 5.0 * math.exp(-after / tau_s)
@@ -175,13 +175,17 @@ def lag_case(name, delay_s, tau_s, expect_s):
         got = json.loads(p.stdout)["worst_equivalent_lag_s"]
     except (ValueError, KeyError):
         got = None
-    ok = got is not None and abs(got - expect_s) < 0.03 and p.returncode == 0
+    if expect_code != 0:  # incomplete evidence: no figure may be reported and the exit code must say so
+        ok = got is None and p.returncode == expect_code
+    else:
+        ok = got is not None and abs(got - expect_s) < 0.03 and p.returncode == 0
     print(("PASS" if ok else "FAIL"), "%-58s" % name, "got", got, "expected", expect_s)
     return ok
 
 
 results.append(lag_case("step response: first-order lag 0.5 s", 0.0, 0.5, 0.5))
 results.append(lag_case("step response: delay 0.2 s plus lag 0.4 s", 0.2, 0.4, 0.6))
+results.append(lag_case("step response: log ends before the vehicle stops", 0.0, 0.5, None, rows=505, expect_code=2))
 
 print("%d of %d cases pass" % (sum(results), len(results)))
 sys.exit(0 if all(results) else 1)

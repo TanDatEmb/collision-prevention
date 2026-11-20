@@ -135,15 +135,23 @@ def analyze(a):
                           "equivalent_lag_s": round(area / abs(v0), 3),
                           "t63_s": None if t63 is None else round(t63, 3),
                           "settle_s": None if settled is None else round(settled, 3)})
-    wanted = {round(v, 1) for v in a.speeds}
+    wanted = [round(v, 1) for v in a.speeds]
     kept = [s for s in steps if any(abs(s["speed_before_m_s"] - w) < 0.5 for w in wanted)]
     out = {"steps_down_to_zero": kept, "all_steps_found": len(steps)}
-    if kept:
-        worst = max(s["equivalent_lag_s"] for s in kept)
-        out["worst_equivalent_lag_s"] = worst
-        out["t_lat_rounded_up_s"] = round(math.ceil(worst / ROUND_UP_S - 1e-9) * ROUND_UP_S, 2)
+    # a response that did not settle (the log or the 15 s window ended first) has a partial stopping distance:
+    # it would understate the lag, so it is no evidence and the measurement is rejected
+    incomplete = [s for s in kept if s["settle_s"] is None]
+    missing = [w for w in wanted if not any(abs(s["speed_before_m_s"] - w) < 0.5 and s["settle_s"] is not None
+                                            for s in kept)]
+    if incomplete or missing:
+        out["error"] = "INVALID: %d step(s) did not settle, no complete step for speeds %s" % (len(incomplete), missing)
+        print(json.dumps(out, indent=2))
+        return 2
+    worst = max(s["equivalent_lag_s"] for s in kept)
+    out["worst_equivalent_lag_s"] = worst
+    out["t_lat_rounded_up_s"] = round(math.ceil(worst / ROUND_UP_S - 1e-9) * ROUND_UP_S, 2)
     print(json.dumps(out, indent=2))
-    return 0 if kept else 2
+    return 0
 
 
 def main():

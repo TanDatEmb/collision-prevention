@@ -173,7 +173,7 @@ def main():
         while time.time() < deadline:
             st = cp_state(a.px4_bin)
             result["cp_state_before_leg"] = st
-            if st and st[0] in (3, 4):
+            if st and st[0] in (3, 4) and not a.toggle_cpb:  # a forced toggle runs before the state is accepted
                 break
             if (st and st[1] == 1) or a.toggle_cpb:
                 toggle_cpb(a.px4_bin)
