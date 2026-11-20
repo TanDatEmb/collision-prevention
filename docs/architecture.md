@@ -126,10 +126,10 @@ flowchart LR
 
 | Component | Status | Owns | Does not own | Reqs |
 | --- | --- | --- | --- | --- |
-| `livox_ray_source` | Interface, segmentation, replay source and self-mask only; no Livox code | Raw spherical samples: direction, depth, per-sample time, packet continuity; deskew (ADR 0015); static self-mask (ADR 0006), setting `RaySample.masked`; sensor tag and confidence filtering | Clear decisions, speed limits | SYS-CP-011, 016 |
+| `livox_ray_source` | Interface, segmentation, replay source, self-mask, spherical packet decoder, packet sampler and the Livox SDK2 adapter; no deskew yet (#57) | Raw spherical samples: direction, depth, per-sample time, packet continuity; deskew (ADR 0015); static self-mask (ADR 0006), setting `RaySample.masked`; sensor tag and confidence filtering | Clear decisions, speed limits | SYS-CP-011, 016 |
 | `obstacle_sector_map` (pure C++) | Reference impl | Validation, masked/return-kind handling, sector classification, nearest projected range; no ROS or PX4 types | Frames, units, safety policy, sensor tags | SYS-CP-004, 011, 015 |
 | `px4_obstacle_bridge` | Reference impl | FLU/CCW to BODY_FRD/CW, cm conversion, fail-closed encoding | Filtering to improve results | SYS-CP-002, NFR-CP-002 |
-| Orin node (`obstacle_sector_node`) | Pipeline, platform config loader and ROS node class; no executable and no sensor source yet | One process composing source, map, bridge; publishes `/fmu/in/obstacle_distance` | Safety policy | SYS-CP-016, NFR-CP-003 |
+| Orin node (`obstacle_sector_node`) | Pipeline, platform config loader, ROS node class and an executable with a planar-scan source (Gazebo) and a Livox source (SDK2) | One process composing source, map, bridge; publishes `/fmu/in/obstacle_distance` | Safety policy | SYS-CP-016, NFR-CP-003 |
 | `cp_brake` (PX4 module) | Fork PRs #1 to #6: checks, caps, limiter, state machine; no heading history and no hook yet, ADR 0014 | Input validation, freshness, stopping model, sector caps, state machine | Planning, attitude, sensor filtering | SYS-CP-001, 003, 007, 008, 012, 013, 014 |
 | Horizontal limiter hook (PX4) | Not implemented, ADR 0014 | Apply caps to the final horizontal setpoint | Sensor, DDS, mode logic | SYS-CP-005, 006, 012 |
 | Existing PX4 modes and failsafes | Existing | Mode and failsafe handling | CP-owned mode logic | SYS-CP-008 |
@@ -166,6 +166,7 @@ collision envelope. PX4 uses `MAV_FRAME_BODY_FRD`; only `px4_obstacle_bridge` co
 ICD-CP-01, 02, 03 and 05 are approved by the owner (2026-11-19) as sole safety approver.
 ICD-CP-04 is approved by the owner (2026-11-19) with its open items (OPEN-032, 033, 035).
 ICD-CP-06 is approved by the owner (2026-11-19) with its open items (OPEN-030, 031, 036).
+ADR 0019 (one pose chain from the FMU for heading and deskew) is approved by the owner (2026-11-20).
 Orin parameters (versioned, logged): `sector_map_rate_hz` 10, `coverage_window_ms` 100,
 `coverage_min_rays_per_sector` (no default until OPEN-023, never tuned after an acceptance run).
 The range limits (10 cm and 40 m, ICD-CP-03) are fixed constants, not parameters. The
@@ -316,7 +317,20 @@ ceiling above):
 
 Rules: simulation preserves emitted-ray direction for returns and no-returns; sector downsampling
 uses the minimum credible range, never the mean; no test invents or relaxes a requirement. Today
-only host unit tests exist; they are not detection, integration, runtime or qualification evidence.
+there are host unit tests, a Gazebo software-flow run (map to PX4 and `cp_brake`) and a run of the
+node on a real lidar under PTP; none is detection, stopping, runtime or qualification evidence.
+
+SITL stopping proof (bench, owner decision 2026-11-20): before the real lidar is integrated further,
+the stopping algorithm is shown in Gazebo SITL. A vehicle flies toward a wall in Position or Mission
+mode with `cp_brake` and the hook on, after a baseline run with `CPB_EN` off. The values are not
+approved platform values, so this is neither a G4 claim nor qualified stopping evidence (the limit
+of the GZ lane stands). Criteria approved by the owner: (a) the distance to the wall never goes
+below `CPB_MARGIN`; (b) the vehicle is at rest before the wall; (c) no oscillation: after the cap
+first reaches zero the approach velocity changes sign at most once; (d) when the `obstacle_distance`
+input stops in flight the state becomes SAFE_STOP. Bench values approved by the owner for this proof
+only: `CPB_T_LAT` measured from a velocity step response in the same SITL and rounded up, and
+`CPB_CSTR_AGE` 0.25 s. The platform values of the map (elevation band, rays per sector) stay in a
+file outside the repository and unapproved.
 
 | Gate | Pass criteria |
 | --- | --- |
@@ -336,6 +350,7 @@ SITL fidelity gaps:
 | Non-repetitive scan and ray density | A regular sim pattern hides coverage gaps; the coverage rule cannot be tuned in sim (OPEN-023) | Randomised or Livox-like pattern; synthetic gap tests | G5 with real data, RPL-003 |
 | Self-mask, landing legs, propellers | X500 geometry and rotating props differ from the target; a sim lidar may ignore them | Model the mask cylinders from the X500 model; inject self-returns | G5 mounting data (RPL-001), G6 |
 | Noise, dropout, reflectivity | Ideal sim returns hide false obstacles and missing returns | Noise and dropout injection; fault injection | RPL-002, G6 |
+| Lidar range | The stock Gazebo 2D lidar reaches 30 m, below the 40 m of the map, so no sector can be observed clear; every empty sector stays unknown and its cap is 0 | A bench copy of the lidar model with a 50 m range, kept outside the repository, for the stopping proof only | G4 decision on the simulated sensor (OPEN-029) |
 | X500 vs M350 kinematics | Mass, inertia, thrust and motor response differ, so `t_lag` and braking differ | Measure X500 values for X500 only; never reuse for M350 | G6 on the target class (OPEN-002/003) |
 
 ## 8. Open items
@@ -365,7 +380,7 @@ SITL fidelity gaps:
 | OPEN-031 | Clear evidence when the ray origin moves during a scan: origin-aware evidence in the map, or a conservative filter in acquisition (chosen, ADR 0018); its threshold value | Perception + SE | TBD | G3 |
 | OPEN-032 | Staleness threshold and publish rate of the `cp_brake_constraints` output; heading history source and depth; sentinel until the G4 SITL measurements; until then the module evaluates and publishes every 50 ms (an implementation value of fork PR #6, not approved) | PX4 + Controls | TBD | G4 |
 | OPEN-033 | Numeric limits for judging the sync from `timesync_status` at PX4 and for an excessive map age; the Orin-side rejection of a negative age is implemented in a separate issue (structure decided) | PX4 + Software Integration | TBD | G5 |
-| OPEN-035 | Hook interaction with FlightTask feedback of the published setpoint, the XY velocity integrator and the tilt limit | Controls + PX4 | TBD | G4 |
+| OPEN-035 | Hook interaction with FlightTask feedback of the published setpoint, the XY velocity integrator and the tilt limit; V1 handling decided by the owner on 2026-11-20: the hook is a stateless pure function applied identically on every `update()` call (PX4 calls it up to three times per cycle), the read-back of the limited setpoint by `FlightTask` is accepted, the XY velocity integrator gets no special handling, and any windup seen in SITL is recorded | Controls + PX4 | TBD | G4 |
 | OPEN-036 | Vertical collision envelope as a height band: how a no-return ray, which has no endpoint, is tested against it; builder change from the elevation band | Perception + SE | TBD | G3 |
 | OPEN-037 | `fmu-v6x` FLASH budget: `cp_brake` does not fit the board image; decided 2026-11-20: build `fmu-v6x` with the PX4 multicopter variant; `cp_brake` is enabled and builds there (fork PR #5, #93; facts and options below) | Project Owner + PX4 | TBD | #64, #65, #66 on `fmu-v6x` |
 
