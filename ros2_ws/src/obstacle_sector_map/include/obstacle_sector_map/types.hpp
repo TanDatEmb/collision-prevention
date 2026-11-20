@@ -52,7 +52,7 @@ struct SectorObservation
   SectorState state{SectorState::kUnknown};
   float distance_m{std::numeric_limits<float>::quiet_NaN()};
   uint32_t contributing_ray_count{0U};
-  uint32_t clear_ray_count{0U};  // qualified no-return rays only
+  uint32_t clear_ray_count{0U};  // qualified no-returns and returns beyond the qualified range
 };
 
 struct SectorMap

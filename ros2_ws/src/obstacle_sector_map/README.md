@@ -16,8 +16,10 @@ limits (0.10 m and 40 m, ICD-CP-03) and the boundary tolerance are fixed constan
 ## Output contract
 `finalize()` returns a `SectorMap` with one `SectorObservation` per sector:
 `kUnknown`, `kObservedClear`, `kOccupied` (minimum projected range) or `kTooClose`.
-- Only `kQualifiedNoReturn` rays count as clear evidence (`clear_ray_count`); clear also needs
-  packet continuity and the minimum count. Anything else, even a far return, stays `kUnknown`.
+- A `kQualifiedNoReturn` ray and a `kReturn` beyond the qualified range (40 m horizontally) count as
+  clear evidence (`clear_ray_count`): both prove the ray path up to 40 m empty. A far return is never
+  dropped and never an obstacle. Clear also needs packet continuity and the minimum count; a sector
+  with no evidence stays `kUnknown`.
 - Obstacle evidence on a sector boundary is copied into both adjacent sectors.
 - The map timestamp is the earliest contributing ray time.
 
