@@ -1,7 +1,9 @@
 # 0020. Architecture for the operational scenarios: rework, not rewrite
 
-Status: proposed (SE and SA review, 2026-11-20). The owner approves it in a separate PR. The IDs it
-uses (OS, FEAT, SYS-CP-017 to 027, HZ-CP-016 to 023, OPEN-038 to 043) are defined in PR #116.
+Status: accepted (SE and SA review, 2026-11-20; approved by the owner in chat on 2026-11-20 and
+recorded in issue #119). The values marked TBD stay TBD. The IDs it
+uses (OS, FEAT, SYS-CP-017 to 027, HZ-CP-016 to 023, OPEN-038 to 043) are defined in
+`docs/architecture.md`.
 
 ## Context
 The code was built from approved interfaces (ICD-CP-01 to 06) and approved decisions (ADR 0001 to
@@ -12,7 +14,7 @@ scenarios, delete and rewrite it instead of building on a design that lacked an 
 owner also asked for a design that handles the intended operations well and stays small and easy to
 maintain, not one that handles every case.
 
-Owner decisions in chat on 2026-11-20 that this record builds on (to be recorded in the approval PR):
+Owner decisions in chat on 2026-11-20 that this record builds on (recorded by the approval of 2026-11-20):
 - The lidar is mounted pitched down by 10 degrees; lateral and rear speeds are lower so that the
   forward direction (+x) keeps the best performance.
 - Rear flight is allowed at a low speed, and obstacles lower than the lidar behind the vehicle are a
