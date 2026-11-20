@@ -300,6 +300,11 @@ source: ADR 0004.
 - Distance limits: one pair `kMinDistanceM` and `kMaxDistanceM` (ICD-CP-03: 10 cm, 4000 cm), fixed
   constants in `obstacle_sector_map` and not platform configuration; the separate name
   `qualified_range_m` is dropped.
+- Clear evidence (owner, 2026-11-20): a qualified no-return and a return beyond `kMaxDistanceM` (its
+  horizontal projection) both prove that the ray path up to `kMaxDistanceM` is empty and both count
+  toward the coverage rule. A far return is never dropped and never an obstacle: 40 m is the range
+  at which a dark target is still detected (DET-01), not a limit of the sensor. The wire value of a
+  clear sector stays `max_distance + 1`; an obstacle or a too-close return in the sector wins.
 - Self-mask (ADR 0006): `livox_ray_source` sets `masked`. A return is masked when its endpoint is
   inside a cylinder; a no-return is masked when its ray segment up to `max_distance_m` crosses a
   cylinder. A masked ray is neither obstacle nor clear evidence.

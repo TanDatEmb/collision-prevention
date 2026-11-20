@@ -128,7 +128,12 @@ void SectorMapBuilder::updateSector(std::size_t sector_index, const RaySample & 
   if (horizontal_range_m <= kMaxDistanceM) {
     accumulator.minimum_obstacle_distance_m =
       std::min(accumulator.minimum_obstacle_distance_m, horizontal_range_m);
+    return;
   }
+  // A return beyond the qualified range proves that its ray path up to there is empty, like a
+  // qualified no-return. It is clear evidence, never dropped and never an obstacle: the qualified
+  // range is where a dark target is still detected, not a limit of the sensor.
+  ++accumulator.clear_ray_count;
 }
 
 SectorMap SectorMapBuilder::finalize() const
