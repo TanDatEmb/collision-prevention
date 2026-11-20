@@ -26,6 +26,9 @@ import time
 
 STEP_MIN = 1.0       # m/s, a setpoint change below this is not a step
 SETTLE_BAND = 0.1    # m/s
+SETTLE_STAY = 0.2    # m/s, after the onset the speed stays below this (the analyzer's rest rule: a small rollback is not motion)
+SETTLE_HOLD_S = 1.0  # s the stop must last to count as stopped
+MAX_RESPONSE_S = 15.0
 ROUND_UP_S = 0.05    # CPB_T_LAT is rounded up to this resolution (owner, 2026-11-20: "rounded up")
 
 
@@ -118,21 +121,29 @@ def analyze(a):
                 continue
             sign = 1.0 if v0 > 0 else -1.0
             t0 = ts[i]
-            area, t63, settled, worst_gap = 0.0, None, None, 0.0
-            for k in range(j + 1, len(tp)):
-                if tp[k] < t0:
-                    continue
-                worst_gap = max(worst_gap, tp[k] - tp[k - 1])  # the pair that spans the step counts too
-                y = sign * ps["vy"][k]
-                dt = tp[k] - max(tp[k - 1], t0)
-                area += max(0.0, y) * dt
-                if t63 is None and y <= 0.368 * abs(v0):
+            # the response is bounded by the next velocity command (or MAX_RESPONSE_S): a stop that happens
+            # during another commanded manoeuvre is not the response to this step
+            t_next = next((ts[m] for m in range(i + 1, len(ts)) if abs(sp["vy"][m]) >= SETTLE_BAND), float("inf"))
+            wend = min(t_next, t0 + MAX_RESPONSE_S, tp[-1])
+            idx = [k for k in range(j + 1, len(tp)) if t0 <= tp[k] <= wend]
+            ys = [sign * ps["vy"][k] for k in idx]
+            worst_gap = max([tp[k] - tp[k - 1] for k in idx], default=0.0)  # the pair that spans the step counts
+            # settled: the onset is a sample inside SETTLE_BAND, the speed stays below SETTLE_STAY from there to
+            # the end of the window, and that stay lasts at least SETTLE_HOLD_S; a dip into the band that is
+            # followed by movement is no stop (the same rule as the rest of analyze_stop.py)
+            violations = [n for n, y in enumerate(ys) if abs(y) >= SETTLE_STAY]
+            first = violations[-1] + 1 if violations else 0
+            onset = next((n for n in range(first, len(ys)) if abs(ys[n]) < SETTLE_BAND), None)
+            settled = None
+            if onset is not None and tp[idx[-1]] - tp[idx[onset]] >= SETTLE_HOLD_S:
+                settled = tp[idx[onset]] - t0
+            end = onset if settled is not None else len(idx) - 1
+            area, t63 = 0.0, None
+            for n in range(0, end + 1):
+                k = idx[n]
+                area += max(0.0, ys[n]) * (tp[k] - max(tp[k - 1], t0))
+                if t63 is None and ys[n] <= 0.368 * abs(v0):
                     t63 = tp[k] - t0
-                if abs(y) < SETTLE_BAND:
-                    settled = tp[k] - t0
-                    break
-                if tp[k] - t0 > 15.0:
-                    break
             steps.append({"t_s": round(t0, 2), "speed_before_m_s": round(abs(v0), 2),
                           "equivalent_lag_s": round(area / abs(v0), 3), "_lag_raw": area / abs(v0),
                           "max_sample_gap_s": round(worst_gap, 3),
@@ -148,7 +159,7 @@ def analyze(a):
     incomplete = [s for s in kept if not complete(s)]
     missing = [w for w in wanted if not any(abs(s["speed_before_m_s"] - w) < 0.5 and complete(s) for s in kept)]
     if incomplete or missing:
-        out["error"] = ("INVALID: %d step(s) did not settle or have a sampling gap above %.2f s, no complete step "
+        out["error"] = ("INVALID: %d step(s) did not settle (sustained, before the next command) or have a sampling gap above %.2f s, no complete step "
                         "for speeds %s" % (len(incomplete), a.max_gap_s, missing))
         for s in kept:
             s.pop("_lag_raw")

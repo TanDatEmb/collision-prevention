@@ -144,6 +144,8 @@ def analyse(prefix, wall_dist, direction, lidar_offset, margin, require_constrai
     try:
         con = read(prefix + "cp_brake_constraints_0.csv", ["timestamp", "state"])
         ct = [v * 1e-6 for v in con["timestamp"]]
+        if any(b < a for a, b in zip(ct, ct[1:])):  # equal stamps occur in real logs; going back is malformed
+            raise Invalid("constraint time goes backwards")
         st = [int(v) for v in con["state"]]
         timeline, last = [], None
         for ti, si in zip(ct, st):

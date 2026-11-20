@@ -51,7 +51,7 @@ def stop_ys(v0=5.0, a=3.0, stop_at=17.0, total_s=30.0, a_up=2.0):
 
 
 def write(prefix, rows, states, nan_at=None, empty_at=None, with_constraints=True, with_position=True, lateral=0.0,
-          constraints_until=None):
+          constraints_until=None, swap_constraint_rows=None):
     if with_position:
         with open(prefix + "vehicle_local_position_0.csv", "w", newline="") as f:
             w = csv.writer(f)
@@ -66,10 +66,15 @@ def write(prefix, rows, states, nan_at=None, empty_at=None, with_constraints=Tru
             # a dense log like the real one (cp_brake publishes at 20 Hz): the state in force every 0.1 s
             end = constraints_until if constraints_until is not None else rows[-1][0]
             t = states[0][0]
+            lines = []
             while t <= end:
                 state = [s for ts, s in states if ts <= t][-1]
-                w.writerow([int(t * 1e6), state])
+                lines.append([int(t * 1e6), state])
                 t += 0.1
+            if swap_constraint_rows:  # reordered timestamps: the rows keep their content, their order changes
+                i, j = swap_constraint_rows
+                lines[i], lines[j] = lines[j], lines[i]
+            w.writerows(lines)
 
 
 def run(name, rows, expect, states=((0, 3), (7.5, 4)), wall=22.0, extra=(), **kw):
@@ -220,6 +225,36 @@ def ramp_case(name, ramp_s, expect_t_lat, expect_code=0, gap=False):
 
 results.append(ramp_case("lag 0.6004 s rounds up to 0.65, not 0.6", 1.2202, 0.65))
 results.append(ramp_case("position samples missing during the response", 1.2, None, expect_code=2, gap=True))
+
+results.append(run("reordered constraint timestamps hide SAFE_STOP", series(stop_ys(stop_at=17.0)), "INVALID",
+                   states=((0, 3), (0.3, 5), (0.4, 4)), extra=REQ, swap_constraint_rows=(2, 3)))
+
+
+def command_case(name, command, actual, expect_code):
+    """measure_velocity_step.py analyze with explicit setpoint and speed functions of time (50 Hz, 20 s)."""
+    with tempfile.TemporaryDirectory() as d:
+        prefix = os.path.join(d, "log_0_")
+        for fname, fn in (("vehicle_local_position_setpoint_0.csv", command), ("vehicle_local_position_0.csv", actual)):
+            with open(prefix + fname, "w", newline="") as f:
+                w = csv.writer(f)
+                w.writerow(["timestamp", "vy"])
+                for n in range(1000):
+                    w.writerow([int(n * DT * 1e6), fn(n * DT)])
+        p = subprocess.run([sys.executable, os.path.join(HERE, "measure_velocity_step.py"), "analyze", prefix,
+                            "--speeds", "5"], capture_output=True, text=True)
+    ok = p.returncode == expect_code
+    print(("PASS" if ok else "FAIL"), "%-58s" % name, "exit", p.returncode, "expected", expect_code)
+    return ok
+
+
+results.append(command_case("brief dip into the band, then moves again", lambda t: 5.0 if t < 10 else 0.0,
+                            lambda t: 5.0 if t < 10 else (max(0.0, 5.0 - 10.0 * (t - 10)) if t < 10.5 else
+                                                          (0.0 if t < 10.6 else 2.0)), 2))
+results.append(command_case("stop during a commanded reversal is not the response",
+                            lambda t: 5.0 if t < 10 else (0.0 if t < 12 else -5.0),
+                            lambda t: 5.0 if t < 12 else (5.0 - 5.0 * (t - 12) if t < 14 else -5.0), 2))
+results.append(command_case("clean stop is accepted", lambda t: 5.0 if t < 10 else 0.0,
+                            lambda t: 5.0 if t < 10 else 5.0 * math.exp(-(t - 10) / 0.5), 0))
 
 print("%d of %d cases pass" % (sum(results), len(results)))
 sys.exit(0 if all(results) else 1)
