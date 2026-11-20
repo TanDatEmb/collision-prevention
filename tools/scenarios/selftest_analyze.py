@@ -113,6 +113,7 @@ results.append(run("position file missing", series(stop_ys()), "INVALID", with_p
 rows = series(stop_ys())
 rows[300] = (rows[300][0] - 5.0, rows[300][1], rows[300][2])
 results.append(run("time goes backwards", rows, "INVALID"))
+results.append(run("stops 68 m before the wall (never came near)", series(stop_ys(stop_at=12.0)), "INVALID", wall=80.0))
 results.append(run("vehicle starts beyond the wall", series([30.0 + y for y in stop_ys()]), "INVALID"))
 
 # noise and drift

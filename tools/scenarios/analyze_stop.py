@@ -2,7 +2,7 @@
 """Metrics and verdict of one simulated approach to a wall, from `ulog2csv` output (bench tool).
 
 usage: analyze_stop.py <csv-prefix> --wall-dist D [--dir-ned N,E] [--lidar-offset 0.0] [--margin 2.0]
-                       [--require-constraints] [--min-peak-speed 2.0] [--max-gap-s 0.5]
+                       [--require-constraints] [--min-peak-speed 2.0] [--max-gap-s 0.5] [--near-m 35]
 
 <csv-prefix> is the path printed by `ulog2csv -o <dir> <log>.ulg` without the topic suffix, for example
 `/tmp/run1/log_0_` (files `<prefix>vehicle_local_position_0.csv`, `<prefix>cp_brake_constraints_0.csv`).
@@ -15,7 +15,8 @@ Verdict (ICD-CP-05): PASS when a to c hold on valid evidence, FAIL when one does
 evidence cannot support either answer. Evidence is invalid when: a value is missing or not a number, time
 does not strictly increase or has a gap above --max-gap-s inside the approach, the approach never
 started or never reached --min-peak-speed, the vehicle started inside the margin or beyond the wall,
-or (with --require-constraints, for hook-on runs) the constraint log is missing or does not cover the
+or the vehicle never came within --near-m of the wall (a stop far from the wall is not a stop at the
+wall), or (with --require-constraints, for hook-on runs) the constraint log is missing or does not cover the
 approach, CP was DISABLED, OBSERVER_ONLY or NOT_READY during it, SAFE_STOP occurred in it (a stop caused by
 SAFE_STOP says nothing about braking), or CP never reached BRAKING. Exit code 0 PASS, 1 FAIL, 2 INVALID.
 The stale-input criterion (d) is read from the state timeline of a separate run.
@@ -57,7 +58,7 @@ def read(path, columns):
     return out
 
 
-def analyse(prefix, wall_dist, direction, lidar_offset, margin, require_constraints, min_peak, max_gap):
+def analyse(prefix, wall_dist, direction, lidar_offset, margin, require_constraints, min_peak, max_gap, near_m):
     pos = read(prefix + "vehicle_local_position_0.csv", ["timestamp", "x", "y", "vx", "vy"])
     t = [v * 1e-6 for v in pos["timestamp"]]
     if len(t) < 3 or any(b <= a for a, b in zip(t, t[1:])):
@@ -86,6 +87,9 @@ def analyse(prefix, wall_dist, direction, lidar_offset, margin, require_constrai
     if worst_dt > max_gap:
         raise Invalid("a gap of %.2f s in the samples of the approach (limit %.2f s)" % (worst_dt, max_gap))
     closest = gap[closest_i]
+    if closest > near_m:
+        raise Invalid("the vehicle never came within %.0f m of the wall (closest %.1f m): a stop here is not a "
+                      "stop at the wall" % (near_m, closest))
     out["closest_approach_m"] = round(closest, 2)
     out["criterion_a_margin_kept"] = closest >= margin
 
@@ -176,6 +180,7 @@ def main():
                     help="hook-on runs: INVALID unless the constraint log shows CP enforcing and braking")
     ap.add_argument("--min-peak-speed", type=float, default=2.0, help="bench value [m/s]")
     ap.add_argument("--max-gap-s", type=float, default=0.5, help="bench value [s]")
+    ap.add_argument("--near-m", type=float, default=35.0, help="bench value [m]: the lidar range (40 m) minus a slack")
     a = ap.parse_args()
     try:
         d = [float(v) for v in a.dir_ned.split(",")]
@@ -183,7 +188,7 @@ def main():
         if len(d) != 2 or norm == 0.0 or not math.isfinite(a.wall_dist) or a.wall_dist <= 0.0:
             raise Invalid("bad --dir-ned or --wall-dist")
         result = analyse(a.prefix, a.wall_dist, (d[0] / norm, d[1] / norm), a.lidar_offset, a.margin,
-                         a.require_constraints, a.min_peak_speed, a.max_gap_s)
+                         a.require_constraints, a.min_peak_speed, a.max_gap_s, a.near_m)
         crit = ("criterion_a_margin_kept", "criterion_b_at_rest_before_wall", "criterion_c_no_oscillation")
         result["verdict"] = "PASS" if all(result.get(k) for k in crit) else "FAIL"
     except (Invalid, ValueError, OSError) as e:
