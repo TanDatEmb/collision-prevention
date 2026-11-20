@@ -144,7 +144,7 @@ results.append(run("SAFE_STOP supplies the rest hold", series(stop_ys(stop_at=17
 base = series(stop_ys(stop_at=17.0, total_s=8.0))
 y, rows2 = base[-1][1], list(base)
 tt = base[-1][0]
-for v, dur in ((0.5, 1.0), (0.15, 2.0)):  # moves again, then slows into the band without reaching 0.1
+for v, dur in ((0.5, 1.0), (0.15, 2.5)):  # moves again, then slows into the band without reaching 0.1
     for _ in range(int(dur / DT)):
         tt += DT
         y += v * DT
