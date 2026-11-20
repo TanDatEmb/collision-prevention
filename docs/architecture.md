@@ -414,5 +414,8 @@ free, 5,252 bytes more than without the module; on the commit the pointer moves 
 is 1,885,476 bytes, 80,604 free (the embedded version string differs). `px4_fmu-v6x_default` is
 unchanged and has no `cp_brake`. Still undecided: any flash margin and any size target.
 
-#64 and #65 add code to the multicopter image: its size with them is not measured. Any flash
-margin and any size target stay TBD until approved by the owner.
+With the state machine of #64 (fork PR `TanDatEmb/PX4-Autopilot#6`) the multicopter image is
+1,886,276 bytes used (95.94%), 79,804 bytes free on the commit the pointer moves to in #101 (the
+fork PR measured 1,886,308 and 79,772; the embedded version string differs): about 800 bytes more
+than the image of #66. #65 adds more code and its size is not measured. Any flash margin and any
+size target stay TBD until approved by the owner.
