@@ -89,7 +89,7 @@ owner approves its pass criterion (SYS-CP-025, OPEN-043).
 | OS-23 | Sensor stops or is blocked in flight | `obstacle_distance` stops; SAFE_STOP at 0.5 s sample age | PERF-04, SYS-CP-007 | GZ, HIL | Specified |
 | OS-24 | Time sync lost or clock jump | The map is rejected, its sectors are unknown, safe stop follows | SYS-CP-016, ICD-CP-02 | HIL | Specified |
 | OS-25 | Mode change away from Position or Mission while enforcing (Hold, RTL, Land, Offboard, manual) | The hook is transparent and the vehicle is released (owner scope, 2026-11-19); the release is logged and stated as a non-claim | ADR 0007, HZ-CP-020, SYS-CP-023 | GZ | Partial: the consequence is not recorded (#113) |
-| OS-26 | Takeoff, landing, ground contact | Observer-only | SYS-CP-014, HZ-CP-015 | GZ | Specified |
+| OS-26 | Takeoff, landing, ground contact | Takeoff: CP is observer-only before `TAKEOFF_STATE_FLIGHT`. Landing: an intentional landing or descent needs the pilot's explicit, logged CP disable first; a landing without it is not covered | SYS-CP-014, HZ-CP-015, ADR 0009 | GZ | Specified (the disable procedure is OS-27) |
 | OS-27 | Pilot enables, disables or overrides CP in flight | Procedure not defined | HZ-CP-009, OPEN-020 | FLT | Not specified (accepted G1 exception) |
 | OS-28 | PX4 state becomes valid for the first time in flight (heading good) | A defined start-up: no latched SAFE_STOP without a stated reason and a way out | HZ-CP-021, SYS-CP-024 | GZ | Not specified (#112) |
 | OS-29 | Estimator or heading invalid in flight | `UNQUALIFIED`, no CP action, PX4 failsafes act | SYS-CP-007, ADR 0007 | GZ | Specified |
