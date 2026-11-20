@@ -85,18 +85,25 @@ transform from the same topic, so the SITL path exercises leveling (OS-11 to OS-
 
 ### D2. Vertical envelope as a height band (FEAT-06; SYS-CP-019, 020; OPEN-036)
 A return is obstacle evidence when its height in the level frame, `range * sin(elevation)`, is
-inside the band of OPEN-005 and its horizontal range is inside 0.10 m to 40 m. The ground is
+inside the band of OPEN-005. Its horizontal range then gives the class exactly as the builder does
+today: below 0.10 m it is too close (ICD-CP-03 distance 0), which the height test never drops and
+which blocks any clear in that sector; up to 40 m it is occupied at the nearest range. The ground is
 rejected by height, with no ground model: it falls below the band when the height above ground is at
 least the minimum of OPEN-038. A no-return ray is clear evidence only for the elevations where it
 stays inside the band up to the qualified range, `|elevation| <= asin(h / range)` (1.43 degrees for
 h = 1 m at 40 m, an example, not a value); a ray outside that window says nothing about the band.
 
 ### D3. Attitude and field of view (FEAT-05, 06; SYS-CP-018; OPEN-039)
-Leveling cannot add rays that the sensor does not emit. Coverage is counted in the level frame, only
-for rays inside the envelope window of D2. When a pitch or roll takes the horizon out of the field of
-view, the window holds fewer than `coverage_min_rays_per_sector` rays (OPEN-023), the sector is
-unknown and its cap is 0: the failure is safe by construction, and it costs availability, which OS-12
-and OS-14 measure. A mount pitched down by `d` degrees keeps the horizon in view up to a nose-up pitch
+Leveling cannot add rays that the sensor does not emit. A sector can be clear only if two conditions
+hold: the whole envelope window of D2 lies inside the level-frame elevation range that the field of
+view covers in that direction (the field-of-view edges of ICD-CP-01 passed through the transform of
+D1, with the mount and the attitude at the reference time), and at least
+`coverage_min_rays_per_sector` no-return rays (OPEN-023) fall inside the window. A ray count alone is
+not enough: with the level mount and an 8 degree nose-up pitch the forward field of view starts at
++1 degree and still overlaps a window of +-1.43 degrees, so rays in the overlap could pass a count
+while the horizon is unobserved. When the window is not fully visible, the sector is unknown and its
+cap is 0: the failure is safe by construction, and it costs availability, which OS-12 and OS-14
+measure. A mount pitched down by `d` degrees keeps the horizon in view up to a nose-up pitch
 of `7 + d` degrees. Screening: braking at 3 m/s^2 (PERF-02) pitches the vehicle about
 `atan(3 / 9.81)` = 17 degrees before drag and wind, so `d` of about 10 degrees would be needed;
 this is a requirement on the mount pose (ICD-CP-01, OPEN-029, OPEN-039), not a hardware design
@@ -120,11 +127,14 @@ measured and includes that cycle (SYS-CP-027). Option for the owner: use `CPB_MA
 bound when the history cannot answer, instead of unknown.
 
 ### D6. Start-up (FEAT-14; SYS-CP-024; #112; OPEN-042)
-When the PX4 state becomes valid in flight, "no heading for the sample time" can only mean that the
-history does not yet reach the sample time. That case is `NOT_READY` with its own reason, not
-`SAFE_STOP`; it ends when the history has covered a sample time once, after which the existing rule
-applies. The end condition is data, not a time value. While `NOT_READY` the hook takes no action, as
-for any invalid PX4 state (ADR 0007), and the report says so.
+When the PX4 state becomes valid in flight the history starts empty, and a map whose sample time
+precedes the first history sample cannot be answered. That case alone, "before the history start",
+is `NOT_READY` with its own reason, not `SAFE_STOP`. A gap, a reset failure, or any failure for a
+sample time after the first history sample keeps today's rule (`SAFE_STOP`, ADR 0019). The exemption
+is bounded without a time value: maps sampled after the first history sample can be answered, and a
+map older than the age limit (`CPB_AGE_STOP`, 0.5 s) is stale, so a warm-up that cannot complete
+ends in `SAFE_STOP`. While in this `NOT_READY` the hook takes no action, as for any invalid PX4 state
+(ADR 0007), and the report says so.
 
 ### D7. Mode release (FEAT-16; SYS-CP-023; #113; OPEN-042)
 Options: (A) keep Position and Mission only, log and notify the release, state the non-claim (the
