@@ -138,5 +138,17 @@ gapy = gapy + [(10.0, gapy[-1][1], 0.0)]
 results.append(run("samples vanish after the stop (5 s gap before the last)", gapy, "INVALID"))
 results.append(run("constraint log truncated while the vehicle is still stopping", series(stop_ys(stop_at=17.0)), "INVALID",
                    states=((0, 3), (3.0, 4)), extra=REQ, constraints_until=3.5))
+# the rest hold is part of the evidence, and only the final rest counts
+results.append(run("SAFE_STOP supplies the rest hold", series(stop_ys(stop_at=17.0)), "INVALID",
+                   states=((0, 3), (3.0, 4), (5.6, 5)), extra=REQ))
+base = series(stop_ys(stop_at=17.0, total_s=8.0))
+y, rows2 = base[-1][1], list(base)
+tt = base[-1][0]
+for v, dur in ((0.5, 1.0), (0.15, 2.0)):  # moves again, then slows into the band without reaching 0.1
+    for _ in range(int(dur / DT)):
+        tt += DT
+        y += v * DT
+        rows2.append((tt, y, v))
+results.append(run("rests, moves again, then slows into the band", rows2, "FAIL", wall=40.0))
 print("%d of %d cases pass" % (sum(results), len(results)))
 sys.exit(0 if all(results) else 1)

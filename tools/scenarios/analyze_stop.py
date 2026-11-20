@@ -97,18 +97,17 @@ def analyse(prefix, wall_dist, direction, lidar_offset, margin, require_constrai
     out["closest_approach_m"] = round(closest, 2)
     out["criterion_a_margin_kept"] = closest >= margin
 
-    # rest: starts below REST_SPEED and every sample stays below REST_STAY for REST_HOLD_S, with no gap
-    def rest_from(i):
-        j = i
-        while j < len(t) and hspeed[j] < REST_STAY:
-            if t[j] - t[i] >= REST_HOLD_S:
-                return True
-            j += 1
-        return False
-
-    rest = next((i for i in range(peak, len(t)) if hspeed[i] < REST_SPEED and rest_from(i)), None)
-    at_rest_at_end = rest is not None and t[-1] - t[rest] >= REST_HOLD_S and \
-        all(hspeed[i] < REST_STAY for i in range(len(t)) if t[i] >= t[-1] - REST_HOLD_S)
+    # rest: the final rest of the run. The horizontal speed stays below REST_STAY from the rest onset to the
+    # end of the log, the onset is a sample below REST_SPEED, and the rest lasts at least REST_HOLD_S. A rest
+    # that is followed by movement beyond REST_STAY is not the final rest, so a vehicle that rests, moves
+    # again and then slows into the band without ever dropping below REST_SPEED has no rest.
+    k = len(t)
+    while k > 0 and hspeed[k - 1] < REST_STAY:
+        k -= 1
+    rest = next((i for i in range(max(k, peak), len(t)) if hspeed[i] < REST_SPEED), None)
+    if rest is not None and t[-1] - t[rest] < REST_HOLD_S:
+        rest = None
+    at_rest_at_end = rest is not None
     if rest is None:
         out["criterion_b_at_rest_before_wall"] = False
         out["note_b"] = "the speed never stayed under %.1f m/s for %.0f s after the peak" % (REST_STAY, REST_HOLD_S)
@@ -159,7 +158,8 @@ def analyse(prefix, wall_dist, direction, lidar_offset, margin, require_constrai
             # a row holds its state until the next row but at most max_cgap: a stopped or truncated
             # constraint stream must not look like continuous enforcement
             ends = [min(nxt, ti + max_cgap) for ti, nxt in zip(ct, ct[1:] + [float("inf")])]
-            t_end = max(t[closest_i], t[rest] if rest is not None else t[-1])
+            # the evidence reaches the end of the rest hold: a SAFE_STOP that supplies the rest is no braking
+            t_end = max(t[closest_i], t[rest] + REST_HOLD_S if rest is not None else t[-1])
             covered_to = ct[-1] + max_cgap
             if covered_to < t_end or any(b - a > max_cgap for a, b in zip(ct, ct[1:]) if b >= t[start] and a <= t_end):
                 raise Invalid("the constraint log has a gap above %.1f s or stops before the vehicle came to rest"
