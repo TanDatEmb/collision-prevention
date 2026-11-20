@@ -50,20 +50,26 @@ def stop_ys(v0=5.0, a=3.0, stop_at=17.0, total_s=30.0, a_up=2.0):
     return out
 
 
-def write(prefix, rows, states, nan_at=None, empty_at=None, with_constraints=True, with_position=True):
+def write(prefix, rows, states, nan_at=None, empty_at=None, with_constraints=True, with_position=True, lateral=0.0,
+          constraints_until=None):
     if with_position:
         with open(prefix + "vehicle_local_position_0.csv", "w", newline="") as f:
             w = csv.writer(f)
             w.writerow(["timestamp", "x", "y", "vx", "vy"])
             for n, (t, y, vy) in enumerate(rows):
                 y_cell = "nan" if n == nan_at else ("" if n == empty_at else y)
-                w.writerow([int(t * 1e6), 0.0, y_cell, 0.0, vy])
+                w.writerow([int(t * 1e6), 0.0, y_cell, lateral, vy])
     if with_constraints:
         with open(prefix + "cp_brake_constraints_0.csv", "w", newline="") as f:
             w = csv.writer(f)
             w.writerow(["timestamp", "state"])
-            for t, s in states:
-                w.writerow([int(t * 1e6), s])
+            # a dense log like the real one (cp_brake publishes at 20 Hz): the state in force every 0.1 s
+            end = constraints_until if constraints_until is not None else rows[-1][0]
+            t = states[0][0]
+            while t <= end:
+                state = [s for ts, s in states if ts <= t][-1]
+                w.writerow([int(t * 1e6), state])
+                t += 0.1
 
 
 def run(name, rows, expect, states=((0, 3), (7.5, 4)), wall=22.0, extra=(), **kw):
@@ -125,5 +131,12 @@ last_y = drift[-1][1]
 drift += [(drift[-1][0] + DT * (k + 1), last_y + 0.3 * DT * (k + 1), 0.3) for k in range(1000)]
 results.append(run("rests, then drifts toward the wall at the end", drift, "FAIL", wall=40.0))
 
+# evidence must cover the whole run, and rest means the horizontal speed, not only the approach component
+results.append(run("lateral drift of 2 m/s after the stop is not a rest", series(stop_ys(stop_at=17.0)), "FAIL", lateral=2.0))
+gapy = series(stop_ys(stop_at=17.0, total_s=8.0))
+gapy = gapy + [(10.0, gapy[-1][1], 0.0)]
+results.append(run("samples vanish after the stop (5 s gap before the last)", gapy, "INVALID"))
+results.append(run("constraint log truncated while the vehicle is still stopping", series(stop_ys(stop_at=17.0)), "INVALID",
+                   states=((0, 3), (3.0, 4)), extra=REQ, constraints_until=3.5))
 print("%d of %d cases pass" % (sum(results), len(results)))
 sys.exit(0 if all(results) else 1)
