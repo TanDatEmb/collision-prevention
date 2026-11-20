@@ -30,17 +30,18 @@ allow more issues later the owner names them; this section does not change.
 - One session per issue. Its brief lists the files or directories it may change and the steps it
   must not do (default: a fork session does only its fork PR; the parent does the main-repo
   pointer).
-- Disjoint files: before opening a PR compare `git diff --name-only origin/main...HEAD` with
-  `gh pr diff <n> --name-only` of every open PR in both repositories. An overlap stops the work
-  until the owner chooses the order.
+- Disjoint files: before opening a PR compare `git diff --name-only origin/<base>...HEAD` with
+  `gh pr diff <n> --name-only` of every open PR in both repositories (`<base>` is the base branch
+  of the PR: `main` here, `collision-prevention/release-1.17` in the fork). An overlap stops the
+  work until the owner chooses the order.
 - `docs/architecture.md` and `README.md`: a feature PR edits only the rows of its own OPEN, ICD
   and ADR items. Status lines and the PX4 pin are edited only by the pointer or docs-sync PR.
 - Pointer PRs: one fork merge, one pointer issue and PR, made by the parent session after
   searching all issues and PRs. One pointer PR open at a time.
-- Merge one PR at a time, each on the owner's word (rule 5). Every other open PR then merges
-  `main` into its branch (a new commit: no rebase and no force-push, rule 5), repeats its build
-  and unit evidence (locally while the `ci` workflow is disabled) and gets a new Codex review of
-  its new head commit.
+- Merge one PR at a time, each on the owner's word (rule 5). Every other open PR with the same
+  base branch then merges that base branch into its branch (a new commit: no rebase and no
+  force-push, rule 5), repeats its build and unit evidence (locally while the `ci` workflow is
+  disabled) and gets a new Codex review of its new head commit.
 - One session at a time runs SITL (ports, Gazebo, build directory) or uses the lidar and its NIC.
   At most two sessions write code at once unless the owner sets another number in chat.
 - After each merge list open PRs (all authors, both repositories), remote branches and open
