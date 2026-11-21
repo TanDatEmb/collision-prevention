@@ -126,7 +126,7 @@ LevelingStatus RayLeveler::level(obstacle_sector_map::RaySample & ray) const
   const bool is_no_return = ray.return_kind == RayReturnKind::kQualifiedNoReturn;
   if (ray.timestamp_ns == 0U || (!is_return && !is_no_return) ||
     !std::isfinite(ray.azimuth_rad) || !std::isfinite(ray.elevation_rad) ||
-    (is_return && !std::isfinite(ray.range_m)))
+    (is_return && !(std::isfinite(ray.range_m) && ray.range_m > 0.0F)))
   {
     return LevelingStatus::kInvalidRay;
   }

@@ -696,6 +696,16 @@ TEST(RayLevelerTest, InvalidRaysAreLeftUnchangedAndDoNotBreakContinuity)
   RaySample nan_range = sensorReturn(std::numeric_limits<double>::quiet_NaN(), 0.2, 0.1);
   EXPECT_EQ(leveler.level(nan_range), LevelingStatus::kInvalidRay);
 
+  // A zero or negative range is malformed (the sector map rejects it); the transform must not
+  // turn it into a valid positive range.
+  for (const double bad_range_m : {0.0, -50.0}) {
+    RaySample bad_range = sensorReturn(bad_range_m, 0.2, 0.1);
+    const RaySample bad_before = bad_range;
+    EXPECT_EQ(leveler.level(bad_range), LevelingStatus::kInvalidRay) << bad_range_m;
+    EXPECT_EQ(bad_range.range_m, bad_before.range_m);
+    EXPECT_EQ(bad_range.azimuth_rad, bad_before.azimuth_rad);
+  }
+
   RaySample invalid_kind = sensorReturn(4.0, 0.2, 0.1);
   invalid_kind.return_kind = RayReturnKind::kInvalid;
   const RaySample before = invalid_kind;

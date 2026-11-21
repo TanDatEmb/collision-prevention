@@ -61,7 +61,7 @@ enum class LevelingStatus : uint8_t
   kNoPose,                ///< no pose for the ray time (or, from beginFrame, the reference time)
   kResetSinceReference,   ///< the pose reset counter differs from that of the reference pose
   kOriginMotionExceeded,  ///< the vehicle moved more than the threshold since the reference time
-  kInvalidRay,            ///< no time, non-finite direction, a return without a finite range, or
+  kInvalidRay,            ///< no time, non-finite direction, a return without a finite positive range, or
                           ///< return kind kInvalid: left unchanged, the map rejects it anyway
 };
 
