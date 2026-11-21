@@ -1,8 +1,10 @@
 # 0022. Leveled-ray origin, band reference and the simulated sensor
 
 Status: Proposed. The owner agreed to the decisions below in chat on 2026-11-21; the approval is
-recorded in a separate PR. Issue #143. It amends ADR 0020 D1 and D2 and ICD-CP-03 text; those texts
-are changed by the docs-sync PR after approval, not here. Values marked TBD stay TBD.
+recorded in a separate PR. Issue #143; the origin-motion mechanism of decision 1 is issue #155 (owner
+decision in chat, 2026-11-21). It amends ADR 0020 D1 and D2, the conservative filter of ADR 0018 and
+ICD-CP-03 and ICD-CP-06 text; those texts are changed by the docs-sync PR after approval, not here.
+Values marked TBD stay TBD.
 
 ## Context
 - D2 computes `r_free = min(end * cos(el), h / tan|el|)` as if the ray started at the centre of the
@@ -11,7 +13,11 @@ are changed by the docs-sync PR after approval, not here. Values marked TBD stay
   origin field. A return is shifted exactly by re-expressing its end point (`RayLeveler::level` does
   it). A no-return has no end point, so it loses the shift.
 - The merged leveler puts the origin at the body origin at `t_ref` and does not model the lever arm
-  (`ray_leveling.hpp`).
+  (`ray_leveling.hpp`). It also drops any ray, return or no-return, whose Euclidean origin motion
+  `|x(t_i) - x(t_ref)|` exceeds `origin_motion_threshold_m` (`kOriginMotionExceeded`, `ray_leveling.cpp`),
+  and a drop breaks frame continuity (`breaksFrameContinuity`). The builder computes the free part of a
+  ray in `addFreeEvidence` as `min(end * cos(el), 40 m)` and, per half, `h / tan|el|`, from the ray
+  direction as it leaves the leveler, with no origin.
 - Bench mount as built in the SDF (Gazebo, X500). The "model frame" is the frame of the
   `x500_lidar_2d` model. `x500_base/model.sdf` has the model pose `0 0 .24`, so `base_link` is at z 0.24
   in the model frame. The lidar include pose `.12 0 .26` in `x500_lidar_2d/model.sdf` is also in the model
@@ -50,32 +56,144 @@ are changed by the docs-sync PR after approval, not here. Values marked TBD stay
   include pose in the model frame is z = 0.24 + 0.085 = 0.325 (check: 0.325 + 0.055 - 0.24 = 0.14).
 
 ## Decision
-### 1. Band reference: the lidar centre at `t_ref` (option a)
-The band is taken around the lidar centre at `t_ref`, with `h_up` and `h_down` relative to the lidar.
-The origin shift stays inside the transform. The rays that leave `RayLeveler` start from that origin,
-so the builder and `RaySample` are unchanged.
+### 1. Band reference and origin handling: the lidar centre at `t_ref`
+Band reference (option a, unchanged in substance). The band is taken around the lidar centre at `t_ref`,
+with `h_up` and `h_down` relative to the lidar. With `L` the lidar position in the PX4 vehicle reference
+frame, that is from `base_link` (0.075 m above `base_link` for the current X500 SDF, 0.14 m for the
+owner's bench choice, numbers in Context), the lidar origin of ray `i` is `o_i = x_i + R_i * L` and the
+reference origin is `o_ref = x_ref + R_ref * L`. The origin offset of ray `i` is `d_i = o_i - o_ref`, with
+up component `dz_i` and horizontal component `dh_i`, in the gravity-aligned frame.
 
-Option (b), a band around the vehicle reference with a per-ray lever arm, is not chosen: it changes
-`RaySample`, is more complex, and nothing shows it is needed. The lever-arm error under rotation is
-at most 0.184 m x 0.307 rad = 0.057 m, at the 176 deg/s hard-stop pitch rate of decision 2 over a 0.1 s
-window (176 deg/s x 0.1 s = 17.6 deg = 0.307 rad) [estimate: the rate is from gains and limits, not from
-logs].
+Option (b), a band around the vehicle reference with a per-ray lever arm, is not chosen: it is more
+complex and nothing shows it is needed. The lever arm is not ignored: it enters through `d_i` (item d).
+The term it adds is at most 0.184 m x 0.307 rad = 0.057 m under rotation, at the 176 deg/s hard-stop
+pitch rate of decision 2 over a 0.1 s window (176 deg/s x 0.1 s = 17.6 deg = 0.307 rad) [estimate: the
+rate is from gains and limits, not from logs].
+
+Origin handling (owner decision in chat, 2026-11-21: the scalar origin-motion threshold is not the
+mechanism). `t_ref` is the earliest ray of the frame, which is the map timestamp of ICD-CP-06 (the
+builder takes the minimum over the accepted rays in `addRay`); the node must pass that same time to
+`beginFrame`.
+
+a. Returns are never dropped for origin motion. `RayLeveler::level` adds `x(t_i) - x(t_ref)` to the end
+   point, so a return is exact at every `t_i` (up to the pose error), not only at `t_ref`. The merged
+   drop on the Euclidean norm of `x(t_i) - x(t_ref)` against `origin_motion_threshold_m` is removed. It
+   is wrong for returns, and it mixes the horizontal part, which the shift handles exactly, with the
+   vertical part, which is the harmful one for free evidence. The one remaining drop of a return in the
+   transform is geometric, not a threshold: the shifted end point lies on the reference origin, the
+   range is 0, and the ray has no direction (`ray_leveling.cpp`); it breaks continuity as today.
+
+b. Free evidence is corrected where the builder computes `r_free` (`addFreeEvidence`), for no-returns
+   and for the free part of returns (a return outside the band or beyond 40 m). For the half `s`
+   (`s = +1` the up half with `h_up`, `s = -1` the down half with `h_down`):
+
+       r_free_ref = min(end * cos(el), 40 m, (h_s - dz_b,s) / tan|el|)   with   end = 40 m for a no-return
+
+   and the return range for a return, as in the builder today. `dz_b,s = max over the rays of the frame
+   of max(s * dz_i, 0)` is a conservative per-frame bound of the vertical origin motion towards the
+   boundary of half `s`, with respect to the reference ray (the earliest ray). It is not negative.
+   An origin raised by `dz_i` leaves `h_up - dz_i` of room above it; an origin lowered by `|dz_i|` leaves
+   `h_down - |dz_i|` below it. The horizontal term `min(0, dh.u)`,
+   with `u` the ray's horizontal direction, is not added: the owner judged it nearly inert with `t_ref`
+   the earliest ray. Its size is bounded by `|dh|` (1.2 m at 12 m/s over 0.1 s) and it only concerns rays
+   with a component against the motion; the over-claim in a rear sector is not quantified here.
+
+c. Three guards, derived and not thresholds:
+   - A numerator `h_s - dz_b,s <= 0` (the origin is outside the band of half `s`) gives `r_free_ref = 0`.
+     It is tested before the division.
+   - `el = 0` with a numerator of 0 must not produce NaN (0 / 0). The builder pushes the values into
+     `std::nth_element` with `std::greater` (`nthLargestOrZero`), and a NaN breaks the strict weak ordering.
+     The numerator test above comes first; for a numerator above 0, `el = 0` gives infinity and the
+     `min` with the cap applies, as the builder does today.
+   - The formula uses the real ray direction `P - o_i` and the half it points into, not the chord
+     elevation from `o_ref` to `P` that is left after leveling. Counterexample, `o = (0, 0, 0.3)`,
+     `P = (10, 0, 1.1)`, `h_up = 1`: the code today gives `1 / 0.11 = 9.09 m`, the formula with the chord
+     gives `(1 - 0.3) / 0.11 = 6.36 m`, the true exit of the band is `(1 - 0.3) / 0.08 = 8.75 m`. This is an
+     implementation requirement. A no-return already carries the real direction after leveling. For a
+     return the builder sees only the chord, and how it gets the real direction without a field in
+     `RaySample` is not decided (see "Not decided yet"). A random check of the vertical part only (the
+     chord form against the true exit, origin offset up to 0.6 m, `h` 0.3 to 2 m) found the chord form
+     never above the true exit, so the chord costs free distance and does not over-claim; the horizontal
+     term of item b is excluded from that check.
+
+d. The lever arm is added to the origin offset: `d_i = x_i + R_i * L - x_ref - R_ref * L`. The merged
+   `ray_leveling.hpp` says it is not modelled; that text is changed with the implementation. Frame trap:
+   `L` is from `base_link`; the Gazebo ground truth is the model origin, 0.24 m below `base_link`
+   (`x500_base` model pose z 0.24). The analyzer pitch term (`--lidar-offset-z`) with `--reference truth`
+   is therefore 0.315 m for the current SDF (0.075 + 0.24) and 0.38 m for the owner's bench choice
+   (0.14 + 0.24).
+
+e. No field is added to `RaySample`. The builder receives the frame-level bound per half (the two numbers
+   `dz_b,up` and `dz_b,down`, in metres, not negative). The leveling step computes them over the frame's
+   rays while the frame is buffered, and they travel with the continuity flag: ICD-CP-06 buffers the whole
+   frame before `reset(continuity)`, `addRay` and `finalize`, so they are known before the first
+   `addRay`. This touches the ICD-CP-06 contract by one frame field. The owner approves the contract; the
+   names are listed for approval in the implementation PR and no name or value is invented here. A frame
+   without the bound is invalid; there is no default.
+
+f. "Drop without breaking continuity" is rejected as unsafe: dropping a return that is inside the band
+   can hide an obstacle (`ray_leveling.hpp`, `breaksFrameContinuity`). Only a ray that is free evidence
+   could be dropped silently. Any drop limit on pose uncertainty (a tilt variance or `eph` of the
+   odometry) is a new safety threshold: TBD, owner.
+
+g. Nothing is claimed about climbs. The vertical travel after the sample, `v_z * age` (0.45 to 1.5 m), is
+   corrected nowhere, and a climb with horizontal motion is OS-18, outside the ODD.
+
+h. The attitude and mount error term is not absorbed by the formula. For a common attitude or mount error
+   `dtheta` the over-claim of the certified free distance is about `(r^2 / h) * dtheta / (1 - r * dtheta / h)`
+   in distance at true free distance `r`, and the `n_free`-th largest rule does not filter a common
+   error. Illustration only (exact tangent, with the claim at the 40 m cap; the true free distance is then
+   37.4, 34.1, 29.6 and 23.5 m for `h` = 1 m):
+
+   | `dtheta` | 0.1 deg | 0.25 deg | 0.5 deg | 1.0 deg |
+   | --- | --- | --- | --- | --- |
+   | over-claim, `h` = 1 m | 2.6 m | 5.9 m | 10.4 m | 16.5 m |
+   | over-claim, `h` = 0.5 m | 4.9 m | 10.4 m | 16.4 m | 23.3 m |
+
+   The owner decides the attitude allowance `dtheta_b` and the error budget `epsilon` (the allowed
+   over-claim of a certified free distance at the range where the cap binds, about 30 m at 12 m/s, near
+   the 28.5 m braking distance of the architecture) after measurement (issue #156). `h_up`, `h_down` and
+   `n_free` stay TBD. ICD-CP-01 gives 0.5 deg mount repeatability as a requirement, not a measurement.
+   The only tilt data: the EKF against the simulator ground truth in SITL, p99 0.4 to 0.66 deg below
+   10 deg/s body rate and 2.0 to 3.2 deg (maximum 3.7 deg) above it; SITL only, timing artefacts not
+   excluded, not the flight EKF.
+
+i. Measured vertical origin motion, 81 SITL runs, airborne with horizontal speed above 2 m/s: `|dz|` over
+   100 ms has p99 0.045 m and maximum 0.068 m; `|dh|` has maximum 1.26 m. The frame-level bound therefore
+   costs about 0.07 m of band height in the ODD. SITL only (analysis supplied by the owner in chat; the
+   logs are not in this repository and not re-run here).
+
+j. Availability. With a climb of 0 the correction changes nothing. At a 3 m/s climb over the 0.1 s window
+   the origin rises 0.3 m, so the numerator of the up half falls to `h_up - 0.3`; whether `n_free` rays
+   remain in the up half cannot be answered without ray data (the multi-ring lidar, #138). The old drop
+   with a threshold below 1.2 m would make every frame that spans the window unusable at 12 m/s
+   (12 m/s x 0.1 s = 1.2 m; `kOriginMotionExceeded` breaks continuity).
 
 Consequences:
 - This amends D2, which says the band is around the vehicle. The platform file carries band values
   relative to the lidar.
 - Cap distances and `CPB_MARGIN` then refer to the lidar (0.12 m ahead of the vehicle origin on the
   bench). The sector bearing shifts by up to about `0.12 / r` (3.4 deg at 2 m). ICD-CP-04 states it.
-- "Exact" holds only at `t_ref`. A no-return from a later ray is off by `dz / tan|el|`: a 0.1 m climb
-  at 3 deg gives 1.9 m. This is the origin-motion threshold of OPEN-031.
-- Coupling to state: `kOriginMotionExceeded` breaks continuity (`breaksFrameContinuity`), so a
-  threshold below `v * window` (1.2 m at 12 m/s with a 0.1 s window) would break every frame at speed.
+- Returns are exact at every `t_i`. The no-return error without the correction is one-sided (it
+  over-claims) and equals `dz / tan|el|`, which is at most `r * dz / h` for the certified distance `r`
+  and at most `40 * dz / h` at the cap. The earlier example of a 0.1 m climb at 3 deg giving 1.9 m is
+  `0.1 / tan(3 deg)`, independent of `h`; it is a 10% error of the certified distance only for `h` = 1 m
+  (`r` = 19 m), and 20% for `h` = 0.5 m. With the frame-level bound the vertical part of this error is
+  removed for the rays of the frame, at the cost of item i.
+- The implementation removes `origin_motion_threshold_m` from `LevelingConfig` and with it the coupling of
+  a threshold to `breaksFrameContinuity`: the drops that break continuity are then no reference, no pose,
+  a reset since the reference and the degenerate return of item a.
+- The leveler, the builder and the ICD-CP-06 text change together in the implementation work (the node
+  wiring #137 is its first user); this record changes none of them.
 
 ### 2. Missing pose: wait for a bounded time, do not hold the last pose
 The leveler returns `kNoPose` for a ray with no pose, and `breaksFrameContinuity` tells the caller to
 drop it and mark the frame discontinuous (ICD-CP-06; the node wiring is #137, not merged). One missing
 pose then makes no sector clearable: a step to zero, the 0.3 s dwell, and the 2 m/s^2 rise (about
-6 s to return to 12 m/s).
+6 s to return to 12 m/s). After decision 1 the drops that break continuity are no reference, no pose,
+a reset since the reference and the degenerate return of item a; none is an origin-motion threshold.
+The frame-level bound of item e also needs a pose at every ray
+time, so the bounded wait below serves it too.
 
 Rejected: hold the last pose. The error is about `omega * dt` per 50 ms [estimates from gains and
 limits, not from logs]:
@@ -97,7 +215,9 @@ parameter, no default, TBD). If none comes, the rays are dropped and continuity 
 Measure first: how often `kNoSampleAfter` fires at frame end (without a wait it may fire on every
 frame), and the rate and p99 latency of `/fmu/out/vehicle_odometry` through DDS (`dds_topics.yaml`
 has no `rate_limit`; OPEN-030). The only data is the uORB topic in Gazebo SITL (OPEN-032: 125 Hz,
-`timestamp - timestamp_sample` p99 24 ms), not the DDS path or the target network.
+`timestamp - timestamp_sample` p99 24 ms), not the DDS path or the target network. Any limit on pose
+uncertainty that would drop a ray (a tilt variance or `eph`) is a new safety threshold: TBD, owner
+(decision 1, item f).
 
 ### 3. Two yaw sources: keep both, add a contract test
 The Orin leveler takes yaw from the `VehicleOdometry` quaternion; `cp_brake` takes it from
@@ -133,21 +253,37 @@ half lies outside the field of view (`finalize`: "no evidence never shortens a c
 distance"). It belongs to issue #148.
 
 ## Consequences
-- ICD and requirement texts are amended by the docs-sync PR after approval.
-- The multi-ring lidar (#138) is needed before any SITL result on leveling is valid evidence.
-- The node wiring (#137) waits for this ADR and for two bench values from the owner: the origin-motion
-  threshold of OPEN-031, which stays TBD until the owner decides (it must be above the 1.2 m that the
-  vehicle travels in the 0.1 s window at 12 m/s, or every frame at speed breaks continuity; that bound
-  does not make it conservative, because of the dz / tan|el| error above), and the mount, chosen by the owner in chat for the bench on 2026-11-21, with the approval
-  recorded in a separate PR: the sensor at (0.12, 0, 0.14) m from `base_link`, rpy (0, +0.1745, 0) rad (boresight
+- ICD and requirement texts, including ICD-CP-06 (one frame-level field, decision 1 item e), are amended by
+  the docs-sync PR after approval.
+- The multi-ring lidar (#138) is needed before any SITL result on leveling is valid evidence, and before
+  the availability question of decision 1 item j can be answered.
+- The node wiring (#137) waits for this ADR, for the owner's approval of the ICD-CP-06 frame field, for
+  the owner's values (below) and for the mount. There is no scalar origin-motion threshold any more; the
+  values the owner still decides are `epsilon` and `dtheta_b` (after the measurement of issue #156),
+  `h_up`, `h_down` and `n_free`, and a pose-uncertainty drop limit if one is wanted. All stay TBD. The
+  mount was chosen by the owner in chat for the bench on 2026-11-21, with the approval recorded in a
+  separate PR: the sensor at (0.12, 0, 0.14) m from `base_link`, rpy (0, +0.1745, 0) rad (boresight
   down), lever arm 0.184 m (numbers and frames in Context; for `lidar_2d_v2` at pitch 0 the include pose
   z is 0.325 in the model frame). The SDF values above are unverified by a static run (issue #153).
+- The attitude and mount error is not covered by the origin correction (decision 1 item h): until the
+  owner sets `dtheta_b` and `epsilon` a certified free distance carries that over-claim, and a climb
+  with horizontal motion carries no claim (item g).
 
 ## To measure first
 The odometry rate and latency; the angular rate and acceleration in the step logs; the `kNoSampleAfter`
 rate; the gz cloud layout and no-hit encoding; the analyzer offset used in the earlier proofs (a constant
-`--lidar-offset` along the leg, before issue #152).
+`--lidar-offset` along the leg, before issue #152); the attitude and mount error against the ground truth
+(issue #156); the vertical origin motion per frame on a flight log (the 81 SITL runs of decision 1 item i
+are SITL only); how many rays per half remain at a climb (needs ray data, #138).
 
 ## Not decided yet
-A per-ray lever arm, the fraction threshold for dropping a whole frame, an extrapolation model, and
-Livox scan pattern fidelity.
+The fraction threshold for dropping a whole frame, an extrapolation model, and Livox scan pattern
+fidelity. For the origin-motion mechanism of decision 1:
+- `epsilon`, `dtheta_b`, `h_up`, `h_down`, `n_free` and any pose-uncertainty drop limit (TBD, owner; no
+  value is proposed here).
+- The names of the ICD-CP-06 frame field (the two bounds), listed in the implementation PR.
+- How the builder gets the real ray direction of a return without a field in `RaySample` (item c), and
+  whether the chord is acceptable in the meantime.
+- The horizontal term `min(0, dh.u)` (item b): not added by the owner's judgement; the rear-sector
+  over-claim is not quantified.
+- Vertical travel after the sample and climbs (item g): not corrected, OS-18, outside the ODD.
