@@ -3,6 +3,7 @@
 
 usage: analyze_stop.py <csv-prefix> --wall-dist D [--dir-ned N,E] [--lidar-offset 0.0] [--margin 2.0]
                        [--require-constraints] [--min-peak-speed 2.0] [--max-gap-s 0.5] [--near-m 35] [--max-constraint-gap-s 1.0]
+                       [--obstacle pole:N,E,R|wall:N0,E0,nN,nE] [--require-nose-along-leg] [--max-nose-error-deg 15]
 
 <csv-prefix> is the path printed by `ulog2csv -o <dir> <log>.ulg` without the topic suffix, for example
 `/tmp/run1/log_0_` (files `<prefix>vehicle_local_position_0.csv`, `<prefix>cp_brake_constraints_0.csv`).
@@ -59,19 +60,69 @@ def read(path, columns):
     return out
 
 
+def read_optional(path, column):
+    """One column of a log that may be missing or lack the column: a list of floats, or None."""
+    try:
+        with open(path, newline="") as f:
+            rows = list(csv.DictReader(f))
+        values = [float(r[column]) for r in rows]
+    except (FileNotFoundError, KeyError, ValueError, TypeError):
+        return None
+    return values if values and all(math.isfinite(v) for v in values) else None
+
+
+def wrap_pi(angle):
+    return (angle + math.pi) % (2.0 * math.pi) - math.pi
+
+
+def distance_to_obstacle(spec, n, e):
+    """Distance [m] from the point (n, e), local NED, to the obstacle surface; negative behind it.
+    spec is ("pole", N, E, radius) or ("wall", N0, E0, nN, nE) with (nN, nE) the unit normal pointing at the vehicle."""
+    if spec[0] == "pole":
+        return math.hypot(n - spec[1], e - spec[2]) - spec[3]
+    return (n - spec[1]) * spec[3] + (e - spec[2]) * spec[4]
+
+
+def parse_obstacle(text):
+    """pole:N,E,radius or wall:N0,E0,nN,nE (the normal is normalised); None for no obstacle."""
+    if not text:
+        return None
+    kind, _, rest = text.partition(":")
+    try:
+        v = [float(x) for x in rest.split(",")]
+    except ValueError:
+        raise Invalid("bad --obstacle")
+    if kind == "pole" and len(v) == 3 and all(map(math.isfinite, v)) and v[2] >= 0.0:
+        return ("pole", v[0], v[1], v[2])
+    if kind == "wall" and len(v) == 4 and all(map(math.isfinite, v)) and math.hypot(v[2], v[3]) > 0.0:
+        norm = math.hypot(v[2], v[3])
+        return ("wall", v[0], v[1], v[2] / norm, v[3] / norm)
+    raise Invalid("bad --obstacle (pole:N,E,radius or wall:N0,E0,nN,nE)")
+
+
 def analyse(prefix, wall_dist, direction, lidar_offset, margin, require_constraints, min_peak, max_gap, near_m,
-            max_cgap):
+            max_cgap, obstacle=None, require_nose=False, max_nose_error_deg=15.0):
     pos = read(prefix + "vehicle_local_position_0.csv", ["timestamp", "x", "y", "vx", "vy"])
     t = [v * 1e-6 for v in pos["timestamp"]]
-    if len(t) < 3 or any(b <= a for a, b in zip(t, t[1:])):
-        raise Invalid("time is missing or does not strictly increase")
+    # equal stamps occur in real logs (one at start-up); going back is malformed
+    if len(t) < 3 or any(b < a for a, b in zip(t, t[1:])):
+        raise Invalid("time is missing or goes backwards")
     dn, de = direction
     along = [px * dn + py * de for px, py in zip(pos["x"], pos["y"])]
     speed = [a * dn + b * de for a, b in zip(pos["vx"], pos["vy"])]  # signed, along the approach
     hspeed = [math.hypot(a, b) for a, b in zip(pos["vx"], pos["vy"])]  # horizontal magnitude, for rest
     gap = [wall_dist - s - lidar_offset for s in along]  # distance from the lidar to the wall face
+    bearing = math.atan2(de, dn)
+    heading = read_optional(prefix + "vehicle_local_position_0.csv", "heading")
+    if obstacle is not None:
+        # 2-D: the lidar sits `lidar_offset` ahead of the vehicle origin along the nose (the leg direction when
+        # the log has no heading); the distance is to the obstacle surface, not along the leg
+        hd = heading if heading is not None else [bearing] * len(t)
+        gap = [distance_to_obstacle(obstacle, px + lidar_offset * math.cos(h), py + lidar_offset * math.sin(h))
+               for px, py, h in zip(pos["x"], pos["y"], hd)]
 
-    out = {"samples": len(t), "assumptions": {"lidar_offset_m": lidar_offset, "wall_dist_m": wall_dist}}
+    out = {"samples": len(t), "assumptions": {"lidar_offset_m": lidar_offset, "wall_dist_m": wall_dist,
+                                              "distance_metric": "2-D to the obstacle" if obstacle else "1-D along the leg"}}
     start = next((i for i, v in enumerate(speed) if v > START_SPEED), None)
     if start is None:
         raise Invalid("the approach never started: speed along the wall direction stayed under %.1f m/s "
@@ -95,6 +146,17 @@ def analyse(prefix, wall_dist, direction, lidar_offset, margin, require_constrai
         raise Invalid("the vehicle never came within %.0f m of the wall (closest %.1f m): a stop here is not a "
                       "stop at the wall" % (near_m, closest))
     out["closest_approach_m"] = round(closest, 2)
+    if heading is not None:
+        window = range(start, closest_i + 1)
+        errors = [abs(wrap_pi(heading[i] - bearing)) for i in window]
+        out["heading_deg_during_approach"] = [round(math.degrees(min(heading[i] for i in window)), 1),
+                                              round(math.degrees(max(heading[i] for i in window)), 1)]
+        out["nose_error_deg_max"] = round(math.degrees(max(errors)), 1)
+        if require_nose and max(errors) > math.radians(max_nose_error_deg):
+            raise Invalid("the nose was not along the leg during the approach (largest error %.0f deg, limit %.0f)"
+                          % (math.degrees(max(errors)), max_nose_error_deg))
+    elif require_nose:
+        raise Invalid("the log has no heading, so the nose direction cannot be checked")
     out["criterion_a_margin_kept"] = closest >= margin
 
     # rest: the final rest of the run. The horizontal speed stays below REST_STAY from the rest onset to the
@@ -140,6 +202,23 @@ def analyse(prefix, wall_dist, direction, lidar_offset, margin, require_constrai
         if t[i] - t[j] >= DECEL_WINDOW_S * 0.5:
             decel = max(decel, (speed[j] - speed[i]) / (t[i] - t[j]))
     out["peak_decel_m_s2"] = round(decel, 2)
+
+    # tracking of the velocity cap: how far above the cap the vehicle ran while the hook was limiting
+    try:
+        with open(prefix + "cp_brake_hook_0.csv", newline="") as f:
+            hook = list(csv.DictReader(f))
+        excess = []
+        for r in hook:
+            if int(float(r["action"])) == 3:  # ACTION_LIMITED
+                actual = math.hypot(float(r["vel[0]"]), float(r["vel[1]"]))
+                capped = math.hypot(float(r["vel_sp_out[0]"]), float(r["vel_sp_out[1]"]))
+                if math.isfinite(actual) and math.isfinite(capped):
+                    excess.append(actual - capped)
+        if excess:
+            out["cap_excess_max_m_s"] = round(max(excess), 2)
+            out["limited_samples"] = len(excess)
+    except (FileNotFoundError, KeyError, ValueError):
+        pass
 
     try:
         con = read(prefix + "cp_brake_constraints_0.csv", ["timestamp", "state"])
@@ -196,6 +275,12 @@ def main():
     ap.add_argument("--max-gap-s", type=float, default=0.5, help="bench value [s]")
     ap.add_argument("--max-constraint-gap-s", type=float, default=1.0, help="bench value [s]")
     ap.add_argument("--near-m", type=float, default=35.0, help="bench value [m]: the lidar range (40 m) minus a slack")
+    ap.add_argument("--obstacle", default=None,
+                    help="2-D distance to a pole (pole:N,E,radius) or an oblique wall (wall:N0,E0,nN,nE, the normal "
+                         "points at the vehicle), local NED; default is the 1-D distance along --dir-ned")
+    ap.add_argument("--require-nose-along-leg", action="store_true",
+                    help="INVALID unless the heading stayed within --max-nose-error-deg of the leg direction")
+    ap.add_argument("--max-nose-error-deg", type=float, default=15.0, help="bench value [deg]")
     a = ap.parse_args()
     try:
         d = [float(v) for v in a.dir_ned.split(",")]
@@ -203,7 +288,8 @@ def main():
         if len(d) != 2 or norm == 0.0 or not math.isfinite(a.wall_dist) or a.wall_dist <= 0.0:
             raise Invalid("bad --dir-ned or --wall-dist")
         result = analyse(a.prefix, a.wall_dist, (d[0] / norm, d[1] / norm), a.lidar_offset, a.margin,
-                         a.require_constraints, a.min_peak_speed, a.max_gap_s, a.near_m, a.max_constraint_gap_s)
+                         a.require_constraints, a.min_peak_speed, a.max_gap_s, a.near_m, a.max_constraint_gap_s,
+                         parse_obstacle(a.obstacle), a.require_nose_along_leg, a.max_nose_error_deg)
         crit = ("criterion_a_margin_kept", "criterion_b_at_rest_before_wall", "criterion_c_no_oscillation")
         result["verdict"] = "PASS" if all(result.get(k) for k in crit) else "FAIL"
     except (Invalid, ValueError, OSError) as e:

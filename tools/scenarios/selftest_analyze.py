@@ -51,14 +51,19 @@ def stop_ys(v0=5.0, a=3.0, stop_at=17.0, total_s=30.0, a_up=2.0):
 
 
 def write(prefix, rows, states, nan_at=None, empty_at=None, with_constraints=True, with_position=True, lateral=0.0,
-          constraints_until=None, swap_constraint_rows=None):
+          constraints_until=None, swap_constraint_rows=None, heading_rad=None, north_m=0.0, hook_rows=None):
     if with_position:
         with open(prefix + "vehicle_local_position_0.csv", "w", newline="") as f:
             w = csv.writer(f)
-            w.writerow(["timestamp", "x", "y", "vx", "vy"])
+            w.writerow(["timestamp", "x", "y", "vx", "vy"] + (["heading"] if heading_rad is not None else []))
             for n, (t, y, vy) in enumerate(rows):
                 y_cell = "nan" if n == nan_at else ("" if n == empty_at else y)
-                w.writerow([int(t * 1e6), 0.0, y_cell, lateral, vy])
+                w.writerow([int(t * 1e6), north_m, y_cell, lateral, vy] + ([heading_rad] if heading_rad is not None else []))
+    if hook_rows is not None:
+        with open(prefix + "cp_brake_hook_0.csv", "w", newline="") as f:
+            w = csv.writer(f)
+            w.writerow(["timestamp", "action", "vel[0]", "vel[1]", "vel_sp_out[0]", "vel_sp_out[1]"])
+            w.writerows(hook_rows)
     if with_constraints:
         with open(prefix + "cp_brake_constraints_0.csv", "w", newline="") as f:
             w = csv.writer(f)
@@ -290,6 +295,53 @@ results.append(command_case("setpoint log ends before the stop", lambda t: 5.0 i
 results.append(command_case("setpoint rows missing across the zero step", lambda t: 5.0 if t < 10 else 0.0,
                             lambda t: 5.0 if t < 10 else 5.0 * math.exp(-(t - 10) / 0.5), 2,
                             drop_setpoint_between=(10.0, 12.0)))
+
+
+# 2-D obstacle distance (poles and oblique walls), the nose check, equal stamps, and the cap excess
+pole_beside = series(stop_ys(stop_at=30.0))
+results.append(run("1-D along the leg calls a flight beside a pole a flight through it", pole_beside, "FAIL", wall=20.0,
+                   north_m=3.0))
+results.append(run("2-D: passing a pole 3 m to the side keeps the margin", pole_beside, "PASS", wall=20.0, north_m=3.0,
+                   extra=("--obstacle", "pole:0,20,0.15")))
+results.append(run("2-D: stopping 0.85 m short of a pole in the path fails", series(stop_ys(stop_at=19.0)), "FAIL",
+                   wall=20.0, extra=("--obstacle", "pole:0,20,0.15")))
+results.append(run("2-D: stopping 2.85 m short of a pole in the path passes", series(stop_ys(stop_at=17.0)), "PASS",
+                   wall=20.0, extra=("--obstacle", "pole:0,20,0.15")))
+results.append(run("2-D: an oblique wall, 2.12 m from it at rest, passes", series(stop_ys(stop_at=17.0)), "PASS",
+                   wall=20.0, extra=("--obstacle", "wall:0,20,-1,-1")))
+results.append(run("2-D: an oblique wall, 1.41 m from it at rest, fails", series(stop_ys(stop_at=18.0)), "FAIL",
+                   wall=20.0, extra=("--obstacle", "wall:0,20,-1,-1")))
+NOSE = ("--require-nose-along-leg",)
+results.append(run("nose along the leg (east) is accepted", series(stop_ys(stop_at=17.0)), "PASS", heading_rad=math.pi / 2,
+                   extra=NOSE))
+results.append(run("nose at north while the leg is east is INVALID", series(stop_ys(stop_at=17.0)), "INVALID",
+                   heading_rad=0.0, extra=NOSE))
+results.append(run("nose check without a heading in the log is INVALID", series(stop_ys(stop_at=17.0)), "INVALID",
+                   extra=NOSE))
+dup = series(stop_ys(stop_at=17.0))
+dup[1] = (dup[0][0], dup[1][1], dup[1][2])  # two equal stamps at start-up
+results.append(run("two equal position stamps are accepted", dup, "PASS"))
+
+
+def field_case(name, field, expect, **kw):
+    with tempfile.TemporaryDirectory() as d:
+        prefix = os.path.join(d, "log_0_")
+        write(prefix, series(stop_ys(stop_at=17.0)), ((0, 3), (3.0, 4)), **kw)
+        p = subprocess.run([sys.executable, os.path.join(HERE, "analyze_stop.py"), prefix, "--wall-dist", "22.0"],
+                           capture_output=True, text=True)
+    try:
+        got = json.loads(p.stdout).get(field)
+    except ValueError:
+        got = None
+    ok = got == expect
+    print(("PASS" if ok else "FAIL"), "%-58s" % name, "got", got, "expected", expect)
+    return ok
+
+
+# the vehicle ran 1.5 m/s above the cap in the limited rows (action 3); a transparent row is not counted
+results.append(field_case("cap excess is the largest speed above the cap while limiting", "cap_excess_max_m_s", 1.5,
+                          hook_rows=[(1000000, 3, 0.0, 4.0, 0.0, 3.0), (1100000, 3, 0.0, 3.5, 0.0, 2.0),
+                                     (1200000, 0, 0.0, 9.0, 0.0, 0.0)]))
 
 print("%d of %d cases pass" % (sum(results), len(results)))
 sys.exit(0 if all(results) else 1)
