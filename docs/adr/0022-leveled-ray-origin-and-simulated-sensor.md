@@ -12,13 +12,42 @@ are changed by the docs-sync PR after approval, not here. Values marked TBD stay
   it). A no-return has no end point, so it loses the shift.
 - The merged leveler puts the origin at the body origin at `t_ref` and does not model the lever arm
   (`ray_leveling.hpp`).
-- Bench mount (Gazebo, X500): the lidar link is at (0.12, 0, 0.26) from `base_link` (the include pose
-  of the lidar model in `x500_lidar_2d/model.sdf`; the fixed joint pose of -0.1 only places the joint
-  frame and does not move the child link). The `gpu_lidar` sensor is 0.055 higher (z 0.315). This is
-  read from the SDF files and SDF semantics, not yet checked by a static run.
-- Pitch moves the lidar: its forward offset is `0.12 cos(theta) - 0.315 sin(theta)`, which is 0.06 m at
-  10 deg nose-up (0.12 m level). That is an error of at most about 0.06 m on a closest approach
-  measured from the lidar. The owner accepts +-20 cm on the bench.
+- Bench mount as built in the SDF (Gazebo, X500). The "model frame" is the frame of the
+  `x500_lidar_2d` model. `x500_base/model.sdf` has the model pose `0 0 .24`, so `base_link` is at z 0.24
+  in the model frame. The lidar include pose `.12 0 .26` in `x500_lidar_2d/model.sdf` is also in the model
+  frame (the fixed joint pose of -0.1 only places the joint frame and does not move the child link). So the
+  lidar link is at (0.12, 0, 0.26 - 0.24) = (0.12, 0, 0.02) from `base_link`. The `gpu_lidar` sensor is
+  0.055 above the link (`lidar_2d_v2/model.sdf`, sensor pose `0 0 0.055` in the link frame), so the sensor
+  is at (0.12, 0, 0.075) from `base_link` (z 0.315 in the model frame). An earlier text of this ADR took
+  the model-frame z (0.26 and 0.315) as heights from `base_link`; that was wrong. This is read from the SDF
+  files and SDF semantics and agreed by two independent reviews; it is not checked by a static run (issue
+  #153). With the 10 deg nose-down pitch of decision 4, the reviews found that the X500 propellers enter the
+  lower field of view at this height (no propeller geometry is computed here).
+- Pitch moves the lidar. With `z` the sensor height above `base_link`, its forward offset from the vehicle
+  origin at a nose-up pitch `theta` is `0.12 cos(theta) - z sin(theta)` (m, horizontal). The proofs so far
+  used the constant 0.12 (next item). Arithmetic (cos 10 deg = 0.98481, sin 10 deg = 0.17365; cos 17 deg =
+  0.95630, sin 17 deg = 0.29237):
+
+  | Nose-up pitch | Current SDF pose, z 0.075 m | Error vs 0.12 | Chosen pose, z 0.14 m | Error vs 0.12 |
+  | --- | --- | --- | --- | --- |
+  | 0 deg | 0.12000 | 0 | 0.12000 | 0 |
+  | 10 deg | 0.11818 - 0.075 x 0.17365 = 0.11818 - 0.01302 = 0.10516 m | 0.015 m | 0.11818 - 0.14 x 0.17365 = 0.11818 - 0.02431 = 0.09387 m | 0.026 m |
+  | 17 deg | 0.11476 - 0.075 x 0.29237 = 0.11476 - 0.02193 = 0.09283 m | 0.027 m | 0.11476 - 0.14 x 0.29237 = 0.11476 - 0.04093 = 0.07383 m | 0.046 m |
+
+  The error is 0.12 minus the offset: the real lidar is nearer to the vehicle origin than the constant
+  assumes. A closest approach measured from the lidar with the constant 0.12 therefore reads smaller than
+  the true lidar-to-wall gap by that amount. This is the error of this term alone; the +-20 cm band the
+  owner set for the bench (criterion a) is a separate criterion, not a budget for this term.
+- The earlier proofs ignored the pitch term: `tools/scenarios/analyze_stop.py` subtracted one
+  `--lidar-offset` constant along the leg whatever the heading and pitch. Issue #152 (merged) projects the
+  offset on the leg and adds the pitch term (`--lidar-offset-z`); those earlier results are also in the
+  EKF frame, not the ground-truth frame (the analyzer now defaults to `--reference truth`).
+- Owner choice for the X500 bench, chat, 2026-11-21 (approval recorded in a separate PR): the sensor at
+  (0.12, 0, 0.14) m from `base_link`, rpy (0, +0.1745, 0) rad. In SDF a positive pitch tips +x toward -z,
+  so the boresight points down (0.1745 rad = 10 deg). The lever arm from `base_link` is
+  sqrt(0.12^2 + 0.14^2) = sqrt(0.0144 + 0.0196) = 0.184 m. For the planar bench model `lidar_2d_v2` at pitch
+  0, the sensor 0.14 above `base_link` is 0.14 - 0.055 = 0.085 m for the link above `base_link`, so the
+  include pose in the model frame is z = 0.24 + 0.085 = 0.325 (check: 0.325 + 0.055 - 0.24 = 0.14).
 
 ## Decision
 ### 1. Band reference: the lidar centre at `t_ref` (option a)
@@ -28,7 +57,9 @@ so the builder and `RaySample` are unchanged.
 
 Option (b), a band around the vehicle reference with a per-ray lever arm, is not chosen: it changes
 `RaySample`, is more complex, and nothing shows it is needed. The lever-arm error under rotation is
-at most 0.33 m x 0.17 rad = 0.06 m at 100 deg/s over a 0.1 s window [estimate].
+at most 0.184 m x 0.307 rad = 0.057 m, at the 176 deg/s hard-stop pitch rate of decision 2 over a 0.1 s
+window (176 deg/s x 0.1 s = 17.6 deg = 0.307 rad) [estimate: the rate is from gains and limits, not from
+logs].
 
 Consequences:
 - This amends D2, which says the band is around the vehicle. The platform file carries band values
@@ -107,14 +138,15 @@ distance"). It belongs to issue #148.
 - The node wiring (#137) waits for this ADR and for two bench values from the owner: the origin-motion
   threshold of OPEN-031, which stays TBD until the owner decides (it must be above the 1.2 m that the
   vehicle travels in the 0.1 s window at 12 m/s, or every frame at speed breaks continuity; that bound
-  does not make it conservative, because of the dz / tan|el| error above), and the mount (proposal
-  x 0.12, y 0, z 0.315 m from the vehicle reference, rpy 0, 10 deg pitch down, bench: read from the
-  SDF, not an approved value).
+  does not make it conservative, because of the dz / tan|el| error above), and the mount, chosen by the owner in chat for the bench on 2026-11-21, with the approval
+  recorded in a separate PR: the sensor at (0.12, 0, 0.14) m from `base_link`, rpy (0, +0.1745, 0) rad (boresight
+  down), lever arm 0.184 m (numbers and frames in Context; for `lidar_2d_v2` at pitch 0 the include pose
+  z is 0.325 in the model frame). The SDF values above are unverified by a static run (issue #153).
 
 ## To measure first
 The odometry rate and latency; the angular rate and acceleration in the step logs; the `kNoSampleAfter`
-rate; the gz cloud layout and no-hit encoding; the analyzer offset used in the proof (the 1-D mode of
-`analyze_stop.py` subtracts `--lidar-offset` along the leg whatever the heading).
+rate; the gz cloud layout and no-hit encoding; the analyzer offset used in the earlier proofs (a constant
+`--lidar-offset` along the leg, before issue #152).
 
 ## Not decided yet
 A per-ray lever arm, the fraction threshold for dropping a whole frame, an extrapolation model, and
