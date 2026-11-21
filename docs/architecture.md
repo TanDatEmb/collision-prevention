@@ -491,6 +491,119 @@ SITL fidelity gaps:
 | Lidar range | The stock Gazebo 2D lidar reaches 30 m, below the 40 m of the map, so no sector can be observed clear; every empty sector stays unknown and its cap is 0 | A bench copy of the lidar model with a 50 m range, kept outside the repository, for the stopping proof only | G4 decision on the simulated sensor (OPEN-029) |
 | X500 vs M350 kinematics | Mass, inertia, thrust and motor response differ, so `t_lag` and braking differ | Measure X500 values for X500 only; never reuse for M350 | G6 on the target class (OPEN-002/003) |
 
+### Verification matrix (SE proposal for owner approval, issue #132)
+
+No record below has been run by this change and no value below is approved: a value marked [Pn] is a proposal for the owner (table at the end of this subsection); a value marked TBD stays open with its OPEN item; criteria a to d above are used exactly as written. A record whose OS row is Partial, Not specified or Out of ODD (section 1) is exploratory (SYS-CP-025): it is run and reported, never counted as evidence until the owner approves its criterion (OPEN-043).
+
+**Frame and direction.** Body FRD: x forward (the nose), y right, z down. The bearing of a direction is measured clockwise from the nose seen from above. Sector `k` of `ObstacleDistance` is centred on bearing `5k` degrees (SYS-CP-002, ICD-CP-03 `angle_offset=0`; the bridge maps FLU index `i` to `(72 - i) % 72`, the builder rounds to the nearest centre, so sector 0 spans -2.5 to +2.5 degrees). The program is tuned for body +x, so D1 is the priority direction; every direction is its own record, a verdict is never shared between directions.
+
+| Dir | Direction relative to the nose | Bearing | Sector | Class (ADR 0020 D3) |
+| --- | --- | --- | --- | --- |
+| D1 | +x, forward (priority) | 0 | 0 | Forward |
+| D2 | -x, rear | 180 | 36 | Rear |
+| D3 | +y, lateral right | 90 | 18 | Lateral |
+| D4 | -y, lateral left | 270 | 54 | Lateral |
+| D5, D6 | +x+y, +x-y, forward diagonals | 45, 315 | 9, 63 | On the 45 degree class boundary: class TBD [P1] |
+| D7, D8 | -x+y, -x-y, rear diagonals | 135, 225 | 27, 45 | On the 135 degree class boundary: class TBD [P1] |
+
+Heading rule: for D1 the nose is set along the leg (mission waypoint heading equal to the leg course) and held. For D2 to D8 the nose is held fixed at the leg course minus the bearing (mission waypoint heading, no yaw during the leg), so the leg is flown at the stated bearing. The heading is logged during every run, and the bearing of the velocity to the nose at approach start is computed from the log; a bearing more than [P2] away from the record's bearing makes the record INVALID. Class: N normal, E edge, S stress.
+
+**Record** (one run, one record, id `<case>-D<k>` plus a variant letter in the order of the setup list): identifier; direction (D1 to D8, bearing and sector); speed; obstacle class and geometry (size, range, yaw, height, reflectivity); setup (lane, mode, world, lidar model, repository and fork commits, and every parameter set explicitly and read back before the leg: `CPB_EN`, `CPB_T_LAT`, `CPB_CSTR_AGE`, `CPB_MARGIN`, `CPB_MAX_V`, `CPB_A_BRK`, `CPB_JERK`, `MPC_XY_VEL_MAX`, `SIM_GZ_EN_LIDAR`, `CP_DIST`, because PX4 saves parameters between SITL starts); expected result; metrics; evidence location (ULog, converted data and analyzer output outside Git, with a manifest and hashes: ICD-CP-05); verdict. PASS: the expected result of the case holds on valid evidence; "a to c" in the case table means criteria a to c as written above (and d for sensor loss), "M9 zero" and the like are the stated expectation, and a case with no approved criterion is exploratory. FAIL: it does not hold. A UT record has no stopping verdict (the UT lane claims numerical correctness, not aircraft dynamics): its expected result is a UT assertion on the module output for a synthetic input at the record's bearing (sector index, sector distance, cap, state, zero output on an empty feasible set), and criteria a to d and the metrics M1 to M9 apply only to GZ, HIL and FLT records. INVALID: the evidence cannot support either answer; it is never a pass. A record not run is NOT RUN, not a verdict.
+
+| Metric | Definition | Harness today (`tools/scenarios`) |
+| --- | --- | --- |
+| M1 closest approach, 1-D | Distance along the leg from the lidar to a wall face perpendicular to it | `analyze_stop.py` (`--dir-ned`, `--wall-dist`) |
+| M2 closest approach, 2-D | Smallest horizontal distance from the lidar to the obstacle outline known from the world file; needed for a pole or an oblique wall, where M1 is wrong | Not implemented |
+| M3 rest distance | M1 and M2 where the vehicle is at rest | M1 only |
+| M4 reversals | Sign changes of the approach velocity after the approach started | Yes (criterion c) |
+| M5 cap tracking | Largest excess of the speed toward the limiting sector over its cap in `cp_brake_constraints` while limiting (m/s) | Not implemented |
+| M6 peak deceleration | Largest deceleration after the peak speed | Yes |
+| M7 state timeline | `cp_brake` states with times | Yes |
+| M8 attitude and heading | Heading, bearing to the nose, peak pitch and roll during braking | Not implemented |
+| M9 false brakes | Reductions of at least 0.5 m/s lasting at least 0.2 s with no obstacle (the REL-01 definition) | Not implemented |
+
+Criterion a is read with M2 for an obstacle that is not a perpendicular wall, and criterion c per approach when a case has more than one [P4]. A numeric limit on M5 is TBD (OPEN-043). Pitfalls: the first stopping proof flew with the nose at 90 degrees to the leg (D3 or D4, not D1); every stopping result so far (PR #124 and the probe runs) was obtained without the attitude and horizon compensation of the rays (#57); M1 is wrong for poles and oblique walls; PX4 keeps parameters between SITL starts, so an unset value is a stale one; a leg whose mission never started is INVALID.
+
+**Suites** (each contains the one before): smoke S, regression R, full F. Smoke: every PR that changes the chain from ray source to hook (`livox_ray_source`, `obstacle_sector_map`, `px4_obstacle_bridge`, `obstacle_sector_node`, `cp_brake`, the hook, `config/platforms`, a fork pointer move): all UT records plus the GZ records marked S. Regression: every finished phase or strong change (a merged ADR 0020 work item D1 to D7, a change of the cap law, a parameter value, the sensor model, the world or the PX4 base, the fix of a FAIL): smoke, then every record of the lanes the change touches, with a floor of UT and GZ for a chain change. Full: before each of G3, G4 and G5, every record of every lane available at that gate; a lane without infrastructure gives NOT RUN and the gate is not passed. A suite passes only when every record in it is PASS; an INVALID record is repeated; a FAIL stops the suite.
+
+Suite column: the smallest suite holding the GZ and RPL records of the row; UT records are always in S; HIL and FLT records are in F; n is the number of records (directions times variants).
+
+| ID | Cls | Case (variants a, b, c in order) and expected result | Lane: directions | n | Trace: OS; SYS-CP; FEAT | Suite |
+| --- | --- | --- | --- | --- | --- | --- |
+| VM-01 | N | Perpendicular tall wall at 5 m/s in D1 and 3 m/s in D2 to D8 [P3]: a Mission, b Position (stick profile). Expected a to c. Known probe (issue #132): a lateral leg 1.79 m against 2.0 m | GZ 1-8 | 2 | OS-01, 12; SYS-CP-001, 005, 012; FEAT-08, 12, 15 | S (D1 a), R |
+| VM-02 | N | Control: the same legs with `CPB_EN` 0. Expected: the vehicle reaches the wall, so the leg would collide | GZ 1-8 | 1 | OS-01; SYS-CP-001, 006; FEAT-15 | R |
+| VM-03 | N | D1 speed sweep, Mission: a 1, b 3, c 8, d 10, e 12 m/s (PERF-01). Expected a to c at every speed | GZ 1 | 5 | OS-01; SYS-CP-001, 027; FEAT-12 | R |
+| VM-04 | N | D2 to D8: a 1 m/s, b the direction-class maximum (TBD, ADR 0020 D3). Blocked until D3 exists | GZ 2-8 | 2 | OS-34; SYS-CP-018, 027; FEAT-12 | R |
+| VM-05 | S | Pilot holds full stick toward the wall in Position mode, `MPC_XY_VEL_MAX` at its largest allowed value. Expected a to c, M5 reported | GZ 1-8 | 1 | OS-32; SYS-CP-001, 005; FEAT-12, 15 | R |
+| VM-06 | E | Oblique wall yawed a 30, b 60 degrees to the leg [P7]; M2 required. Expected a to c on M2 (GZ); UT: each sector holds the nearest return of the wall | GZ 1-4; UT 1-8 | 2 | OS-02; SYS-CP-010, 012; FEAT-08, 12 | R |
+| VM-07 | E | a Inside corner, b outside corner. Expected: an empty feasible set gives zero horizontal output | GZ 1-4; UT 1-8 | 2 | OS-02; SYS-CP-012; FEAT-08, 12 | R |
+| VM-08 | E | Two obstacles: lateral one closer, one ahead farther. Expected: each sector limits only motion entering it | GZ 1-4; UT 1-8 | 1 | OS-02; SYS-CP-012; FEAT-08, 12 | R |
+| VM-09 | E | Thin pole on the leg, width a 0.15 (below DET-01, exploratory), b 0.30, c 0.50 m. Expected a to c on M2 for b and c (GZ, FLT); UT: the pole's sector holds its nearest return | GZ 1-4; UT 1-8; FLT 1 | 3 | OS-03; SYS-CP-021, DET-01; FEAT-07, 08 | R |
+| VM-10 | E | Pole near the path, lateral offset a 0.5, b 1.5 m [P7]. Expected: stops, M2 at least `CPB_MARGIN` | GZ 1-4 | 2 | OS-03, 02; SYS-CP-012; FEAT-08, 12 | R |
+| VM-11 | E | Partial sector: a obstacle edge on a sector boundary (leg 2.5 degrees off the sector centre), b obstacle covering half a sector. Expected: the nearest return caps the whole sector | GZ 1; UT 1-8 | 2 | OS-04; SYS-CP-011; FEAT-08 | R |
+| VM-12 | E, S | Obstacle appears from behind a screen: a outside the stopping envelope (E, a to c), b inside it (S, exploratory: no stop claim, closest approach recorded) | GZ 1-4 | 2 | OS-05; SYS-CP-013; FEAT-12, 13 | R |
+| VM-13 | E | a Return closer than 0.10 m (cap 0), b blind zone, no usable return (covered by the margin, SAFE-01) | UT 1-8 | 2 | OS-06; SYS-CP-011; FEAT-08 | S |
+| VM-14 | E | Short wall, top below the lidar plane, low altitude (heights TBD: OPEN-036, 038), vehicle pitching while braking. Known probe: 1.02 m against 2.0 m, so FAIL expected until leveling (#57) | GZ 1-4 | 1 | OS-12, 17; SYS-CP-017, 018, 020; FEAT-05, 06 | R |
+| VM-15 | E | Nose-down acceleration at low height over level ground (roll for lateral legs). Expected: the ground does not lower the cap, M9 zero | GZ 1-8 | 1 | OS-11, 13; SYS-CP-017, 019; FEAT-05, 06 | R |
+| VM-16 | E | Overhead structure: a above the vertical envelope (ignored), b inside it (stops), c low fence below the path (TBD, OPEN-036) | GZ 1-4; UT 1-8 | 3 | OS-17; SYS-CP-020; FEAT-06 | R |
+| VM-17 | E | Cruise at the minimum height (TBD, OPEN-038): a level ground, b rising slope (angle TBD, OPEN-040). Exploratory | GZ 1-4 | 2 | OS-15, 16; SYS-CP-019; FEAT-06 | R |
+| VM-18 | N | Open sky: cruise above the obstacles, nothing in view. Expected: not stopped, M9 zero | GZ 1-8 | 1 | OS-33; SYS-CP-011, 020; FEAT-06, 07 | R |
+| VM-19 | E | Steady wind 5 m/s (ENV-01), gust profile TBD: a head, b tail, c cross to the leg. Expected a to c | GZ 1-4 | 3 | OS-14; ENV-01, SYS-CP-018, 027; FEAT-12 | R |
+| VM-20 | S | Wind above the ODD, 8 m/s [P7]. Exploratory, outside ENV-01 | GZ 1 | 1 | OS-14; ENV-01; FEAT-12 | F |
+| VM-21 | E | Sensor input lost in flight: a at cruise, b while limiting. Expected: criterion d, SAFE_STOP, zero horizontal velocity | GZ 1-8; HIL 1 | 2 | OS-23; SYS-CP-007, PERF-04; FEAT-10, 14 | S (D1 a), R |
+| VM-22 | S | Map age and latency, delay injected on the stream: a 0.10, b 0.35 (PERF-03), c 0.49, d 0.60 s [P5]; HIL measures the real age. Expected: a to c up to the 0.5 s gate (PERF-04), SAFE_STOP beyond it | GZ 1-4; UT 1-8; HIL 1 | 4 | OS-23; SYS-CP-016, 026, PERF-03; FEAT-02, 10, 11 | R |
+| VM-23 | E | Lost packets: a one discontinuous frame, b a burst. Expected: no clear sector, credible obstacles stay occupied | GZ 1; UT 1-8 | 2 | OS-22; SYS-CP-004, 011; FEAT-07, 08 | R |
+| VM-24 | E | Time sync lost: a lost, b clock jump. Expected: map rejected, sectors unknown, safe stop | HIL 1 | 2 | OS-24; SYS-CP-016; FEAT-02 | F |
+| VM-25 | S | Noise returns inside the envelope (rain, dust, insects): a isolated returns, b a burst, rates TBD (OPEN-041). Exploratory, M9 reported | GZ 1-4; UT 1-8 | 2 | OS-19; SYS-CP-021; FEAT-07 | R |
+| VM-26 | S | Tree-like sparse returns (foliage), classes TBD (OPEN-040). Exploratory | UT 1-8; RPL 1; FLT 1 | 1 | OS-09; SYS-CP-011; FEAT-07 | R |
+| VM-27 | E | Self-returns from propeller, leg, mount: masked, neither obstacle nor clear | UT 1-8; RPL 1 | 1 | OS-21; SYS-CP-015; FEAT-03 | R |
+| VM-28 | E | Low reflectivity or glass in captured data: no-return not clear without ADR 0004 evidence. Exploratory | RPL 1; FLT 1 | 1 | OS-07; DET-01, SYS-CP-011; FEAT-07 | F |
+| VM-29 | S | Range extremes: a first return at 36.5 m at 12 m/s, b at 40 m, c 10% reflectivity target at 40 m | GZ 1; RPL 1; FLT 1 | 3 | OS-01, 03; DET-01, PERF-01; FEAT-08, 12 | F |
+| VM-30 | E | Start-up while moving: PX4 state becomes valid in flight at speed (#112). Exploratory | GZ 1-4 | 1 | OS-28; SYS-CP-024; FEAT-14 | R |
+| VM-31 | E | Mode change while moving toward the wall: a Hold, b Offboard, c Land. Expected (ADR 0020 D6 A): hook transparent, release logged; the later path is a stated non-claim, closest approach recorded | GZ 1-4 | 3 | OS-25; SYS-CP-023; FEAT-16 | R |
+| VM-32 | E | Estimator or heading invalid in flight. Expected: `UNQUALIFIED`, no CP action | GZ 1 | 1 | OS-29; SYS-CP-007; FEAT-14 | R |
+| VM-33 | E | a Takeoff before `TAKEOFF_STATE_FLIGHT` (hook unchanged), b landing with an explicit logged disable | GZ 1 | 2 | OS-26; SYS-CP-014; FEAT-14 | R |
+| VM-34 | E | Persistent blockage: Mission waypoint beyond the wall, hold duration TBD (no timeout defined). Expected: stays BRAKING, no mode change | GZ 1-4 | 1 | OS-30; SYS-CP-008; FEAT-14, 17 | R |
+| VM-35 | E | Another PX4 failsafe at the same time (RC loss, battery, geofence). Exploratory | GZ 1 | 1 | OS-31; SYS-CP-008; FEAT-14 | F |
+| VM-36 | E | SAFE_STOP and recovery after VM-21: a input returns, no acknowledgement (stays latched), b acknowledged and revalidated (flight resumes under the caps) | GZ 1-4 | 2 | OS-23, 29; SYS-CP-007; FEAT-14 | R |
+| VM-37 | N | Moving away: wall at the opposite bearing (a) and abeam (b). Expected: no reduction from that sector, M9 zero | GZ 1-8 | 2 | OS-02; SYS-CP-012; FEAT-12 | R |
+| VM-38 | E | Hover next to the obstacle at `CPB_MARGIN` + 0.5 m [P7], then a motion along it, b motion toward it. Expected: a free, b held, M2 at least `CPB_MARGIN` | GZ 1-4 | 2 | OS-02, 32; SYS-CP-001, 012; FEAT-12, 15 | R |
+| VM-39 | S | Reversal near the wall: retreat commanded during braking, then toward again. Expected: retreat not limited (ADR 0008), second approach also stops, M4 per approach | GZ 1-4; UT 1-8 | 1 | OS-02, 30; SYS-CP-012, 013; FEAT-12, 13 | R |
+| VM-40 | E | Flight: level wall in Mission and Position, speeds from the G6 test card (TBD, OPEN-002, 003) | FLT 1-4 | 1 | OS-01; SYS-CP-027; FEAT-12 | F |
+| VM-41 | E | Rain at the ODD limit, dirty or blocked window. Exploratory | FLT 1 | 1 | OS-20; SYS-CP-004, 011; FEAT-07 | F |
+
+**Coupled motion** (owner, 2026-11-21: real motion is multi-axis). Every record logs heading (H), vertical speed (Vz), yaw rate (W), pitch and roll (A) and thrust saturation (T, a motor command at its limit), with M8; the direction is the bearing of the horizontal velocity to the nose at approach start, and the heading rule above holds except where the case yaws. Vertical motion carries no vertical collision claim (SYS-CP-010): only the horizontal caps are judged. "a to c" is as above; every number is a proposal.
+
+| ID | Cls | Case (variants a, b, c in order) and expected result | Lane: directions | n | Log | Metric | Trace: OS; SYS-CP; FEAT | Suite |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| VM-42 | E | Horizontal approach with a simultaneous climb or descent: a climb 1, b climb 3, c descent 1, d descent 3 m/s [P8]. Expected a to c, exploratory (OS-18 is Out of ODD) | GZ 1-8 | 4 | H, Vz, A, T | M2, M4, M5 | OS-18, 01; SYS-CP-010, 001, 012; FEAT-12, 15 | R |
+| VM-43 | E, S | Approach with a yaw rotation held through the leg: a 5 (E), b 30 (S) deg/s [P9]; the bearing to the nose changes, so the direction is the bearing at approach start. Expected a to c | GZ 1-4 | 2 | H, W, A, T | M2, M4, M5 | OS-01, 13; SYS-CP-016, 026, 001; FEAT-11, 12 | R |
+| VM-44 | S | Yaw rotation started when the cap first limits, held while braking: a 5, b 30 deg/s [P9, P11]. Expected a to c; caps use the heading at the sample time | GZ 1-4 | 2 | H, W, A, T | M2, M4, M5 | OS-13, 01; SYS-CP-016, 001; FEAT-11, 12 | R |
+| VM-45 | E | Oblique wall yawed to the leg by a +30, b -30 degrees [P7] (the yaw is set relative to the leg, so the diagonal bearing of D5 to D8 and the heading rule hold), flown with the nose 45 or 135 degrees off the leg. Expected a to c on M2 | GZ 5-8 | 2 | H, A | M2, M4, M5 | OS-02; SYS-CP-010, 012; FEAT-08, 12 | R |
+| VM-46 | E | Climb or descent that moves the lidar plane relative to a short obstacle (heights TBD, OPEN-036, 038): a descent into the obstacle's height, b climb above its top, at 1 m/s [P8]. Expected: stops while the obstacle is in the vertical envelope, ignored outside. Exploratory | GZ 1-4 | 2 | H, Vz, A | M2, M4 | OS-17, 18; SYS-CP-020, 017; FEAT-06, 05 | R |
+| VM-47 | E | Hover next to the obstacle with a yaw command, one full turn: a 5, b 30 deg/s [P9, P11], hover at margin + 0.5 m [P7]. Expected: no creep toward the obstacle, M2 at least `CPB_MARGIN`, M9 reported | GZ 1-4 | 2 | H, W, A, T | M2, M9 | OS-02, 13; SYS-CP-012, 001; FEAT-11, 12 | R |
+| VM-48 | S | All four axes moving: a diagonal leg at 3 m/s [P3] with climb 1 m/s and yaw 5 deg/s, b the same leg with climb 3 m/s and yaw 30 deg/s [P8, P9, P10]. Expected a to c on M2 | GZ 5-8; FLT 5 | 2 | H, Vz, W, A, T | M2, M4, M5 | OS-01, 13, 18; SYS-CP-001, 010, 012; FEAT-11, 12, 15 | R |
+| VM-49 | E | Attitude and horizon compensation of the rays (ADR 0020 D1, FEAT-05, #57): a 10 degree pitched-down mount, vehicle level, b vehicle pitched and rolled (angles TBD, OPEN-039). UT assertion: the sector distances equal those of a level vehicle with no mount pitch; GZ: M2 as VM-14. Cases that need it: VM-14, 15, 16, 17, 18, 19, 46, 48 | UT 1-8; GZ 1-4 | 2 | H, A | M2 | OS-11, 12, 13; SYS-CP-017, 018; FEAT-05 | R |
+
+The records of VM-14, 15, 16, 17, 18, 19, 46, 48 and VM-49 (GZ) depend on #57 and are NOT claimable until it is built: they are run and reported as BLOCKED (#57); a BLOCKED record is outside the pass of smoke and regression and stops the full suite at G4 and G5 [P12].
+
+Coverage: every OS row with a UT, GZ, RPL, HIL or FLT lane is in a record; none for OS-08, 10, 18 (Out of ODD) and OS-27 (procedure not defined, OPEN-020). Not claimed: any run of the matrix. Today `analyze_stop.py` is 1-D against a perpendicular wall and `run_approach.py` flies one Mission leg east, so M2, M5, M8, M9, the bearing check, the Position-mode stick, wind and injection are harness work in separate issues (#133 for the first part).
+
+| Proposal for the owner | Value |
+| --- | --- |
+| P1 | Class of D5 to D8: the lower-speed class of the two neighbours, until measured |
+| P2 | Bearing tolerance of a leg: 2.5 degrees (half a sector) |
+| P3 | Reference speeds 5 m/s (D1) and 3 m/s (D2 to D8) until the class maxima exist |
+| P4 | Criterion a on M2 for non-wall obstacles; criterion c per approach |
+| P5 | Delays 0.10, 0.49 and 0.60 s (0.35 and 0.5 s are PERF-03 and 04) |
+| P6 | Full suite also before G6, with the FLT records |
+| P7 | Geometry and values marked [P7]: wall yaw 30 and 60 degrees, pole offsets 0.5 and 1.5 m, wind 8 m/s, hover at margin + 0.5 m |
+| P8 | Climb and descent rates 1 and 3 m/s |
+| P9 | Held yaw rates 5 deg/s (slow) and 30 deg/s (fast) |
+| P10 | The two combined sets of VM-48 (3 m/s with 1 m/s climb and 5 deg/s; 3 m/s with 3 m/s climb and 30 deg/s) |
+| P11 | The yaw command of VM-44 starts when the cap first limits; VM-47 turns one full turn |
+| P12 | A record that depends on #57 is BLOCKED: outside smoke and regression, stops the full suite at G4 and G5 |
+
 ## 8. Open items
 
 | ID | Open question | Owner | Due | Blocks |
@@ -526,7 +639,7 @@ SITL fidelity gaps:
 | OPEN-040 | Terrain and vegetation classes counted as obstacles: slope angle, foliage, hedges, water, glass | SE + Perception | TBD | G4 |
 | OPEN-041 | Treatment of isolated returns: support needed (rays, time), measured false-brake and miss rates, latency cost | Perception + SE + Test | TBD | G4 |
 | OPEN-042 | Start-up rule when the PX4 state becomes valid in flight (#112); release behaviour on a mode change (#113) decided by the owner on 2026-11-20 as ADR 0020 D6 option A: CP does not intervene outside Position and Mission, Hold is not a moving mode and a drift in Hold is a control or localization fault, so the release is the stated non-claim | SE + PX4 + Operations | TBD | G4 |
-| OPEN-043 | Owner approval of a pass criterion for each operational scenario used as evidence | Project Owner + SE | TBD | G4 |
+| OPEN-043 | Owner approval of a pass criterion for each operational scenario used as evidence, and of the proposals P1 to P12 of the verification matrix (section 7, #132) | Project Owner + SE | TBD | G4 |
 
 OPEN-022 and 023 block any operational clear-sector claim. OPEN-002 to OPEN-008 block the
 12 m/s claim. Neither blocks the implementation and SITL work that produces the evidence.
