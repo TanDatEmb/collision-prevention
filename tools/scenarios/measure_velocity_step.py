@@ -160,6 +160,10 @@ def analyze(a):
             t_next = next((ts[m] for m in range(i + 1, len(ts)) if not abs(sp["vy"][m]) < SETTLE_BAND), float("inf"))
             wend = min(t_next, t0 + MAX_RESPONSE_S, tp[-1])
             idx = [k for k in range(j + 1, len(tp)) if t0 <= tp[k] <= wend]
+            # the command stream must cover the whole response: a setpoint log that ends early does not show
+            # that the zero command (and velocity control) held while the vehicle stopped
+            sp_times = [ts[m] for m in range(i, len(ts)) if ts[m] <= wend]
+            setpoint_gap = max([y - x for x, y in zip(sp_times, sp_times[1:])] + [wend - sp_times[-1]])
             ys = [sign * ps["vy"][k] for k in idx]
             worst_gap = max([tp[k] - tp[k - 1] for k in idx], default=0.0)  # the pair that spans the step counts
             # settled: the onset is a sample inside SETTLE_BAND, the speed stays below SETTLE_STAY from there to
@@ -181,6 +185,7 @@ def analyze(a):
             steps.append({"t_s": round(t0, 2), "speed_before_m_s": round(abs(v0), 2),
                           "equivalent_lag_s": round(area / abs(v0), 3), "_lag_raw": area / abs(v0),
                           "max_sample_gap_s": round(worst_gap, 3), "position_covered_before_step": covered,
+                          "max_setpoint_gap_s": round(setpoint_gap, 3),
                           "t63_s": None if t63 is None else round(t63, 3),
                           "settle_s": None if settled is None else round(settled, 3)})
     wanted = [round(v, 1) for v in a.speeds]
@@ -190,11 +195,11 @@ def analyze(a):
     # it would understate the lag, so it is no evidence and the measurement is rejected
     def complete(s):
         return (s["settle_s"] is not None and s["max_sample_gap_s"] <= a.max_gap_s
-                and s["position_covered_before_step"])
+                and s["position_covered_before_step"] and s["max_setpoint_gap_s"] <= a.max_gap_s)
     incomplete = [s for s in kept if not complete(s)]
     missing = [w for w in wanted if not any(abs(s["speed_before_m_s"] - w) < 0.5 and complete(s) for s in kept)]
     if incomplete or missing:
-        out["error"] = ("INVALID: %d step(s) did not settle (sustained, before the next command), lack position samples before the step, or have a sampling gap above %.2f s, no complete step "
+        out["error"] = ("INVALID: %d step(s) did not settle (sustained, before the next command), lack position samples before the step, lack setpoint coverage, or have a sampling gap above %.2f s, no complete step "
                         "for speeds %s" % (len(incomplete), a.max_gap_s, missing))
         for s in kept:
             s.pop("_lag_raw")
