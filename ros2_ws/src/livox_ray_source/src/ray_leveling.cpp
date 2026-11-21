@@ -179,12 +179,20 @@ LevelingStatus RayLeveler::level(obstacle_sector_map::RaySample & ray) const
   // 6. Output frame FLU: negate right and down.
   const Vec3 p_flu{p_heading_frd[0], -p_heading_frd[1], -p_heading_frd[2]};
 
+  if (is_return) {
+    const float range_m = static_cast<float>(
+      std::sqrt(p_flu[0] * p_flu[0] + p_flu[1] * p_flu[1] + p_flu[2] * p_flu[2]));
+    // The origin motion can move the end point onto the reference origin. A range that is not
+    // strictly positive has no direction and the sector map rejects it, so the evidence would be
+    // lost silently: drop the ray as an origin-motion drop, which breaks frame continuity. A tiny
+    // positive range stays a valid return (the map reports it as too close).
+    if (!(std::isfinite(range_m) && range_m > 0.0F)) {
+      return LevelingStatus::kOriginMotionExceeded;
+    }
+    ray.range_m = range_m;
+  }
   ray.azimuth_rad = static_cast<float>(std::atan2(p_flu[1], p_flu[0]));
   ray.elevation_rad = static_cast<float>(std::atan2(p_flu[2], std::hypot(p_flu[0], p_flu[1])));
-  if (is_return) {
-    ray.range_m = static_cast<float>(
-      std::sqrt(p_flu[0] * p_flu[0] + p_flu[1] * p_flu[1] + p_flu[2] * p_flu[2]));
-  }
   return LevelingStatus::kOk;
 }
 

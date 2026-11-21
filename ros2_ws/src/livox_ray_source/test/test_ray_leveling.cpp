@@ -509,6 +509,41 @@ TEST(RayLevelerTest, OriginMotionAboveTheThresholdDropsTheRay)
   EXPECT_EQ(limit_leveler.level(l), LevelingStatus::kOk);
 }
 
+TEST(RayLevelerTest, ReturnWhoseEndPointFallsOnTheReferenceOriginIsDroppedNotKept)
+{
+  // The vehicle is 0.25 m behind its reference position at the ray time and the return is 0.25 m
+  // ahead: seen from the reference origin the range is 0. The sector map rejects such a ray, so
+  // the transform must not report it as usable (it would be lost without breaking continuity and
+  // another ray could then certify the sector clear). It is reported as a dropped ray.
+  const TwoPoseHistory poses{poseOf(0, 0, 0), poseOf(0, 0, 0, {-0.25, 0.0, 0.0})};
+  RayLeveler leveler{poses, configOf(kZeroMount)};
+  ASSERT_EQ(leveler.beginFrame(kRefNs), LevelingStatus::kOk);
+  RaySample ray = sensorReturn(0.25, 0.0, 0.0);
+  const RaySample before = ray;
+  EXPECT_EQ(leveler.level(ray), LevelingStatus::kOriginMotionExceeded);
+  EXPECT_TRUE(breaksFrameContinuity(LevelingStatus::kOriginMotionExceeded));
+  EXPECT_EQ(ray.range_m, before.range_m);
+  EXPECT_EQ(ray.azimuth_rad, before.azimuth_rad);
+  EXPECT_EQ(ray.elevation_rad, before.elevation_rad);
+}
+
+TEST(RayLevelerTest, ReturnTooCloseToTheReferenceOriginStaysAValidReturn)
+{
+  // A tiny positive range, also below the minimum distance of the sector map, is a valid return
+  // (the map reports it as too close); only a range of 0 is dropped.
+  for (const double remaining_m : {1.0e-4, 0.05, 0.5 * obstacle_sector_map::kMinDistanceM}) {
+    const TwoPoseHistory poses{poseOf(0, 0, 0), poseOf(0, 0, 0, {-0.25, 0.0, 0.0})};
+    RayLeveler leveler{poses, configOf(kZeroMount)};
+    ASSERT_EQ(leveler.beginFrame(kRefNs), LevelingStatus::kOk);
+    RaySample ray = sensorReturn(0.25 + remaining_m, 0.0, 0.0);
+    ASSERT_EQ(leveler.level(ray), LevelingStatus::kOk) << remaining_m;
+    EXPECT_NEAR(ray.range_m, static_cast<float>(remaining_m), 1.0e-6F);
+    EXPECT_GT(ray.range_m, 0.0F);
+    EXPECT_LT(ray.range_m, obstacle_sector_map::kMinDistanceM);
+    EXPECT_EQ(ray.return_kind, RayReturnKind::kReturn);
+  }
+}
+
 TEST(RayLevelerTest, NoReturnKeepsItsDirectionAndHasNoRangeButStillObeysTheOriginFilter)
 {
   const TwoPoseHistory poses{poseOf(0, 0, 0), poseOf(0, 0, kPi / 2.0, {0.2, 0.0, 0.0})};
