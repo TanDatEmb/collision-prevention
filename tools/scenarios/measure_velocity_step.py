@@ -176,10 +176,20 @@ def analyze(a):
             if onset is not None and tp[idx[-1]] - tp[idx[onset]] >= SETTLE_HOLD_S:
                 settled = tp[idx[onset]] - t0
             end = onset if settled is not None else len(idx) - 1
+            # trapezoid rule, starting from the speed interpolated at the command time: giving a sample's speed to
+            # the whole interval before it would understate the distance of a decreasing speed
             area, t63 = 0.0, None
+            k0 = idx[0] if idx else None
+            if k0 is not None and k0 > 0 and tp[k0] > tp[k0 - 1]:
+                f = (t0 - tp[k0 - 1]) / (tp[k0] - tp[k0 - 1])
+                prev_y = sign * (ps["vy"][k0 - 1] + f * (ps["vy"][k0] - ps["vy"][k0 - 1]))
+            else:
+                prev_y = sign * v0
+            prev_t = t0
             for n in range(0, end + 1):
                 k = idx[n]
-                area += max(0.0, ys[n]) * (tp[k] - max(tp[k - 1], t0))
+                area += 0.5 * (max(0.0, prev_y) + max(0.0, ys[n])) * (tp[k] - prev_t)
+                prev_t, prev_y = tp[k], ys[n]
                 if t63 is None and ys[n] <= 0.368 * abs(v0):
                     t63 = tp[k] - t0
             steps.append({"t_s": round(t0, 2), "speed_before_m_s": round(abs(v0), 2),

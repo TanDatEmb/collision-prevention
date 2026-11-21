@@ -223,7 +223,8 @@ def ramp_case(name, ramp_s, expect_t_lat, expect_code=0, gap=False):
     return ok
 
 
-results.append(ramp_case("lag 0.6004 s rounds up to 0.65, not 0.6", 1.2202, 0.65))
+results.append(ramp_case("lag 0.6004 s rounds up to 0.65, not 0.6", 1.2008, 0.65))
+results.append(ramp_case("linear ramp, lag 0.505 s: trapezoid, not right-endpoint", 1.01, 0.55))
 results.append(ramp_case("position samples missing during the response", 1.2, None, expect_code=2, gap=True))
 
 results.append(run("reordered constraint timestamps hide SAFE_STOP", series(stop_ys(stop_at=17.0)), "INVALID",
