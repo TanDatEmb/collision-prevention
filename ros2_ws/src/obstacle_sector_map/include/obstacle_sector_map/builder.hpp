@@ -3,6 +3,7 @@
 #include <array>
 #include <cstdint>
 #include <limits>
+#include <vector>
 
 #include "obstacle_sector_map/types.hpp"
 
@@ -24,11 +25,14 @@ private:
     uint32_t contributing_ray_count{0U};
     uint32_t clear_ray_count{0U};
     bool too_close{false};
-    float minimum_obstacle_distance_m{std::numeric_limits<float>::infinity()};
+    std::vector<float> obstacle_ranges_m;  // horizontal range of each in-band return within the range
+    std::vector<float> free_up_m;          // free distance certified by each ray, upper half of the band
+    std::vector<float> free_down_m;        // and lower half; a horizon ray counts in both
   };
 
   void rejectRay();
-  void updateSector(std::size_t sector_index, const RaySample & ray);
+  void addObstacleReturn(std::size_t sector_index, float horizontal_range_m);
+  void addFreeEvidence(std::size_t sector_index, const RaySample & ray);
 
   SectorMapConfig _config;
   bool _packet_continuity_valid{false};

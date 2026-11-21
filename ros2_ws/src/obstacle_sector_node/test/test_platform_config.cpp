@@ -38,45 +38,51 @@ TEST(PlatformConfigTest, LoadsTheSectorMapValues)
 {
   const auto config = loadSectorMapConfig(writeYaml(
     "valid",
-    "sensor:\n  collision_elevation_min_rad: -0.2\n  collision_elevation_max_rad: 0.4\n"
-    "sector_map:\n  coverage_min_rays_per_sector: 2\n"));
+    "sector_map:\n  height_up_m: 1.0\n  height_down_m: 0.8\n  obstacle_window_m: 0.5\n"
+    "  obstacle_min_returns: 3\n  free_min_rays: 2\n"));
 
-  EXPECT_FLOAT_EQ(config.min_elevation_rad, -0.2F);
-  EXPECT_FLOAT_EQ(config.max_elevation_rad, 0.4F);
-  EXPECT_EQ(config.coverage_min_rays_per_sector, 2U);
+  EXPECT_FLOAT_EQ(config.height_up_m, 1.0F);
+  EXPECT_FLOAT_EQ(config.height_down_m, 0.8F);
+  EXPECT_FLOAT_EQ(config.obstacle_window_m, 0.5F);
+  EXPECT_EQ(config.obstacle_min_returns, 3U);
+  EXPECT_EQ(config.free_min_rays, 2U);
 }
 
 TEST(PlatformConfigTest, RejectsNullMissingAndNonNumericValues)
 {
   EXPECT_TRUE(rejects(writeYaml(
     "null",
-    "sensor:\n  collision_elevation_min_rad: null\n  collision_elevation_max_rad: null\n"
-    "sector_map:\n  coverage_min_rays_per_sector: null\n")));
+    "sector_map:\n  height_up_m: null\n  height_down_m: null\n  obstacle_window_m: null\n"
+    "  obstacle_min_returns: null\n  free_min_rays: null\n")));
   EXPECT_TRUE(rejects(writeYaml(
-    "missing",
-    "sensor:\n  collision_elevation_min_rad: -0.2\n  collision_elevation_max_rad: 0.4\n")));
+    "missing", "sector_map:\n  height_up_m: 1.0\n  height_down_m: 1.0\n  obstacle_window_m: 0.5\n")));
   EXPECT_TRUE(rejects(writeYaml(
     "text",
-    "sensor:\n  collision_elevation_min_rad: low\n  collision_elevation_max_rad: 0.4\n"
-    "sector_map:\n  coverage_min_rays_per_sector: 2\n")));
+    "sector_map:\n  height_up_m: high\n  height_down_m: 1.0\n  obstacle_window_m: 0.5\n"
+    "  obstacle_min_returns: 2\n  free_min_rays: 2\n")));
   EXPECT_TRUE(rejects("/nonexistent/platform.yaml"));
 }
 
-TEST(PlatformConfigTest, RejectsABadCoverageCountOrBand)
+TEST(PlatformConfigTest, RejectsABadCountOrBand)
 {
-  const std::string good_band =
-    "sensor:\n  collision_elevation_min_rad: -0.2\n  collision_elevation_max_rad: 0.4\n";
+  const std::string prefix =
+    "sector_map:\n  height_up_m: 1.0\n  height_down_m: 1.0\n  obstacle_window_m: 0.5\n";
 
   for (const std::string count : {"0", "2.5", "-1"}) {
     EXPECT_TRUE(rejects(writeYaml(
-      "count" + count,
-      good_band + "sector_map:\n  coverage_min_rays_per_sector: " + count + "\n")));
+      "obstacles" + count, prefix + "  obstacle_min_returns: " + count + "\n  free_min_rays: 2\n")));
+    EXPECT_TRUE(rejects(writeYaml(
+      "free" + count, prefix + "  obstacle_min_returns: 2\n  free_min_rays: " + count + "\n")));
   }
 
   EXPECT_TRUE(rejects(writeYaml(
     "band",
-    "sensor:\n  collision_elevation_min_rad: 0.4\n  collision_elevation_max_rad: -0.2\n"
-    "sector_map:\n  coverage_min_rays_per_sector: 2\n")));
+    "sector_map:\n  height_up_m: -1.0\n  height_down_m: 1.0\n  obstacle_window_m: 0.5\n"
+    "  obstacle_min_returns: 2\n  free_min_rays: 2\n")));
+  EXPECT_TRUE(rejects(writeYaml(
+    "window",
+    "sector_map:\n  height_up_m: 1.0\n  height_down_m: 1.0\n  obstacle_window_m: 0.0\n"
+    "  obstacle_min_returns: 2\n  free_min_rays: 2\n")));
 }
 
 TEST(PlatformConfigTest, RepositoryPlatformConfigIsRefusedWhileValuesAreTbd)
