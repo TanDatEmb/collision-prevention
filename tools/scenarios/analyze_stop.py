@@ -61,14 +61,27 @@ def read(path, columns):
 
 
 def read_optional(path, column):
-    """One column of a log that may be missing or lack the column: a list of floats, or None."""
+    """One column of a log: a list of floats, or None when the file or the column is absent (older logs have no
+    heading). A column that is there but holds an empty or non-finite value is malformed evidence, not an absent
+    one: it is rejected, never replaced by another orientation."""
     try:
         with open(path, newline="") as f:
-            rows = list(csv.DictReader(f))
-        values = [float(r[column]) for r in rows]
-    except (FileNotFoundError, KeyError, ValueError, TypeError):
+            reader = csv.DictReader(f)
+            if reader.fieldnames is None or column not in reader.fieldnames:
+                return None
+            rows = list(reader)
+    except FileNotFoundError:
         return None
-    return values if values and all(math.isfinite(v) for v in values) else None
+    values = []
+    for n, r in enumerate(rows, 1):
+        try:
+            v = float(r[column])
+        except (ValueError, TypeError):
+            raise Invalid("column %s is empty or not a number at row %d of %s" % (column, n, path.rsplit("/", 1)[-1]))
+        if not math.isfinite(v):
+            raise Invalid("column %s is not finite at row %d of %s" % (column, n, path.rsplit("/", 1)[-1]))
+        values.append(v)
+    return values or None
 
 
 def wrap_pi(angle):

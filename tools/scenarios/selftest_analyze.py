@@ -51,14 +51,15 @@ def stop_ys(v0=5.0, a=3.0, stop_at=17.0, total_s=30.0, a_up=2.0):
 
 
 def write(prefix, rows, states, nan_at=None, empty_at=None, with_constraints=True, with_position=True, lateral=0.0,
-          constraints_until=None, swap_constraint_rows=None, heading_rad=None, north_m=0.0, hook_rows=None):
+          constraints_until=None, swap_constraint_rows=None, heading_rad=None, north_m=0.0, hook_rows=None,
+          heading_nan_at=None):
     if with_position:
         with open(prefix + "vehicle_local_position_0.csv", "w", newline="") as f:
             w = csv.writer(f)
             w.writerow(["timestamp", "x", "y", "vx", "vy"] + (["heading"] if heading_rad is not None else []))
             for n, (t, y, vy) in enumerate(rows):
                 y_cell = "nan" if n == nan_at else ("" if n == empty_at else y)
-                w.writerow([int(t * 1e6), north_m, y_cell, lateral, vy] + ([heading_rad] if heading_rad is not None else []))
+                w.writerow([int(t * 1e6), north_m, y_cell, lateral, vy] + ([("nan" if n == heading_nan_at else heading_rad)] if heading_rad is not None else []))
     if hook_rows is not None:
         with open(prefix + "cp_brake_hook_0.csv", "w", newline="") as f:
             w = csv.writer(f)
@@ -342,6 +343,14 @@ def field_case(name, field, expect, **kw):
 results.append(field_case("cap excess is the largest speed above the cap while limiting", "cap_excess_max_m_s", 1.5,
                           hook_rows=[(1000000, 3, 0.0, 4.0, 0.0, 3.0), (1100000, 3, 0.0, 3.5, 0.0, 2.0),
                                      (1200000, 0, 0.0, 9.0, 0.0, 0.0)]))
+
+
+# a heading column that is there but holds a NaN is malformed evidence: no silent fallback to the leg bearing
+nan_heading = series(stop_ys(stop_at=17.0))
+results.append(run("2-D with a NaN heading sample is INVALID, not a fallback", nan_heading, "INVALID", wall=20.0,
+                   heading_rad=math.pi / 2, heading_nan_at=0, extra=("--obstacle", "pole:0,20,0.15", "--lidar-offset", "1.0")))
+results.append(run("2-D with no heading column keeps the leg bearing", series(stop_ys(stop_at=17.0)), "PASS", wall=20.0,
+                   extra=("--obstacle", "pole:0,20,0.15", "--lidar-offset", "0.12")))
 
 print("%d of %d cases pass" % (sum(results), len(results)))
 sys.exit(0 if all(results) else 1)
