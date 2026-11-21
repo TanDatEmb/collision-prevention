@@ -504,6 +504,34 @@ valid_case("settling to 2 percent that never happens says why (null with a note)
                         and any("2 percent" in n for n in res["steps_up"][0]["notes"]), str(res["steps_up"][0].get("notes"))))
 
 
+# ---- second review round on b727bfd
+# slope changes in the first or last 10 percent of the fall are outside the fitted body and must still be flagged
+t_r2 = 2.0 + 8.0
+slow_start = [("step", 2.0, 8.0), ("ramp", t_r2, -0.1), ("ramp", t_r2 + 7.0, -0.9), ("ramp", t_r2 + 14.3, 1.0)]
+slow_end = [("step", 2.0, 8.0), ("ramp", t_r2, -1.0), ("ramp", t_r2 + 7.3, 0.9), ("ramp", t_r2 + 14.3, 0.1)]
+invalid_case("a slow first 10 percent of the fall is not a linear ramp",
+             lambda prefix: write_logs(prefix, First(tau), slow_start, 50.0), ["--speeds", "", "--ramp-decels", "1"], "not linear")
+invalid_case("a slow last 10 percent of the fall is not a linear ramp",
+             lambda prefix: write_logs(prefix, First(tau), slow_end, 50.0), ["--speeds", "", "--ramp-decels", "1"], "not linear")
+
+
+def sparse_cmd_build(rows):
+    def build(prefix):
+        step_log(first)(prefix)
+        write_attitude(prefix, 24.0, lambda t: (bump_rate(t, ROLL_PEAK), bump_rate(t, THETA), 0.0),
+                       lambda t: (bump(t, ROLL_PEAK), bump(t, THETA)), lambda t: (0.0, 0.0), cmd_dt=24.0 / max(rows - 1, 1))
+        if rows == 0:
+            with open(prefix + "vehicle_attitude_setpoint_0.csv", "w", newline="") as f:
+                csv.writer(f).writerow(["timestamp", "q_d[0]", "q_d[1]", "q_d[2]", "q_d[3]"])
+    return build
+
+
+for n_rows in (8, 0):
+    valid_case("attitude setpoint log with %d rows only nulls the commanded tilt" % n_rows, sparse_cmd_build(n_rows), ["--speeds", "5"],
+               lambda res: (res["steps_down_to_zero"][0]["peak_pitch_deg"] is not None
+                            and res["steps_down_to_zero"][0].get("peak_pitch_cmd_deg") is None, str(res["logs"])))
+
+
 def tool_module():
     spec = importlib.util.spec_from_file_location("tool_under_test", TOOL)
     mod = importlib.util.module_from_spec(spec)

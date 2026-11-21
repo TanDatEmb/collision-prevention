@@ -144,7 +144,7 @@ def fly(a):
     return 0
 
 
-def read(path, columns):
+def read(path, columns, min_rows=10):
     """Rows with every column finite; a setpoint is NaN where PX4 controls position instead of velocity."""
     with open(path, newline="") as f:
         rows = list(csv.DictReader(f))
@@ -156,8 +156,8 @@ def read(path, columns):
             continue
         if all(math.isfinite(v) for v in vals):
             kept.append(vals)
-    if len(kept) < 10:
-        raise ValueError("fewer than 10 finite rows in " + path)
+    if len(kept) < min_rows:
+        raise ValueError("fewer than %d finite rows in %s" % (min_rows, path))
     return {c: [row[i] for row in kept] for i, c in enumerate(columns)}
 
 
@@ -183,11 +183,17 @@ def read_setpoint(path):
     return {"timestamp": t, "vy": vy}
 
 
-def load_optional(path, columns):
-    """None when the log does not exist; the columns plus "t" (s) when it does; ValueError when it is unusable."""
+def load_optional(path, columns, soft=False):
+    """None when the log does not exist; the columns plus "t" (s) when it does; ValueError when it is unusable.
+    soft: a log with fewer than 2 usable rows counts as absent (the topic only feeds optional values)."""
     if not os.path.exists(path):
         return None
-    d = read(path, columns)
+    try:
+        d = read(path, columns, 2 if soft else 10)
+    except ValueError:
+        if soft:
+            return None
+        raise
     d["t"] = [v * 1e-6 for v in d["timestamp"]]
     if any(b < x for x, b in zip(d["t"], d["t"][1:])):
         raise ValueError("time goes backwards in " + os.path.basename(path))
@@ -324,7 +330,7 @@ def analyze(a):
         ps = read(a.prefix + "vehicle_local_position_0.csv", ["timestamp", "vy"])
         rate = load_optional(a.prefix + "vehicle_angular_velocity_0.csv", ["timestamp", "xyz[0]", "xyz[1]", "xyz[2]"])
         att = load_optional(a.prefix + "vehicle_attitude_0.csv", ["timestamp"] + ["q[%d]" % k for k in range(4)])
-        cmd = load_optional(a.prefix + "vehicle_attitude_setpoint_0.csv", ["timestamp"] + ["q_d[%d]" % k for k in range(4)])
+        cmd = load_optional(a.prefix + "vehicle_attitude_setpoint_0.csv", ["timestamp"] + ["q_d[%d]" % k for k in range(4)], soft=True)
     except (OSError, ValueError) as e:
         print(json.dumps({"error": "INVALID: %s" % e}))
         return 2
@@ -542,7 +548,9 @@ def analyze(a):
             if slope <= 0.0:
                 continue
             t_start = t_mean - (v_top - r_mean) / slope
-            nonlin = max(abs(r - (r_mean - slope * (t - t_mean))) for t, r in zip(tk, rk))
+            # every row of the fall is checked against the fitted line clamped to the plateau value and to zero, not only
+            # the body: a change of slope in the first or last 10 percent is not a linear ramp
+            nonlin = max(abs(sign * spv[k] - min(v_top, max(0.0, r_mean - slope * (ts[k] - t_mean)))) for k in range(m0, i + 1))
             i_prev = max([k for k in range(m0, i) if ts[k] <= t_start + 1e-9] or [m0])
             covered, j = pre_sample(ts[i_prev])
             v_pre = pv[j] if covered else spv[i_prev]
