@@ -225,7 +225,7 @@ flowchart LR
 | FEAT-03 | Static self-mask | `livox_ray_source` | Exists | SYS-CP-015 |
 | FEAT-04 | Pose-based deskew | `livox_ray_source` | Missing (#57) | SYS-CP-016 |
 | FEAT-05 | Gravity-aligned leveling (roll and pitch removed) | `livox_ray_source` | Missing; no lidar-side package has an attitude input | SYS-CP-017 |
-| FEAT-06 | Vertical envelope and ground rejection | `livox_ray_source`, `obstacle_sector_map` | Partial: elevation band only (OPEN-036) | SYS-CP-019, 020 |
+| FEAT-06 | Vertical envelope and ground rejection | `livox_ray_source`, `obstacle_sector_map` | Partial: height band and certified free distance built (PR #131, unit tests only, no SITL), applied to unleveled rays until #57 | SYS-CP-019, 020 |
 | FEAT-07 | Evidence classification and isolated-return policy | `livox_ray_source`, `obstacle_sector_map` | Partial: return, no-return and invalid exist; one return makes a sector occupied, no support rule | SYS-CP-011, 021 |
 | FEAT-08 | Sector map: nearest range, coverage, too close | `obstacle_sector_map` | Exists, unit tests | SYS-CP-004, 011 |
 | FEAT-09 | Wire encoding and transport | `px4_obstacle_bridge`, Orin node | Exists | SYS-CP-002 |
@@ -246,7 +246,8 @@ The "Today" column was checked in the sources on 2026-11-20: no attitude or grav
 Before fork PR #9 `CpBrake.cpp` called `sectorSpeedCap(..., 0.f, ...)`, so the travelled-distance argument of the
 stopping model was unused; `HeadingHistory` stores heading only; the builder makes a sector occupied
 from one return inside the elevation band and needs `coverage_min_rays_per_sector` returns without
-obstacle for clear.
+obstacle for clear (before PR #131; since then the builder applies the D2 evidence rule: a height band, a window of
+returns for an obstacle, a free distance certified per half-band).
 
 Operational states (reason flags carry the cause): `DISABLED`, `OBSERVER_ONLY`, `NOT_READY`,
 `ACTIVE_CLEAR`, `BRAKING`, `SAFE_STOP`. `SAFE_STOP` leaves only through pilot acknowledgement and
@@ -282,7 +283,8 @@ ICD-CP-04 is approved by the owner (2026-11-19) with its open items (OPEN-032, 0
 ICD-CP-06 is approved by the owner (2026-11-19) with its open items (OPEN-030, 031, 036).
 ADR 0019 (one pose chain from the FMU for heading and deskew) is approved by the owner (2026-11-20).
 Orin parameters (versioned, logged): `sector_map_rate_hz` 10, `coverage_window_ms` 100,
-`coverage_min_rays_per_sector` (no default until OPEN-023, never tuned after an acceptance run).
+`height_up_m`, `height_down_m`, `obstacle_window_m`, `obstacle_min_returns` and `free_min_rays` (the sector evidence
+values of ADR 0020 D2, no defaults until OPEN-005, 023, 036, 041, never tuned after an acceptance run).
 The range limits (10 cm and 40 m, ICD-CP-03) are fixed constants, not parameters. The
 sector-boundary tolerance is a fixed constant of 2.0e-6 rad in `obstacle_sector_map`, approved by
 the owner (2026-11-19); it is a numerical tolerance, not a safety threshold. Raw point cloud
@@ -312,7 +314,7 @@ source: ADR 0004.
   false, so no sector of that frame becomes clear.
 - Vertical envelope: platform values (OPEN-005) in the gravity-aligned frame. The owner prefers a
   height band to an elevation-angle band; how a no-return ray, which has no endpoint, is tested
-  against a height band is open (OPEN-036), and the builder still uses an elevation band.
+  against a height band is decided by ADR 0020 D2 (OPEN-036 keeps the values) and the builder implements it since PR #131, still without leveling (#57).
 
 ### ICD-CP-04 design (approved 2026-11-19)
 
