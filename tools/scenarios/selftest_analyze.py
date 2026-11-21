@@ -230,7 +230,7 @@ results.append(run("reordered constraint timestamps hide SAFE_STOP", series(stop
                    states=((0, 3), (0.3, 5), (0.4, 4)), extra=REQ, swap_constraint_rows=(2, 3)))
 
 
-def command_case(name, command, actual, expect_code, swap_position_rows=None):
+def command_case(name, command, actual, expect_code, swap_position_rows=None, drop_position_before=None):
     """measure_velocity_step.py analyze with explicit setpoint and speed functions of time (50 Hz, 20 s)."""
     with tempfile.TemporaryDirectory() as d:
         prefix = os.path.join(d, "log_0_")
@@ -239,6 +239,8 @@ def command_case(name, command, actual, expect_code, swap_position_rows=None):
                 w = csv.writer(f)
                 w.writerow(["timestamp", "vy"])
                 lines = [[int(n * DT * 1e6), fn(n * DT)] for n in range(1000)]
+                if drop_position_before is not None and fname == "vehicle_local_position_0.csv":
+                    lines = [row for row in lines if row[0] * 1e-6 >= drop_position_before]
                 if swap_position_rows and fname == "vehicle_local_position_0.csv":
                     i, j = swap_position_rows
                     lines[i], lines[j] = lines[j], lines[i]
@@ -265,6 +267,10 @@ results.append(command_case("position rows reordered during the response", lambd
 results.append(command_case("position control takes over before the stop", lambda t: 5.0 if t < 10 else
                             (0.0 if t < 12 else float("nan")),
                             lambda t: 5.0 if t < 12 else max(0.0, 5.0 - 5.0 * (t - 12)), 2))
+
+results.append(command_case("position log starts after the step", lambda t: 5.0 if t < 10 else 0.0,
+                            lambda t: 5.0 if t < 13 else 5.0 * math.exp(-(t - 13) / 0.5), 2,
+                            drop_position_before=12.0))
 
 print("%d of %d cases pass" % (sum(results), len(results)))
 sys.exit(0 if all(results) else 1)
