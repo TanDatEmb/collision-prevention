@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
 """Fly one approach to a wall in PX4 SITL over MAVLink and record the vehicle position (bench tool).
 
-usage: run_approach.py --speed 5 [--distance 100] [--altitude 12] [--toggle-cpb] [--baseline] [--connect udpin:0.0.0.0:14550]
+usage: run_approach.py --speed 5 [--distance 100] [--bearing-deg 90] [--yaw-deg H] [--altitude 12] [--toggle-cpb]
+                       [--baseline] [--connect udpin:0.0.0.0:14550]
 
-The vehicle takes off in Mission mode and flies a straight leg east at --speed toward a wall that the
-caller has placed (see spawn_wall.sh). The run ends when the vehicle has been at rest for 5 s after
-moving, when the leg ends, or after --timeout seconds. It prints one JSON line with what it saw; the
+The vehicle takes off, turns to its heading and flies a straight leg at --speed toward an obstacle that the
+caller has placed (see spawn_obstacle.sh). By default the leg is east (Gazebo +x) with the nose along the leg: body +x
+forward, the priority direction; --yaw-deg holds another heading to fly sideways or backwards. The run ends
+when the vehicle has been at rest for 5 s after moving, when the leg ends, or after --timeout seconds. It prints one JSON line with what it saw; the
 verdict comes from analyze_stop.py on the ULog, not from this script. Exit code 0: the leg ran;
 3 a parameter was not applied; 4 the vehicle did not take off; 5 cp_brake was not enforcing, so the leg
 was not started; 6 the mission was refused; 7 the leg did not start (JSON field "error" says which).
@@ -97,10 +99,10 @@ def upload_mission(link, items):
         if msg is None:
             continue
         seq = msg.seq
-        cmd, p1, lat, lon, alt = items[seq]
+        cmd, p1, lat, lon, alt, yaw_deg = items[seq]  # param4 of a waypoint is its heading in degrees
         link.mav.mission_item_int_send(
             link.target_system, link.target_component, seq, mavutil.mavlink.MAV_FRAME_GLOBAL_RELATIVE_ALT_INT,
-            cmd, 1 if seq == 0 else 0, 1, p1, 0, 0, 0, int(lat * 1e7), int(lon * 1e7), alt)
+            cmd, 1 if seq == 0 else 0, 1, p1, 0, 0, yaw_deg, int(lat * 1e7), int(lon * 1e7), alt)
         sent.add(seq)
     ack = link.recv_match(type="MISSION_ACK", blocking=True, timeout=5)
     return ack is not None and ack.type == 0
@@ -110,7 +112,12 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--connect", default="udpin:0.0.0.0:14550")
     ap.add_argument("--speed", type=float, required=True, help="mission leg speed [m/s]")
-    ap.add_argument("--distance", type=float, default=100.0, help="length of the leg east [m]")
+    ap.add_argument("--distance", type=float, default=100.0, help="length of the leg [m]")
+    ap.add_argument("--bearing-deg", type=float, default=90.0,
+                    help="direction of the leg, degrees clockwise from north (default 90: east, Gazebo +x)")
+    ap.add_argument("--yaw-deg", type=float, default=None,
+                    help="heading held on the leg; default: the nose along the leg (body +x forward, the priority "
+                         "direction). Give another heading to fly sideways or backwards")
     ap.add_argument("--altitude", type=float, default=12.0, help="takeoff altitude [m]")
     ap.add_argument("--timeout", type=float, default=120.0)
     ap.add_argument("--toggle-cpb", action="store_true", help="always toggle CPB_EN 0 then 1 (issue #112)")
@@ -142,8 +149,15 @@ def main():
     if gp is None:
         return fail("no GLOBAL_POSITION_INT", 3)
     lat0, lon0 = gp.lat / 1e7, gp.lon / 1e7
-    lon1 = lon0 + a.distance / (EARTH_M_PER_DEG * math.cos(math.radians(lat0)))
-    items = [(mav.MAV_CMD_NAV_WAYPOINT, 0, lat0, lon1, a.altitude)]
+    bearing = math.radians(a.bearing_deg)
+    lat1 = lat0 + a.distance * math.cos(bearing) / EARTH_M_PER_DEG
+    lon1 = lon0 + a.distance * math.sin(bearing) / (EARTH_M_PER_DEG * math.cos(math.radians(lat0)))
+    yaw_deg = a.bearing_deg if a.yaw_deg is None else a.yaw_deg
+    # the first item turns the vehicle on the spot, so the leg starts with the heading it asks for
+    items = [(mav.MAV_CMD_NAV_WAYPOINT, 0, lat0, lon0, a.altitude, yaw_deg),
+             (mav.MAV_CMD_NAV_WAYPOINT, 0, lat1, lon1, a.altitude, yaw_deg)]
+    result["bearing_deg"] = a.bearing_deg
+    result["yaw_deg_commanded"] = yaw_deg
 
     if a.px4_bin:
         px4_param_set(a.px4_bin, "MIS_TAKEOFF_ALT", a.altitude)  # `commander takeoff` takes no altitude
@@ -196,14 +210,24 @@ def main():
     moved = rested = False
     rest_since = None
     last = None
+    yaw_deg_now = None
+    yaw_at_start = None
+    yaw_in_leg = []
     while time.time() - start < a.timeout:
-        lp = link.recv_match(type="LOCAL_POSITION_NED", blocking=True, timeout=2)
+        lp = link.recv_match(type=["LOCAL_POSITION_NED", "ATTITUDE"], blocking=True, timeout=2)
         if lp is None:
+            continue
+        if lp.get_type() == "ATTITUDE":
+            yaw_deg_now = math.degrees(lp.yaw)
+            if moved:
+                yaw_in_leg.append(yaw_deg_now)
             continue
         speed = math.hypot(lp.vx, lp.vy)
         peak = max(peak, speed)
         last = (lp.x, lp.y, -lp.z)
         if speed > 0.5:
+            if not moved:
+                yaw_at_start = yaw_deg_now
             moved = True
         if moved and speed < REST_SPEED:
             rest_since = rest_since or time.time()
@@ -212,6 +236,10 @@ def main():
                 break
         else:
             rest_since = None
+    if yaw_at_start is not None:
+        result["yaw_deg_at_leg_start"] = round(yaw_at_start, 1)
+    if yaw_in_leg:
+        result["yaw_deg_range_in_leg"] = [round(min(yaw_in_leg), 1), round(max(yaw_in_leg), 1)]
     result.update({"peak_speed_m_s": round(peak, 2), "last_xyz_m": [round(v, 2) for v in last] if last else None,
                    "ended_at_rest": rested, "duration_s": round(time.time() - start, 1)})
     if not moved:
