@@ -7,10 +7,12 @@ sensor:
   mount_pose_in_base_link:  # livox_frame -> base_link
     xyz_m: [null, null, null]  # TBD: OPEN-029
     rpy_rad: [null, null, null]  # TBD: OPEN-029
-  collision_elevation_min_rad: null  # TBD: OPEN-005
-  collision_elevation_max_rad: null  # TBD: OPEN-005
 sector_map:
-  coverage_min_rays_per_sector: null  # TBD: OPEN-023
+  height_up_m: null  # TBD: OPEN-005, OPEN-036 (band above the vehicle, level frame)
+  height_down_m: null  # TBD: OPEN-005, OPEN-036
+  obstacle_window_m: null  # TBD: OPEN-041 (dr)
+  obstacle_min_returns: null  # TBD: OPEN-041 (n_obstacle)
+  free_min_rays: null  # TBD: OPEN-023 (n_free)
 self_mask:  # upright cylinders in livox_frame (docs/adr/0006)
   cylinders:
     - center_m: [null, null]  # TBD: OPEN-005 (x, y of the axis)

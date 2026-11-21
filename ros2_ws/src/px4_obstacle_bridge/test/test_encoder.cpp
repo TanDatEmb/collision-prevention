@@ -15,7 +15,7 @@ using px4_obstacle_bridge::encodeObstacleDistance;
 namespace
 {
 
-constexpr SectorMapConfig kConfig{-0.2F, 0.4F, 2U};
+constexpr SectorMapConfig kConfig{1.0F, 1.0F, 0.5F, 2U, 2U};
 
 SectorMap makeMap()
 {
@@ -31,7 +31,7 @@ void setSector(SectorMap & map, std::size_t index, SectorState state, float dist
   map.sectors.at(index).distance_m = distance_m;
 
   if (state == SectorState::kObservedClear) {
-    map.sectors.at(index).clear_ray_count = kConfig.coverage_min_rays_per_sector;
+    map.sectors.at(index).free_distance_m = obstacle_sector_map::kMaxDistanceM;
   }
 }
 
@@ -114,7 +114,7 @@ TEST(ObstacleDistanceEncoderTest, RejectsOccupiedDistanceOutsideQualifiedRange)
   EXPECT_FALSE(encodeObstacleDistance(map, kConfig).has_value());
 }
 
-TEST(ObstacleDistanceEncoderTest, RejectsClearWithoutContinuityOrCoverage)
+TEST(ObstacleDistanceEncoderTest, RejectsClearWithoutContinuityOrFullFreeDistance)
 {
   auto map = makeMap();
   setSector(map, 0U, SectorState::kObservedClear, std::numeric_limits<float>::quiet_NaN());
@@ -123,8 +123,14 @@ TEST(ObstacleDistanceEncoderTest, RejectsClearWithoutContinuityOrCoverage)
   EXPECT_FALSE(encodeObstacleDistance(map, kConfig).has_value());
 
   map.packet_continuity_valid = true;
-  map.sectors[0].clear_ray_count = 0U;
+  map.sectors[0].free_distance_m = std::numeric_limits<float>::quiet_NaN();  // nothing certified
   EXPECT_FALSE(encodeObstacleDistance(map, kConfig).has_value());
+
+  map.sectors[0].free_distance_m = 11.4F;  // certified, but short of the qualified range
+  EXPECT_FALSE(encodeObstacleDistance(map, kConfig).has_value());
+
+  map.sectors[0].free_distance_m = obstacle_sector_map::kMaxDistanceM;
+  EXPECT_TRUE(encodeObstacleDistance(map, kConfig).has_value());
 }
 
 TEST(ObstacleDistanceEncoderTest, RejectsZeroOrSubMicrosecondTimestamp)
@@ -147,7 +153,7 @@ TEST(ObstacleDistanceEncoderTest, RejectsInvalidConfigAndInvalidOccupiedDistance
   EXPECT_FALSE(encodeObstacleDistance(map, kConfig).has_value());
 
   setSector(map, 0U, SectorState::kOccupied, 1.0F);
-  const SectorMapConfig invalid_config{-0.2F, 0.4F, 0U};
+  const SectorMapConfig invalid_config{1.0F, 1.0F, 0.5F, 0U, 2U};
   EXPECT_FALSE(encodeObstacleDistance(map, invalid_config).has_value());
 }
 

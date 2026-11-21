@@ -72,9 +72,11 @@ std::optional<px4_msgs::msg::ObstacleDistance> encodeObstacleDistance(
         break;
 
       case SectorState::kObservedClear:
+        // Clear means the certified free distance reaches the qualified range (ADR 0020 D2).
         if (
-          !sector_map.packet_continuity_valid ||
-          sector.clear_ray_count < config.coverage_min_rays_per_sector) {
+          !sector_map.packet_continuity_valid || !std::isfinite(sector.free_distance_m) ||
+          sector.free_distance_m < obstacle_sector_map::kMaxDistanceM -
+                                     obstacle_sector_map::kFreeDistanceToleranceM) {
           return std::nullopt;
         }
 

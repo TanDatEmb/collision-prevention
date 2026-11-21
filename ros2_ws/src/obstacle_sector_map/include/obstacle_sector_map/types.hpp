@@ -47,12 +47,20 @@ struct RaySample
   RayReturnKind return_kind{RayReturnKind::kInvalid};
 };
 
+// Rounding tolerance for "the free distance reaches the qualified range". Fixed, not a tuning parameter.
+inline constexpr float kFreeDistanceToleranceM{1.0e-3F};
+
 struct SectorObservation
 {
   SectorState state{SectorState::kUnknown};
+  // The distance sent for the sector: the smaller of the confirmed obstacle distance and the certified
+  // free distance (ADR 0020 D2). NaN for unknown and clear.
   float distance_m{std::numeric_limits<float>::quiet_NaN()};
   uint32_t contributing_ray_count{0U};
-  uint32_t clear_ray_count{0U};  // qualified no-returns and returns beyond the qualified range
+  uint32_t clear_ray_count{0U};  // rays that certify free distance: no-returns and returns outside the band
+  // Diagnostics of the two parts of distance_m; NaN when the part does not exist.
+  float obstacle_distance_m{std::numeric_limits<float>::quiet_NaN()};
+  float free_distance_m{std::numeric_limits<float>::quiet_NaN()};
 };
 
 struct SectorMap
@@ -64,17 +72,20 @@ struct SectorMap
   uint32_t rejected_ray_count{0U};
 };
 
+// Required platform values with no default (ADR 0020 D2; OPEN-005, 023, 036, 041).
 struct SectorMapConfig
 {
-  float min_elevation_rad;
-  float max_elevation_rad;
-  uint32_t coverage_min_rays_per_sector;
+  float height_up_m;                // h_up: the band reaches this far above the vehicle, in the level frame
+  float height_down_m;              // h_down: and this far below it
+  float obstacle_window_m;          // dr: width of the range window that confirms an obstacle
+  uint32_t obstacle_min_returns;    // n_obstacle: returns a window must hold to be an obstacle
+  uint32_t free_min_rays;           // n_free: the n_free-th largest free distance of each half is certified
 
   [[nodiscard]] bool isValid() const
   {
-    return std::isfinite(min_elevation_rad) && std::isfinite(max_elevation_rad) &&
-           min_elevation_rad > -kHalfPiRad && max_elevation_rad < kHalfPiRad &&
-           min_elevation_rad < max_elevation_rad && coverage_min_rays_per_sector > 0U;
+    return std::isfinite(height_up_m) && height_up_m > 0.0F && std::isfinite(height_down_m) &&
+           height_down_m > 0.0F && std::isfinite(obstacle_window_m) && obstacle_window_m > 0.0F &&
+           obstacle_min_returns > 0U && free_min_rays > 0U;
   }
 };
 
