@@ -542,15 +542,22 @@ def analyze(a):
     incomplete = [s for s in kept_down + kept_up + (kept_ramps if a.ramp_decels else []) if s["problems"]]
     missing = [("step down", w) for w in wanted if not any(abs(s["speed_before_m_s"] - w) < 0.5 and not s["problems"] for s in kept_down)]
     missing += [("step up", w) for w in wanted if not any(abs(s["target_speed_m_s"] - w) < 0.5 and not s["problems"] for s in kept_up)]
-    # each requested ramp needs its own complete recorded ramp: one ramp cannot satisfy two close requests
-    pairs = sorted((abs(s["decel_m_s2"] - w), wi, ri) for wi, w in enumerate(a.ramp_decels)
-                   for ri, s in enumerate(kept_ramps) if not s["problems"] and abs(s["decel_m_s2"] - w) < 0.5)
-    used_w, used_r = set(), set()
-    for _, wi, ri in pairs:
-        if wi not in used_w and ri not in used_r:
-            used_w.add(wi)
-            used_r.add(ri)
-    missing += [("ramp", w) for wi, w in enumerate(a.ramp_decels) if wi not in used_w]
+    # each requested ramp needs its own complete recorded ramp (one ramp cannot satisfy two requests): a bipartite
+    # matching that reconsiders earlier choices, since the tolerance ranges of close requests overlap
+    ok_ramps = [ri for ri, s in enumerate(kept_ramps) if not s["problems"]]
+    owner = {}  # recorded ramp -> request index
+
+    def assign(wi, seen):
+        for ri in ok_ramps:
+            if ri not in seen and abs(kept_ramps[ri]["decel_m_s2"] - a.ramp_decels[wi]) < 0.5:
+                seen.add(ri)
+                if ri not in owner or assign(owner[ri], seen):
+                    owner[ri] = wi
+                    return True
+        return False
+
+    unmatched = [wi for wi in range(len(a.ramp_decels)) if not assign(wi, set())]
+    missing += [("ramp", a.ramp_decels[wi]) for wi in unmatched]
     worst_raw = max((s["_lag_raw"] for s in kept_down if "_lag_raw" in s), default=None)
     ramp_lags = [s["_lag_raw"] for s in kept_ramps if "_lag_raw" in s]
     for s in kept_down + kept_up + kept_ramps:

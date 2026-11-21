@@ -422,6 +422,13 @@ invalid_case("two requested ramp decelerations are not both met by one recorded 
              ramps_log(First(tau), [(1, 1.0)])[2], ["--speeds", "", "--ramp-decels", "1,1.2"], "('ramp', 1.2)")
 
 
+# overlapping tolerance ranges: ramps at 0.7 and 1.05 m/s^2 do satisfy the requests 1 and 1.2 (0.7 -> 1, 1.05 -> 1.2)
+valid_case("close ramp requests are matched to distinct ramps by a full matching, not greedily",
+           ramps_log(First(tau), [(1, 0.7), (-1, 1.05)])[2], ["--speeds", "", "--ramp-decels", "1,1.2"],
+           lambda res: (len(res["ramps_down_to_zero"]) == 2 and near(res["ramps_down_to_zero"][0]["decel_m_s2"], 0.7, 0.05)
+                        and near(res["ramps_down_to_zero"][1]["decel_m_s2"], 1.05, 0.05), ""))
+
+
 def tool_module():
     spec = importlib.util.spec_from_file_location("tool_under_test", TOOL)
     mod = importlib.util.module_from_spec(spec)
