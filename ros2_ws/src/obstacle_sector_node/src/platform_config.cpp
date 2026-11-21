@@ -47,21 +47,22 @@ obstacle_sector_map::SectorMapConfig loadSectorMapConfig(const std::string & yam
     throw std::invalid_argument(std::string("platform config: cannot read file: ") + error.what());
   }
 
-  const YAML::Node sensor = child(root, "sensor");
-  const double min_elevation =
-    number(child(sensor, "collision_elevation_min_rad"), "elevation min");
-  const double max_elevation =
-    number(child(sensor, "collision_elevation_max_rad"), "elevation max");
-  const double coverage =
-    number(child(child(root, "sector_map"), "coverage_min_rays_per_sector"), "coverage count");
+  const YAML::Node map = child(root, "sector_map");
+  const double height_up = number(child(map, "height_up_m"), "height up");
+  const double height_down = number(child(map, "height_down_m"), "height down");
+  const double window = number(child(map, "obstacle_window_m"), "obstacle window");
+  const double obstacle_returns = number(child(map, "obstacle_min_returns"), "obstacle returns");
+  const double free_rays = number(child(map, "free_min_rays"), "free rays");
 
-  if (coverage < 1.0 || coverage != std::floor(coverage) || coverage > 4.0e9) {
-    throw std::invalid_argument("platform config: coverage count must be a positive integer");
+  for (const double count : {obstacle_returns, free_rays}) {
+    if (count < 1.0 || count != std::floor(count) || count > 4.0e9) {
+      throw std::invalid_argument("platform config: a ray count must be a positive integer");
+    }
   }
 
   const obstacle_sector_map::SectorMapConfig config{
-    static_cast<float>(min_elevation), static_cast<float>(max_elevation),
-    static_cast<uint32_t>(coverage)};
+    static_cast<float>(height_up), static_cast<float>(height_down), static_cast<float>(window),
+    static_cast<uint32_t>(obstacle_returns), static_cast<uint32_t>(free_rays)};
 
   if (!config.isValid()) {
     throw std::invalid_argument("platform config: sector map values are not valid");

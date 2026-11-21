@@ -2,7 +2,7 @@
 //
 // Parameters (all ROS parameters, so `--ros-args -p name:=value` works):
 //   platform_config  path of the platform YAML; required. A null value in it is an error: the
-//                    elevation band and the coverage rule are never defaulted here (OPEN-005,
+//                    height band and the evidence rule are never defaulted here (OPEN-005,
 //                    OPEN-023).
 //   source           `laser_scan` (default): a planar scan, for the Gazebo 2D lidar through
 //                    ros_gz_bridge; or `livox`: a Livox Mid-360(S) through the Livox SDK2.
@@ -146,9 +146,11 @@ int main(int argc, char ** argv)
     }
 
     RCLCPP_INFO(
-      node->get_logger(), "platform %s, source %s, elevation band [%.4f, %.4f] rad, coverage %u",
-      platform_config.c_str(), source_kind.c_str(), static_cast<double>(config.min_elevation_rad),
-      static_cast<double>(config.max_elevation_rad), config.coverage_min_rays_per_sector);
+      node->get_logger(),
+      "platform %s, source %s, height band [-%.2f, +%.2f] m, window %.2f m, %u returns, %u free rays",
+      platform_config.c_str(), source_kind.c_str(), static_cast<double>(config.height_down_m),
+      static_cast<double>(config.height_up_m), static_cast<double>(config.obstacle_window_m),
+      config.obstacle_min_returns, config.free_min_rays);
 
     rclcpp::spin(node);
 

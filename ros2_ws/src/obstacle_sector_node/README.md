@@ -5,8 +5,8 @@ class and an executable for a planar scan (the Gazebo 2D lidar) or a Livox Mid-3
 
 ## Input contract
 - A `livox_ray_source::RaySource` (ICD-CP-06) and a `SectorMapConfig`.
-- `loadSectorMapConfig(yaml)` builds the config from the platform file (elevation band and coverage
-  count) and refuses null, missing or invalid values. The node takes the parameter
+- `loadSectorMapConfig(yaml)` builds the config from the platform file (height band, window and
+  ray counts) and refuses null, missing or invalid values. The node takes the parameter
   `sector_map_rate_hz` (default 10, the approved baseline).
 
 ## Output contract

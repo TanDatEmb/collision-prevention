@@ -19,48 +19,63 @@ namespace
 {
 
 constexpr float kDegreesToRadians = 3.14159265358979323846F / 180.0F;
-constexpr SectorMapConfig kConfig{-0.2F, 0.4F, 2U};
+// Test values only: h_up 1 m, h_down 1 m, dr 0.5 m, n_obstacle 2, n_free 2. Not platform values.
+constexpr SectorMapConfig kConfig{1.0F, 1.0F, 0.5F, 2U, 2U};
+// One return confirms an obstacle and one ray certifies free distance.
+constexpr SectorMapConfig kSingle{1.0F, 1.0F, 0.5F, 1U, 1U};
 
 RaySample makeRay(
-  RayReturnKind return_kind, float range_m, float azimuth_rad = 0.0F,
+  RayReturnKind return_kind, float range_m, float azimuth_rad = 0.0F, float elevation_rad = 0.0F,
   uint64_t timestamp_ns = 1'000U)
 {
-  return RaySample{timestamp_ns, range_m, azimuth_rad, 0.0F, false, return_kind};
+  return RaySample{timestamp_ns, range_m, azimuth_rad, elevation_rad, false, return_kind};
 }
 
-RaySample makeNoReturn(float azimuth_rad = 0.0F, uint64_t timestamp_ns = 1'000U)
+RaySample makeNoReturn(
+  float azimuth_rad = 0.0F, uint64_t timestamp_ns = 1'000U, float elevation_rad = 0.0F)
 {
   return makeRay(
     RayReturnKind::kQualifiedNoReturn, std::numeric_limits<float>::quiet_NaN(), azimuth_rad,
-    timestamp_ns);
+    elevation_rad, timestamp_ns);
 }
 
-RaySample makeReturn(float range_m, float azimuth_rad = 0.0F, uint64_t timestamp_ns = 1'000U)
+RaySample makeReturn(
+  float range_m, float azimuth_rad = 0.0F, uint64_t timestamp_ns = 1'000U, float elevation_rad = 0.0F)
 {
-  return makeRay(RayReturnKind::kReturn, range_m, azimuth_rad, timestamp_ns);
+  return makeRay(RayReturnKind::kReturn, range_m, azimuth_rad, elevation_rad, timestamp_ns);
+}
+
+// Two horizon no-returns: enough to certify the full qualified range with n_free 2.
+void addOpenSky(SectorMapBuilder & builder, float azimuth_rad = 0.0F)
+{
+  builder.addRay(makeNoReturn(azimuth_rad));
+  builder.addRay(makeNoReturn(azimuth_rad));
 }
 
 }  // namespace
 
-TEST(SectorMapConfigTest, AcceptsExplicitQualifiedGeometry)
+TEST(SectorMapConfigTest, AcceptsExplicitValues)
 {
-  const SectorMapConfig config{-0.2F, 0.4F, 8U};
-  EXPECT_TRUE(config.isValid());
+  EXPECT_TRUE(kConfig.isValid());
 }
 
 TEST(SectorMapConfigTest, RejectsUnsafeValues)
 {
-  EXPECT_FALSE((SectorMapConfig{0.4F, -0.2F, 8U}).isValid());
-  EXPECT_FALSE((SectorMapConfig{-1.6F, 0.4F, 8U}).isValid());
-  EXPECT_FALSE((SectorMapConfig{-0.2F, 1.6F, 8U}).isValid());
-  EXPECT_FALSE((SectorMapConfig{-obstacle_sector_map::kHalfPiRad, 0.4F, 8U}).isValid());
-  EXPECT_FALSE((SectorMapConfig{-0.2F, obstacle_sector_map::kHalfPiRad, 8U}).isValid());
-  EXPECT_FALSE((SectorMapConfig{-0.2F, 0.4F, 0U}).isValid());
+  const float nan = std::numeric_limits<float>::quiet_NaN();
+  EXPECT_FALSE((SectorMapConfig{0.0F, 1.0F, 0.5F, 2U, 2U}).isValid());
+  EXPECT_FALSE((SectorMapConfig{1.0F, -1.0F, 0.5F, 2U, 2U}).isValid());
+  EXPECT_FALSE((SectorMapConfig{nan, 1.0F, 0.5F, 2U, 2U}).isValid());
+  EXPECT_FALSE((SectorMapConfig{1.0F, nan, 0.5F, 2U, 2U}).isValid());
+  EXPECT_FALSE((SectorMapConfig{1.0F, 1.0F, 0.0F, 2U, 2U}).isValid());
+  EXPECT_FALSE((SectorMapConfig{1.0F, 1.0F, nan, 2U, 2U}).isValid());
+  EXPECT_FALSE((SectorMapConfig{1.0F, 1.0F, 0.5F, 0U, 2U}).isValid());
+  EXPECT_FALSE((SectorMapConfig{1.0F, 1.0F, 0.5F, 2U, 0U}).isValid());
 }
 
 TEST(SectorMapBuilderTest, RejectsInvalidConfiguration)
 {
-  EXPECT_THROW(SectorMapBuilder((SectorMapConfig{0.4F, -0.2F, 2U})), std::invalid_argument);
+  EXPECT_THROW(
+    SectorMapBuilder((SectorMapConfig{1.0F, 1.0F, 0.5F, 0U, 2U})), std::invalid_argument);
 }
 
 TEST(SectorMapBuilderTest, EmptyWindowIsUnknown)
@@ -78,7 +93,7 @@ TEST(SectorMapBuilderTest, EmptyWindowIsUnknown)
   }
 }
 
-TEST(SectorMapBuilderTest, QualifiedNoReturnCoverageProducesObservedClear)
+TEST(SectorMapBuilderTest, OpenSkyHorizonRaysCertifyTheQualifiedRange)
 {
   SectorMapBuilder builder{kConfig};
   builder.reset(true);
@@ -90,6 +105,7 @@ TEST(SectorMapBuilderTest, QualifiedNoReturnCoverageProducesObservedClear)
   EXPECT_EQ(map.sectors[0].state, SectorState::kObservedClear);
   EXPECT_EQ(map.sectors[0].contributing_ray_count, 2U);
   EXPECT_EQ(map.sectors[0].clear_ray_count, 2U);
+  EXPECT_FLOAT_EQ(map.sectors[0].free_distance_m, obstacle_sector_map::kMaxDistanceM);
   EXPECT_EQ(map.sample_timestamp_ns, 1'000U);
 }
 
@@ -97,42 +113,113 @@ TEST(SectorMapBuilderTest, MissingPacketContinuityPreventsClear)
 {
   SectorMapBuilder builder{kConfig};
   builder.reset(false);
-  builder.addRay(makeNoReturn());
-  builder.addRay(makeNoReturn());
+  addOpenSky(builder);
 
-  const auto map = builder.finalize();
-
-  EXPECT_EQ(map.sectors[0].state, SectorState::kUnknown);
-  EXPECT_EQ(map.sectors[0].contributing_ray_count, 2U);
+  const auto sector = builder.finalize().sectors[0];
+  EXPECT_EQ(sector.state, SectorState::kUnknown);
+  EXPECT_TRUE(std::isnan(sector.free_distance_m));
 }
 
-TEST(SectorMapBuilderTest, PositiveObstacleSurvivesMissingPacketContinuity)
+TEST(SectorMapBuilderTest, ConfirmedObstacleSurvivesMissingPacketContinuity)
 {
   SectorMapBuilder builder{kConfig};
   builder.reset(false);
+  builder.addRay(makeReturn(5.0F));
+  builder.addRay(makeReturn(5.2F));
+
+  const auto sector = builder.finalize().sectors[0];
+  EXPECT_EQ(sector.state, SectorState::kOccupied);
+  EXPECT_FLOAT_EQ(sector.distance_m, 5.0F);
+}
+
+TEST(SectorMapBuilderTest, LoneNoiseReturnDoesNotBrakeInOpenSky)
+{
+  SectorMapBuilder builder{kConfig};
+  builder.reset(true);
+  builder.addRay(makeReturn(3.0F));
+  addOpenSky(builder);
+
+  const auto sector = builder.finalize().sectors[0];
+  EXPECT_EQ(sector.state, SectorState::kObservedClear);
+  EXPECT_TRUE(std::isnan(sector.obstacle_distance_m));
+}
+
+TEST(SectorMapBuilderTest, ObstacleDistanceIsTheNearEdgeOfTheWindow)
+{
+  SectorMapBuilder builder{kConfig};
+  builder.reset(true);
+  builder.addRay(makeReturn(5.3F));
+  builder.addRay(makeReturn(5.0F));
+  addOpenSky(builder);
+
+  const auto sector = builder.finalize().sectors[0];
+  EXPECT_EQ(sector.state, SectorState::kOccupied);
+  EXPECT_FLOAT_EQ(sector.distance_m, 5.0F);
+  EXPECT_FLOAT_EQ(sector.obstacle_distance_m, 5.0F);
+}
+
+TEST(SectorMapBuilderTest, ReturnsFartherApartThanTheWindowDoNotConfirm)
+{
+  SectorMapBuilder builder{kConfig};
+  builder.reset(true);
+  builder.addRay(makeReturn(5.0F));
+  builder.addRay(makeReturn(6.0F));
+  addOpenSky(builder);
+
+  EXPECT_EQ(builder.finalize().sectors[0].state, SectorState::kObservedClear);
+}
+
+TEST(SectorMapBuilderTest, NearestConfirmedWindowWinsOverAnIsolatedNearerReturn)
+{
+  SectorMapBuilder builder{kConfig};
+  builder.reset(true);
+  builder.addRay(makeReturn(4.0F));
+  builder.addRay(makeReturn(9.2F));
+  builder.addRay(makeReturn(9.0F));
+  addOpenSky(builder);
+
+  const auto sector = builder.finalize().sectors[0];
+  EXPECT_EQ(sector.state, SectorState::kOccupied);
+  EXPECT_FLOAT_EQ(sector.distance_m, 9.0F);
+}
+
+TEST(SectorMapBuilderTest, ThinPoleIsConfirmedOnlyByEnoughReturns)
+{
+  SectorMapBuilder builder{kConfig};
+  builder.reset(true);
   builder.addRay(makeReturn(12.0F));
+  builder.addRay(makeReturn(12.1F));
+  addOpenSky(builder);
 
-  const auto map = builder.finalize();
+  const auto sector = builder.finalize().sectors[0];
+  EXPECT_EQ(sector.state, SectorState::kOccupied);
+  EXPECT_FLOAT_EQ(sector.distance_m, 12.0F);
 
-  EXPECT_EQ(map.sectors[0].state, SectorState::kOccupied);
-  EXPECT_FLOAT_EQ(map.sectors[0].distance_m, 12.0F);
-  EXPECT_EQ(map.sectors[1].state, SectorState::kUnknown);
+  SectorMapBuilder lone{kConfig};
+  lone.reset(true);
+  lone.addRay(makeReturn(12.0F));
+  addOpenSky(lone);
+  EXPECT_EQ(lone.finalize().sectors[0].state, SectorState::kObservedClear);
 }
 
-TEST(SectorMapBuilderTest, ChoosesMinimumCredibleRange)
+TEST(SectorMapBuilderTest, ReturnBelowMinimumIsTooClose)
 {
   SectorMapBuilder builder{kConfig};
   builder.reset(true);
-  builder.addRay(makeReturn(20.0F));
-  builder.addRay(makeReturn(7.5F));
+  builder.addRay(makeReturn(0.05F));
+  addOpenSky(builder);
 
-  EXPECT_FLOAT_EQ(builder.finalize().sectors[0].distance_m, 7.5F);
+  const auto sector = builder.finalize().sectors[0];
+  EXPECT_EQ(sector.state, SectorState::kTooClose);
+  EXPECT_FLOAT_EQ(sector.distance_m, 0.0F);
 }
 
-TEST(SectorMapBuilderTest, RangeBelowMinimumIsTooClose)
+TEST(SectorMapBuilderTest, TooCloseOverridesAConfirmedObstacleInTheSameSector)
 {
   SectorMapBuilder builder{kConfig};
   builder.reset(true);
+  builder.addRay(makeReturn(8.0F));
+  builder.addRay(makeReturn(8.1F));
   builder.addRay(makeReturn(0.05F));
 
   const auto sector = builder.finalize().sectors[0];
@@ -140,126 +227,150 @@ TEST(SectorMapBuilderTest, RangeBelowMinimumIsTooClose)
   EXPECT_FLOAT_EQ(sector.distance_m, 0.0F);
 }
 
-TEST(SectorMapBuilderTest, UsesHorizontalProjectedRangeForClassification)
+TEST(SectorMapBuilderTest, UsesHorizontalProjectedRangeForTheObstacleDistance)
 {
-  constexpr float kSixtyDegreesRad{1.0471975511965976F};
-  const SectorMapConfig wide_elevation_config{-1.2F, 1.2F, 1U};
-
-  SectorMapBuilder occupied_builder{wide_elevation_config};
-  occupied_builder.reset(true);
-  auto elevated_return = makeReturn(10.0F);
-  elevated_return.elevation_rad = kSixtyDegreesRad;
-  occupied_builder.addRay(elevated_return);
-
-  const auto occupied = occupied_builder.finalize().sectors[0];
-  ASSERT_EQ(occupied.state, SectorState::kOccupied);
-  EXPECT_NEAR(occupied.distance_m, 5.0F, 1.0e-5F);
-
-  SectorMapBuilder too_close_builder{wide_elevation_config};
-  too_close_builder.reset(true);
-  auto elevated_near_return = makeReturn(0.15F);
-  elevated_near_return.elevation_rad = kSixtyDegreesRad;
-  too_close_builder.addRay(elevated_near_return);
-
-  EXPECT_EQ(too_close_builder.finalize().sectors[0].state, SectorState::kTooClose);
-}
-
-// A return beyond the qualified range (40 m) proves that the ray path up to there is empty, like a
-// qualified no-return. It is never dropped and never an obstacle: 40 m is the range at which a dark
-// target is still detected, not a limit of the sensor.
-TEST(SectorMapBuilderTest, ReturnBeyondQualifiedRangeIsClearEvidence)
-{
+  // 10 m at +5 degrees is 0.87 m high (inside the 1 m band) and 9.96 m away horizontally.
+  const float elevation = 5.0F * kDegreesToRadians;
   SectorMapBuilder builder{kConfig};
   builder.reset(true);
-  builder.addRay(makeReturn(50.0F));
-  builder.addRay(makeReturn(60.0F));
+  builder.addRay(makeReturn(10.0F, 0.0F, 1'000U, elevation));
+  builder.addRay(makeReturn(10.0F, 0.0F, 1'000U, elevation));
+
+  const auto sector = builder.finalize().sectors[0];
+  EXPECT_EQ(sector.state, SectorState::kOccupied);
+  EXPECT_NEAR(sector.distance_m, 10.0F * std::cos(elevation), 1.0e-4F);
+}
+
+TEST(SectorMapBuilderTest, ReturnAboveTheBandIsNotAnObstacle)
+{
+  // 10 m at +10 degrees is 1.74 m high: above h_up, so it is no obstacle evidence.
+  const float elevation = 10.0F * kDegreesToRadians;
+  SectorMapBuilder builder{kConfig};
+  builder.reset(true);
+  builder.addRay(makeReturn(10.0F, 0.0F, 1'000U, elevation));
+  builder.addRay(makeReturn(10.0F, 0.0F, 1'000U, elevation));
+  addOpenSky(builder);
 
   const auto sector = builder.finalize().sectors[0];
   EXPECT_EQ(sector.state, SectorState::kObservedClear);
-  EXPECT_EQ(sector.contributing_ray_count, 2U);
-  EXPECT_EQ(sector.clear_ray_count, 2U);
+  EXPECT_TRUE(std::isnan(sector.obstacle_distance_m));
 }
 
-TEST(SectorMapBuilderTest, FarReturnsStillNeedTheCoverageCount)
+TEST(SectorMapBuilderTest, GroundBelowTheBandCertifiesOnlyWhereItLeavesTheBand)
 {
+  // Returns at -30 degrees and 10 m are 5 m below: outside the band. Each certifies
+  // h_down / tan(30 degrees) = 1.73 m of the lower half; the upper half has two rays at +5 degrees.
+  const float down = -30.0F * kDegreesToRadians;
   SectorMapBuilder builder{kConfig};
   builder.reset(true);
-  builder.addRay(makeReturn(50.0F));
+  builder.addRay(makeReturn(10.0F, 0.0F, 1'000U, down));
+  builder.addRay(makeReturn(10.0F, 0.0F, 1'000U, down));
+  builder.addRay(makeNoReturn(0.0F, 1'000U, 5.0F * kDegreesToRadians));
+  builder.addRay(makeNoReturn(0.0F, 1'000U, 5.0F * kDegreesToRadians));
 
   const auto sector = builder.finalize().sectors[0];
-  EXPECT_EQ(sector.state, SectorState::kUnknown);
-  EXPECT_EQ(sector.clear_ray_count, 1U);
+  EXPECT_EQ(sector.state, SectorState::kOccupied);
+  EXPECT_NEAR(sector.distance_m, 1.0F / std::tan(30.0F * kDegreesToRadians), 1.0e-3F);
 }
 
-TEST(SectorMapBuilderTest, NoReturnAndFarReturnTogetherMeetTheCoverage)
+TEST(SectorMapBuilderTest, FreeDistanceIsLimitedByWhereTheRayLeavesTheBand)
+{
+  // No-returns at +-5 degrees: h / tan(5 degrees) = 11.43 m, shorter than 40 m * cos(5 degrees).
+  const float five = 5.0F * kDegreesToRadians;
+  SectorMapBuilder builder{kConfig};
+  builder.reset(true);
+  builder.addRay(makeNoReturn(0.0F, 1'000U, five));
+  builder.addRay(makeNoReturn(0.0F, 1'000U, five));
+  builder.addRay(makeNoReturn(0.0F, 1'000U, -five));
+  builder.addRay(makeNoReturn(0.0F, 1'000U, -five));
+
+  const auto sector = builder.finalize().sectors[0];
+  EXPECT_EQ(sector.state, SectorState::kOccupied);
+  EXPECT_NEAR(sector.distance_m, 1.0F / std::tan(five), 1.0e-3F);
+}
+
+TEST(SectorMapBuilderTest, TheSmallerHalfDecides)
+{
+  const float five = 5.0F * kDegreesToRadians;
+  SectorMapBuilder builder{kConfig};
+  builder.reset(true);
+  builder.addRay(makeNoReturn(0.0F, 1'000U, five));
+  builder.addRay(makeNoReturn(0.0F, 1'000U, five));
+  builder.addRay(makeNoReturn(0.0F, 1'000U, -0.5F * kDegreesToRadians));
+  builder.addRay(makeNoReturn(0.0F, 1'000U, -0.5F * kDegreesToRadians));
+
+  EXPECT_NEAR(builder.finalize().sectors[0].distance_m, 1.0F / std::tan(five), 1.0e-3F);
+}
+
+TEST(SectorMapBuilderTest, ThePartialSectorIsUnknownUntilBothHalvesHaveEnoughRays)
+{
+  const float up = 3.0F * kDegreesToRadians;
+  SectorMapBuilder only_up{kConfig};
+  only_up.reset(true);
+  only_up.addRay(makeNoReturn(0.0F, 1'000U, up));
+  only_up.addRay(makeNoReturn(0.0F, 1'000U, up));
+  EXPECT_EQ(only_up.finalize().sectors[0].state, SectorState::kUnknown);
+
+  SectorMapBuilder one_horizon_ray{kConfig};
+  one_horizon_ray.reset(true);
+  one_horizon_ray.addRay(makeNoReturn());
+  EXPECT_EQ(one_horizon_ray.finalize().sectors[0].state, SectorState::kUnknown);
+}
+
+TEST(SectorMapBuilderTest, ReturnBeyondTheQualifiedRangeIsFreeEvidence)
 {
   SectorMapBuilder builder{kConfig};
   builder.reset(true);
-  builder.addRay(makeNoReturn());
-  builder.addRay(makeReturn(50.0F));
+  builder.addRay(makeReturn(47.0F));
+  builder.addRay(makeReturn(55.0F));
 
   const auto sector = builder.finalize().sectors[0];
   EXPECT_EQ(sector.state, SectorState::kObservedClear);
   EXPECT_EQ(sector.clear_ray_count, 2U);
-  EXPECT_EQ(sector.contributing_ray_count, 2U);
 }
 
-TEST(SectorMapBuilderTest, NearerObstacleWinsOverFarReturns)
+TEST(SectorMapBuilderTest, AWallThatFillsTheSectorGivesItsDistanceNotZero)
 {
+  // Every ray hits: no free ray exists, and that must not shorten the confirmed distance.
   SectorMapBuilder builder{kConfig};
   builder.reset(true);
-  builder.addRay(makeReturn(50.0F));
+  builder.addRay(makeReturn(30.0F));
+  builder.addRay(makeReturn(30.0F));
+  builder.addRay(makeReturn(30.1F));
+
+  const auto sector = builder.finalize().sectors[0];
+  EXPECT_EQ(sector.state, SectorState::kOccupied);
+  EXPECT_FLOAT_EQ(sector.distance_m, 30.0F);
+}
+
+TEST(SectorMapBuilderTest, FreeDistanceShorterThanTheObstacleWins)
+{
+  // Confirmed obstacle at 20 m, but the free rays leave the band at 11.43 m.
+  const float five = 5.0F * kDegreesToRadians;
+  SectorMapBuilder builder{kConfig};
+  builder.reset(true);
   builder.addRay(makeReturn(20.0F));
-  builder.addRay(makeReturn(60.0F));
+  builder.addRay(makeReturn(20.1F));
+  builder.addRay(makeNoReturn(0.0F, 1'000U, five));
+  builder.addRay(makeNoReturn(0.0F, 1'000U, five));
+  builder.addRay(makeNoReturn(0.0F, 1'000U, -five));
+  builder.addRay(makeNoReturn(0.0F, 1'000U, -five));
 
-  const auto sector = builder.finalize().sectors[0];
-  ASSERT_EQ(sector.state, SectorState::kOccupied);
-  EXPECT_NEAR(sector.distance_m, 20.0F, 1.0e-5F);
+  EXPECT_NEAR(builder.finalize().sectors[0].distance_m, 1.0F / std::tan(five), 1.0e-3F);
 }
 
-TEST(SectorMapBuilderTest, TooCloseWinsOverFarReturns)
+TEST(SectorMapBuilderTest, SteepOutOfBandReturnsDoNotShortenTheFreeDistanceOfHorizonRays)
 {
+  // The n_free largest values decide: two horizon rays (40 m) outvote two steep rays (0.58 m).
+  const float sixty = 60.0F * kDegreesToRadians;
   SectorMapBuilder builder{kConfig};
   builder.reset(true);
-  builder.addRay(makeReturn(50.0F));
-  builder.addRay(makeReturn(0.05F));
-  builder.addRay(makeReturn(60.0F));
+  builder.addRay(makeReturn(41.0F, 0.0F, 1'000U, sixty));
+  builder.addRay(makeReturn(41.0F, 0.0F, 1'000U, sixty));
+  builder.addRay(makeNoReturn());
+  builder.addRay(makeNoReturn());
 
-  EXPECT_EQ(builder.finalize().sectors[0].state, SectorState::kTooClose);
-}
-
-TEST(SectorMapBuilderTest, FarReturnsWithoutPacketContinuityAreNotClear)
-{
-  SectorMapBuilder builder{kConfig};
-  builder.reset(false);
-  builder.addRay(makeReturn(50.0F));
-  builder.addRay(makeReturn(60.0F));
-
-  EXPECT_EQ(builder.finalize().sectors[0].state, SectorState::kUnknown);
-}
-
-TEST(SectorMapBuilderTest, FarReturnIsJudgedByItsHorizontalProjection)
-{
-  constexpr float kSixtyDegreesRad{1.0471975511965976F};
-  const SectorMapConfig wide_elevation_config{-1.2F, 1.2F, 1U};
-
-  // 100 m at 60 degrees is 50 m horizontally: beyond the qualified range, so clear evidence
-  SectorMapBuilder clear_builder{wide_elevation_config};
-  clear_builder.reset(true);
-  auto far_elevated = makeReturn(100.0F);
-  far_elevated.elevation_rad = kSixtyDegreesRad;
-  clear_builder.addRay(far_elevated);
-  EXPECT_EQ(clear_builder.finalize().sectors[0].state, SectorState::kObservedClear);
-
-  // 70 m at 60 degrees is 35 m horizontally: an obstacle
-  SectorMapBuilder occupied_builder{wide_elevation_config};
-  occupied_builder.reset(true);
-  auto near_elevated = makeReturn(70.0F);
-  near_elevated.elevation_rad = kSixtyDegreesRad;
-  occupied_builder.addRay(near_elevated);
-  const auto occupied = occupied_builder.finalize().sectors[0];
-  ASSERT_EQ(occupied.state, SectorState::kOccupied);
-  EXPECT_NEAR(occupied.distance_m, 35.0F, 1.0e-4F);
+  EXPECT_EQ(builder.finalize().sectors[0].state, SectorState::kObservedClear);
 }
 
 TEST(SectorMapBuilderTest, RejectsNonFiniteInvalidMaskedAndVerticalOutliers)
@@ -279,14 +390,38 @@ TEST(SectorMapBuilderTest, RejectsNonFiniteInvalidMaskedAndVerticalOutliers)
   masked.masked = true;
   builder.addRay(masked);
 
-  auto vertical_outlier = makeNoReturn();
-  vertical_outlier.elevation_rad = 0.5F;
-  builder.addRay(vertical_outlier);
+  auto straight_up = makeNoReturn();
+  straight_up.elevation_rad = obstacle_sector_map::kHalfPiRad;
+  builder.addRay(straight_up);
 
   const auto map = builder.finalize();
   EXPECT_EQ(map.accepted_ray_count, 0U);
   EXPECT_EQ(map.rejected_ray_count, 4U);
   EXPECT_EQ(map.sectors[0].state, SectorState::kUnknown);
+}
+
+TEST(SectorMapBuilderTest, RejectsRayWithZeroTimestamp)
+{
+  SectorMapBuilder builder{kConfig};
+  builder.reset(true);
+  builder.addRay(makeNoReturn(0.0F, 0U));
+
+  const auto map = builder.finalize();
+  EXPECT_EQ(map.accepted_ray_count, 0U);
+  EXPECT_EQ(map.rejected_ray_count, 1U);
+}
+
+TEST(SectorMapBuilderTest, RejectsReturnWithInvalidRange)
+{
+  SectorMapBuilder builder{kConfig};
+  builder.reset(true);
+  builder.addRay(makeReturn(std::numeric_limits<float>::quiet_NaN()));
+  builder.addRay(makeReturn(0.0F));
+  builder.addRay(makeReturn(-1.0F));
+
+  const auto map = builder.finalize();
+  EXPECT_EQ(map.accepted_ray_count, 0U);
+  EXPECT_EQ(map.rejected_ray_count, 3U);
 }
 
 TEST(SectorMapBuilderTest, UsesEarliestAcceptedRayTimestamp)
@@ -302,7 +437,7 @@ TEST(SectorMapBuilderTest, UsesEarliestAcceptedRayTimestamp)
 
 TEST(SectorMapBuilderTest, ExactPositiveBoundaryUpdatesBothAdjacentSectors)
 {
-  SectorMapBuilder builder{kConfig};
+  SectorMapBuilder builder{kSingle};
   builder.reset(true);
   builder.addRay(makeReturn(10.0F, 2.5F * kDegreesToRadians));
 
@@ -313,7 +448,7 @@ TEST(SectorMapBuilderTest, ExactPositiveBoundaryUpdatesBothAdjacentSectors)
 
 TEST(SectorMapBuilderTest, ExactNegativeBoundaryUpdatesBothAdjacentSectors)
 {
-  SectorMapBuilder builder{kConfig};
+  SectorMapBuilder builder{kSingle};
   builder.reset(true);
   builder.addRay(makeReturn(10.0F, -2.5F * kDegreesToRadians));
 
@@ -322,31 +457,17 @@ TEST(SectorMapBuilderTest, ExactNegativeBoundaryUpdatesBothAdjacentSectors)
   EXPECT_EQ(map.sectors[71].state, SectorState::kOccupied);
 }
 
-TEST(SectorMapBuilderTest, AllPositiveFloatBoundariesUpdateBothAdjacentSectors)
+TEST(SectorMapBuilderTest, AllFloatBoundariesUpdateBothAdjacentSectors)
 {
   for (std::size_t lower_index = 0U; lower_index < kSectorCount; ++lower_index) {
     SCOPED_TRACE(lower_index);
-    SectorMapBuilder builder{kConfig};
+    SectorMapBuilder builder{kSingle};
     builder.reset(true);
-    const float boundary_deg = 2.5F + 5.0F * static_cast<float>(lower_index);
-    builder.addRay(makeReturn(10.0F, boundary_deg * kDegreesToRadians));
+    const float boundary_rad =
+      (static_cast<float>(lower_index) + 0.5F) * (360.0F / static_cast<float>(kSectorCount)) *
+      kDegreesToRadians;
+    builder.addRay(makeReturn(10.0F, boundary_rad));
 
-    const auto map = builder.finalize();
-    EXPECT_EQ(map.sectors[lower_index].state, SectorState::kOccupied);
-    EXPECT_EQ(map.sectors[(lower_index + 1U) % kSectorCount].state, SectorState::kOccupied);
-  }
-}
-
-TEST(SectorMapBuilderTest, AllNegativeFloatBoundariesUpdateBothAdjacentSectors)
-{
-  for (std::size_t boundary_number = 0U; boundary_number < kSectorCount; ++boundary_number) {
-    SCOPED_TRACE(boundary_number);
-    SectorMapBuilder builder{kConfig};
-    builder.reset(true);
-    const float boundary_deg = -(2.5F + 5.0F * static_cast<float>(boundary_number));
-    builder.addRay(makeReturn(10.0F, boundary_deg * kDegreesToRadians));
-
-    const std::size_t lower_index = kSectorCount - 1U - boundary_number;
     const auto map = builder.finalize();
     EXPECT_EQ(map.sectors[lower_index].state, SectorState::kOccupied);
     EXPECT_EQ(map.sectors[(lower_index + 1U) % kSectorCount].state, SectorState::kOccupied);
@@ -358,14 +479,14 @@ TEST(SectorMapBuilderTest, JustOffBoundaryDoesNotDuplicateObstacleEvidence)
   constexpr float kBoundaryRad = 27.5F * kDegreesToRadians;
   constexpr float kOutsideNumericalToleranceRad = 1.0e-4F;
 
-  SectorMapBuilder lower_builder{kConfig};
+  SectorMapBuilder lower_builder{kSingle};
   lower_builder.reset(true);
   lower_builder.addRay(makeReturn(10.0F, kBoundaryRad - kOutsideNumericalToleranceRad));
   const auto lower_map = lower_builder.finalize();
   EXPECT_EQ(lower_map.sectors[5].state, SectorState::kOccupied);
   EXPECT_EQ(lower_map.sectors[6].state, SectorState::kUnknown);
 
-  SectorMapBuilder upper_builder{kConfig};
+  SectorMapBuilder upper_builder{kSingle};
   upper_builder.reset(true);
   upper_builder.addRay(makeReturn(10.0F, kBoundaryRad + kOutsideNumericalToleranceRad));
   const auto upper_map = upper_builder.finalize();
@@ -373,7 +494,7 @@ TEST(SectorMapBuilderTest, JustOffBoundaryDoesNotDuplicateObstacleEvidence)
   EXPECT_EQ(upper_map.sectors[6].state, SectorState::kOccupied);
 }
 
-TEST(SectorMapBuilderTest, BoundaryNoReturnDoesNotDuplicateClearCoverage)
+TEST(SectorMapBuilderTest, BoundaryNoReturnDoesNotDuplicateFreeEvidence)
 {
   SectorMapBuilder builder{kConfig};
   builder.reset(true);
@@ -389,7 +510,7 @@ TEST(SectorMapBuilderTest, BoundaryNoReturnDoesNotDuplicateClearCoverage)
 
 TEST(SectorMapBuilderTest, WrapBoundaryNeverIndexesOutsideSeventyTwoSectors)
 {
-  SectorMapBuilder builder{kConfig};
+  SectorMapBuilder builder{kSingle};
   builder.reset(true);
   builder.addRay(makeReturn(11.0F, 3.14159265358979323846F));
   builder.addRay(makeReturn(9.0F, -3.14159265358979323846F));
@@ -400,67 +521,12 @@ TEST(SectorMapBuilderTest, WrapBoundaryNeverIndexesOutsideSeventyTwoSectors)
   EXPECT_EQ(map.accepted_ray_count, 2U);
 }
 
-TEST(SectorMapBuilderTest, RejectsRayWithZeroTimestamp)
-{
-  SectorMapBuilder builder{kConfig};
-  builder.reset(true);
-  builder.addRay(makeReturn(5.0F, 0.0F, 0U));
-  builder.addRay(makeNoReturn(0.0F, 0U));
-
-  const auto map = builder.finalize();
-  EXPECT_EQ(map.accepted_ray_count, 0U);
-  EXPECT_EQ(map.rejected_ray_count, 2U);
-  EXPECT_EQ(map.sample_timestamp_ns, 0U);
-  EXPECT_EQ(map.sectors[0].state, SectorState::kUnknown);
-}
-
-TEST(SectorMapBuilderTest, RejectsReturnWithInvalidRange)
-{
-  SectorMapBuilder builder{kConfig};
-  builder.reset(true);
-  builder.addRay(makeReturn(std::numeric_limits<float>::quiet_NaN()));
-  builder.addRay(makeReturn(std::numeric_limits<float>::infinity()));
-  builder.addRay(makeReturn(0.0F));
-  builder.addRay(makeReturn(-3.0F));
-
-  const auto map = builder.finalize();
-  EXPECT_EQ(map.accepted_ray_count, 0U);
-  EXPECT_EQ(map.rejected_ray_count, 4U);
-  EXPECT_EQ(map.sectors[0].state, SectorState::kUnknown);
-}
-
-TEST(SectorMapBuilderTest, ElevationBoundsAreInclusive)
-{
-  SectorMapBuilder builder{kConfig};
-  builder.reset(true);
-
-  auto at_minimum = makeNoReturn();
-  at_minimum.elevation_rad = kConfig.min_elevation_rad;
-  builder.addRay(at_minimum);
-
-  auto at_maximum = makeNoReturn();
-  at_maximum.elevation_rad = kConfig.max_elevation_rad;
-  builder.addRay(at_maximum);
-
-  auto below_minimum = makeNoReturn();
-  below_minimum.elevation_rad = std::nextafter(kConfig.min_elevation_rad, -1.0F);
-  builder.addRay(below_minimum);
-
-  auto above_maximum = makeNoReturn();
-  above_maximum.elevation_rad = std::nextafter(kConfig.max_elevation_rad, 1.0F);
-  builder.addRay(above_maximum);
-
-  const auto map = builder.finalize();
-  EXPECT_EQ(map.accepted_ray_count, 2U);
-  EXPECT_EQ(map.rejected_ray_count, 2U);
-  EXPECT_EQ(map.sectors[0].state, SectorState::kObservedClear);
-}
-
 TEST(SectorMapBuilderTest, ResetClearsPreviousWindow)
 {
   SectorMapBuilder builder{kConfig};
   builder.reset(true);
   builder.addRay(makeReturn(5.0F, 0.0F, 7'000U));
+  builder.addRay(makeReturn(5.1F, 0.0F, 7'000U));
   builder.addRay(makeNoReturn(0.0F, 7'000U));
   builder.addRay(makeNoReturn(0.0F, 0U));
 
@@ -474,17 +540,6 @@ TEST(SectorMapBuilderTest, ResetClearsPreviousWindow)
   for (const auto & sector : map.sectors) {
     EXPECT_EQ(sector.state, SectorState::kUnknown);
     EXPECT_EQ(sector.contributing_ray_count, 0U);
+    EXPECT_TRUE(std::isnan(sector.obstacle_distance_m));
   }
-}
-
-TEST(SectorMapBuilderTest, TooCloseOverridesOccupiedInSameSector)
-{
-  SectorMapBuilder builder{kConfig};
-  builder.reset(true);
-  builder.addRay(makeReturn(8.0F));
-  builder.addRay(makeReturn(0.05F));
-
-  const auto sector = builder.finalize().sectors[0];
-  EXPECT_EQ(sector.state, SectorState::kTooClose);
-  EXPECT_FLOAT_EQ(sector.distance_m, 0.0F);
 }

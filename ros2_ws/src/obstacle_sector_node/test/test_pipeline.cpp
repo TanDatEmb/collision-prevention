@@ -21,7 +21,7 @@ namespace
 {
 
 // Test fixture values, not approved platform values.
-constexpr SectorMapConfig kConfig{-0.2F, 0.4F, 2U};
+constexpr SectorMapConfig kConfig{1.0F, 1.0F, 0.5F, 2U, 2U};
 constexpr uint64_t kWindowNs = 1'000'000U;
 constexpr uint16_t kUnknown = std::numeric_limits<uint16_t>::max();
 
@@ -51,7 +51,7 @@ TEST(SectorMapPipelineTest, RejectsNullSourceAndInvalidConfig)
 {
   EXPECT_THROW(SectorMapPipeline(nullptr, kConfig), std::invalid_argument);
   EXPECT_THROW(
-    SectorMapPipeline(replay({}), SectorMapConfig{0.4F, -0.2F, 2U}), std::invalid_argument);
+    SectorMapPipeline(replay({}), SectorMapConfig{1.0F, 1.0F, 0.5F, 0U, 2U}), std::invalid_argument);
 }
 
 TEST(SectorMapPipelineTest, ContinuousNoReturnsEncodeObservedClearWithTheEarliestTimestamp)
@@ -78,9 +78,11 @@ TEST(SectorMapPipelineTest, LostPacketsGiveUnknownNotClear)
   EXPECT_EQ(result.message->distances[0], kUnknown);
 }
 
-TEST(SectorMapPipelineTest, ReturnInsideTheRangeEncodesItsDistanceInCentimetres)
+TEST(SectorMapPipelineTest, ConfirmedReturnsInsideTheRangeEncodeTheirDistanceInCentimetres)
 {
-  SectorMapPipeline pipeline{replay({makeReturn(5'000'000U, 12.34F)}), kConfig};
+  // Two returns inside one window confirm the obstacle (n_obstacle 2); a lone return would be noise.
+  SectorMapPipeline pipeline{
+    replay({makeReturn(5'000'000U, 12.34F), makeReturn(5'000'100U, 12.35F)}), kConfig};
 
   const auto result = pipeline.step();
 
