@@ -26,7 +26,8 @@ and prints for every response found:
   every step (up and down): rise time 10 to 90 %, overshoot percent of the step, settling time to 2 % of the
     step, ringing count (crossings of the +-2 % band by the error, after the first crossing). For a step to
     zero the overshoot is the reversal below zero.
-  ramp (setpoint falls linearly from V to zero): the following lag in seconds (mean error over the last
+  ramp (setpoint falls linearly from V to zero; the line is fitted to the rows between 10 and 90 percent of V, so a
+    ramp that starts or ends between two logged rows, as in a 10 Hz log, is measured): the following lag in seconds (mean error over the last
     --ramp-window-s of the ramp divided by the ramp rate), the final overshoot below zero (m/s and percent
     of V), the settling time to 2 % after the ramp end and the ringing count after the ramp end.
   attitude, per response, from the start of the command to the settled time: roll-rate and pitch-rate RMS,
@@ -36,7 +37,10 @@ INVALID (exit 2) when a selected response (steps down at --speeds; steps up with
 --ramp-decels) has not settled (sustained, before the next command), lacks position
 samples before the command, lacks setpoint coverage, has a sample gap above --max-gap-s, when time goes
 backwards in any log, when a ramp setpoint is not linear, too short or has no steady error, or when a present
-attitude or rate log has too few samples or a gap above --max-rate-gap-s inside a response. Every limit is a
+vehicle_attitude or vehicle_angular_velocity log has too few samples or a gap above --max-rate-gap-s inside a
+response; every problem names its topic. The attitude setpoint is logged more slowly: a gap above --max-cmd-gap-s
+only makes the commanded peaks null and adds a note. A ramp must last twice --ramp-window-s: for ramp-speed 6 and
+decel 3 (2 s) use --ramp-window-s 0.8. Every limit is a
 bench argument; none is an approved platform value. Run with python3 without -I (pymavlink) for `fly`.
 """
 import argparse
@@ -339,13 +343,13 @@ def analyze(a):
         j = max(k for k in range(len(tp)) if tp[k] <= t_pre + 1e-9) if have else 0
         return have and t_pre - tp[j] <= a.max_gap_s, j
 
-    def attitude(t_a, t_b, problems):
+    def attitude(t_a, t_b, problems, notes):
         """Chatter and tilt of the window [t_a, t_b] from the logs that exist; a window they do not cover is a problem."""
         out = {}
         if rate is not None:
             lo, hi = bisect.bisect_left(rate["t"], t_a), bisect.bisect_right(rate["t"], t_b)
             if not (t_b > t_a and window_covered(rate["t"], lo, hi, t_a, t_b, a.max_rate_gap_s, MIN_RATE_SAMPLES)):
-                problems.append("the angular velocity log has too few samples or a gap above %.3f s in the response" % a.max_rate_gap_s)
+                problems.append("vehicle_angular_velocity log: too few samples or a gap above %.3f s in the response" % a.max_rate_gap_s)
             else:
                 tt = rate["t"][lo:hi]
                 for name, col in (("roll", "xyz[0]"), ("pitch", "xyz[1]")):
@@ -354,14 +358,23 @@ def analyze(a):
                     frac = power_fraction_above(tt, x, a.chatter_hz)
                     out[name + "_rate_power_above_%ghz_fraction" % a.chatter_hz] = None if frac is None else round(frac, 4)
                     if frac is None:
-                        problems.append("the %s-rate window has no spectrum above %.2f Hz" % (name, a.chatter_hz))
+                        problems.append("vehicle_angular_velocity log: the %s-rate window has no spectrum above %.2f Hz (sample rate too low)" % (name, a.chatter_hz))
                 out["yaw_rate_mean_deg_s"] = r3(math.degrees(sum(rate["xyz[2]"][lo:hi]) / (hi - lo)))
-        for log, label in ((att_tilt, "peak_%s_deg"), (cmd_tilt, "peak_%s_cmd_deg")):
+        # the peak tilt comes from vehicle_attitude (a hole there is a problem); the commanded tilt from the attitude
+        # setpoint, which is logged more slowly and has its own limit: a hole only makes the commanded tilt unavailable
+        for log, label, topic, limit, hard in ((att_tilt, "peak_%s_deg", "vehicle_attitude", a.max_rate_gap_s, True),
+                                               (cmd_tilt, "peak_%s_cmd_deg", "vehicle_attitude_setpoint", a.max_cmd_gap_s, False)):
             if log is None:
                 continue
             lo, hi = bisect.bisect_left(log["t"], t_a), bisect.bisect_right(log["t"], t_b)
-            if not (t_b > t_a and window_covered(log["t"], lo, hi, t_a, t_b, a.max_rate_gap_s, 2)):
-                problems.append("an attitude log has too few samples or a gap above %.3f s in the response" % a.max_rate_gap_s)
+            if not (t_b > t_a and window_covered(log["t"], lo, hi, t_a, t_b, limit, 2)):
+                msg = "%s log: too few samples or a gap above %.3f s in the response" % (topic, limit)
+                if hard:
+                    problems.append(msg)
+                else:
+                    notes.append("%s, so %s and %s are null" % (msg, label % "roll", label % "pitch"))
+                    for name in ("roll", "pitch"):
+                        out[label % name] = None
             else:
                 for name in ("roll", "pitch"):
                     out[label % name] = r3(max(abs(v) for v in log[name][lo:hi]))
@@ -405,11 +418,11 @@ def analyze(a):
         if settled_t is None:
             problems.append("did not settle (sustained, before the next command)")
         if not covered:
-            problems.append("no fresh position sample before the command")
+            problems.append("vehicle_local_position log: no fresh position sample before the command")
         if worst_gap > a.max_gap_s:
-            problems.append("position sample gap above %.2f s" % a.max_gap_s)
+            problems.append("vehicle_local_position log: sample gap above %.2f s" % a.max_gap_s)
         if setpoint_gap > a.max_gap_s:
-            problems.append("setpoint coverage gap above %.2f s" % a.max_gap_s)
+            problems.append("vehicle_local_position_setpoint log: coverage gap above %.2f s" % a.max_gap_s)
         rec = {"t_s": round(t0, 2), "max_sample_gap_s": r3(worst_gap), "position_covered_before_step": covered,
                "max_setpoint_gap_s": r3(setpoint_gap)}
         if kind == "ramp_down":
@@ -471,7 +484,14 @@ def analyze(a):
                             "t63_s": r3(t63)})
             else:
                 rec["target_speed_m_s"] = r3(abs(target))
-        rec.update(attitude(t0, settled_t if settled_t is not None else wend, problems))
+        notes = []
+        for key, what in (("rise_10_90_s", "the speed did not reach 90 percent of the step"),
+                          ("settle_2pct_s", "the speed was outside the 2 percent band when the response window ended (hold, next command or log)"),
+                          ("settle_2pct_after_ramp_s", "the speed was outside the 2 percent band when the response window ended (hold, next command or log)")):
+            if key in rec and rec[key] is None:
+                notes.append("%s is null: %s" % (key, what))
+        rec.update(attitude(t0, settled_t if settled_t is not None else wend, problems, notes))
+        rec["notes"] = notes
         rec["problems"] = problems
         return rec
 
@@ -500,18 +520,20 @@ def analyze(a):
             ups.append(respond("step_up", i, i - 1, sign, abs(c), sign * v_pre, covered, j, ts[i], t_next))
         elif abs(p) >= SETTLE_BAND and abs(c) < SETTLE_BAND:  # the end of a falling setpoint (a step down was handled above)
             sign = 1.0 if p > 0 else -1.0
-            # walk back over a non-increasing run (a sample-and-hold ramp repeats values) to its top, then forward to
-            # the last row that still has the top value: the ramp starts after the plateau
-            m = i - 1
-            while m > 0 and -1e-6 <= sign * (spv[m - 1] - spv[m]) < STEP_MIN:
-                m -= 1
-            m = max(k for k in range(m, i) if abs(spv[k] - spv[m]) <= 1e-6)
-            v_top = sign * spv[m]
-            if i - 1 - m < RAMP_MIN_ROWS - 1 or v_top < STEP_MIN or ts[i - 1] <= ts[m]:
+            # the run of non-increasing setpoints that ends here starts at the plateau (repeated values, as in a
+            # sample-and-hold log, belong to it); the ramp is measured on its body, between 10 and 90 percent of the
+            # plateau value, because the rows next to the plateau and to zero are partial: a ramp starts and ends
+            # between two logged rows, and a row is only a sample of the command
+            m0 = i - 1
+            while m0 > 0 and -1e-6 <= sign * (spv[m0 - 1] - spv[m0]) < STEP_MIN:
+                m0 -= 1
+            v_top = sign * spv[m0]
+            body = [k for k in range(m0, i) if 0.1 * v_top <= sign * spv[k] <= 0.9 * v_top]
+            if v_top < STEP_MIN or len(body) < RAMP_MIN_ROWS:
                 continue
-            # the falling line is the least-squares line through the rows m..i-1: for a sample-and-hold setpoint it runs
-            # through the middle of the stairs, so the error of the vehicle is measured against what it was commanded
-            tk, rk = [ts[k] for k in range(m, i)], [sign * spv[k] for k in range(m, i)]
+            # the falling line is the least-squares line through the body rows: exact for a linear setpoint, through the
+            # middle of the stairs for a sample-and-hold one; it is extended to the plateau value and to zero
+            tk, rk = [ts[k] for k in body], [sign * spv[k] for k in body]
             t_mean, r_mean = sum(tk) / len(tk), sum(rk) / len(rk)
             denom = sum((t - t_mean) ** 2 for t in tk)
             if denom <= 0.0:
@@ -519,13 +541,14 @@ def analyze(a):
             slope = -sum((t - t_mean) * (r - r_mean) for t, r in zip(tk, rk)) / denom  # the fall rate, m/s^2
             if slope <= 0.0:
                 continue
-            line0 = r_mean + slope * (t_mean - ts[m])  # the line at the ramp start
-            nonlin = max(abs(r - (line0 - slope * (t - ts[m]))) for t, r in zip(tk, rk))
-            covered, j = pre_sample(ts[m])
-            v_pre = pv[j] if covered else spv[m]
+            t_start = t_mean - (v_top - r_mean) / slope
+            nonlin = max(abs(r - (r_mean - slope * (t - t_mean))) for t, r in zip(tk, rk))
+            i_prev = max([k for k in range(m0, i) if ts[k] <= t_start + 1e-9] or [m0])
+            covered, j = pre_sample(ts[i_prev])
+            v_pre = pv[j] if covered else spv[i_prev]
             t_next = next((ts[k] for k in range(i, len(ts)) if not abs(spv[k]) < SETTLE_BAND), float("inf"))
-            ramp = {"V": v_top, "rate": slope, "line0": line0, "t_end": ts[m] + line0 / slope, "nonlinearity": nonlin}
-            ramps.append(respond("ramp_down", m, m, sign, 0.0, sign * v_pre, covered, j, ts[m], t_next, ramp))
+            ramp = {"V": v_top, "rate": slope, "line0": v_top, "t_end": t_start + v_top / slope, "nonlinearity": nonlin}
+            ramps.append(respond("ramp_down", i_prev, i_prev, sign, 0.0, sign * v_pre, covered, j, t_start, t_next, ramp))
     wanted = [round(v, 1) for v in a.speeds]
     kept_down = [s for s in downs if any(abs(s["speed_before_m_s"] - w) < 0.5 for w in wanted)]
     kept_up = [s for s in ups if any(abs(s["target_speed_m_s"] - w) < 0.5 for w in wanted)]
@@ -622,6 +645,9 @@ def main():
                    help="bench value [m/s]: largest deviation of the ramp setpoint from a straight line")
     n.add_argument("--max-rate-gap-s", type=float, default=0.05,
                    help="bench value [s]: largest gap between angular velocity or attitude samples inside a response")
+    n.add_argument("--max-cmd-gap-s", type=float, default=0.1,
+                   help="bench value [s]: largest gap between attitude setpoint samples inside a response; a larger gap only makes the "
+                        "commanded tilt null (that topic is logged at about 20 Hz)")
     n.add_argument("--chatter-hz", type=float, default=2.0,
                    help="frequency [Hz] above which the rate power counts as chatter (the issue's definition)")
     a = ap.parse_args()

@@ -119,7 +119,7 @@ def ts_us(t):
     return int(round(t * 1e6))
 
 
-def write_logs(prefix, system, inputs, t_end, pos_keep=None, sp_until=None, swap_pos=None, pos_from=0.0, sp_from=0.0, sp_hold=None):
+def write_logs(prefix, system, inputs, t_end, pos_keep=None, sp_until=None, swap_pos=None, pos_from=0.0, sp_from=0.0, sp_hold=None, sp_dt=SP_DT):
     with open(prefix + "vehicle_local_position_0.csv", "w", newline="") as f:
         w = csv.writer(f)
         w.writerow(["timestamp", "vx", "vy"])
@@ -135,8 +135,8 @@ def write_logs(prefix, system, inputs, t_end, pos_keep=None, sp_until=None, swap
     with open(prefix + "vehicle_local_position_setpoint_0.csv", "w", newline="") as f:
         w = csv.writer(f)
         w.writerow(["timestamp", "vx", "vy"])
-        for k in range(int(round(t_end / SP_DT)) + 1):
-            t = k * SP_DT
+        for k in range(int(round(t_end / sp_dt)) + 1):
+            t = k * sp_dt
             if sp_from <= t and (sp_until is None or t <= sp_until):
                 # sp_hold: the setpoint is updated every sp_hold s and the rows in between repeat it
                 t_cmd = t if sp_hold is None else math.floor(t / sp_hold + 1e-9) * sp_hold
@@ -149,7 +149,8 @@ def quat(roll_deg, pitch_deg):
     return [cr * cp, sr * cp, cr * sp, -sr * sp]  # yaw zero
 
 
-def write_attitude(prefix, t_end, rate_fn, angle_fn, cmd_fn, dt=0.004, keep=None, cmd_dt=0.01, back=False):
+def write_attitude(prefix, t_end, rate_fn, angle_fn, cmd_fn, dt=0.004, keep=None, cmd_dt=0.01, back=False, att_keep=None,
+                   cmd_keep=None):
     """rate_fn(t) -> (roll, pitch, yaw) rates [deg/s]; angle_fn / cmd_fn(t) -> (roll, pitch) [deg]."""
     n = int(round(t_end / dt)) + 1
     ts = [k * dt for k in range(n) if keep is None or keep(k * dt)]
@@ -164,12 +165,14 @@ def write_attitude(prefix, t_end, rate_fn, angle_fn, cmd_fn, dt=0.004, keep=None
         w = csv.writer(f)
         w.writerow(["timestamp", "q[0]", "q[1]", "q[2]", "q[3]"])
         for t in ts:
-            w.writerow([ts_us(t)] + quat(*angle_fn(t)))
+            if att_keep is None or att_keep(t):
+                w.writerow([ts_us(t)] + quat(*angle_fn(t)))
     with open(prefix + "vehicle_attitude_setpoint_0.csv", "w", newline="") as f:
         w = csv.writer(f)
         w.writerow(["timestamp", "q_d[0]", "q_d[1]", "q_d[2]", "q_d[3]"])
         for k in range(int(round(t_end / cmd_dt)) + 1):
-            w.writerow([ts_us(k * cmd_dt)] + quat(*cmd_fn(k * cmd_dt)))
+            if cmd_keep is None or cmd_keep(k * cmd_dt):
+                w.writerow([ts_us(k * cmd_dt)] + quat(*cmd_fn(k * cmd_dt)))
 
 
 def run_tool(prefix, extra):
@@ -436,6 +439,71 @@ valid_case("log with a step down only is valid without --require-steps-up",
            lambda res: (res["steps_up"] == [] and res["t_lat_rounded_up_s"] == 0.4, ""))
 
 
+# ---- first real SITL run (parent session): two logging artefacts made every response INVALID
+# 1. the setpoint log is 10 Hz and the ramp starts between two rows (8.07 s after a step that is on a row): the first row
+#    after the plateau is a partial step; the steps themselves are on rows (rest 7.93 s)
+ramps10_inputs, ramps10_ends, build10 = ramps_log(First(tau), [(1, 2.0), (-1, 3.0)], plateau_s=8.07, rest_s=7.93, sp_dt=0.1)
+valid_case("perfect ramps logged at 10 Hz, starting between two rows, are valid", build10,
+           ["--speeds", "", "--ramp-decels", "2,3"],
+           lambda res: (len(res["ramps_down_to_zero"]) == 2
+                        and all(near(r["ramp_following_lag_s"], tau, 0.03) for r in res["ramps_down_to_zero"])
+                        and all(r["setpoint_nonlinearity_m_s"] < 0.02 for r in res["ramps_down_to_zero"]),
+                        str([r["setpoint_nonlinearity_m_s"] for r in res["ramps_down_to_zero"]])))
+invalid_case("a stepped ramp (setpoint changes every 0.5 s) is still not linear",
+             ramps_log(First(tau), [(1, 1.0)], sp_hold=0.5)[2], ["--speeds", "", "--ramp-decels", "1"], "not linear")
+# 2. the attitude setpoint is logged at about 18 to 21 Hz, the attitude and the rates much faster
+valid_case("attitude setpoint at 18 Hz does not invalidate a response that uses rates and attitude",
+           attitude_build(cmd_dt=0.056), ["--speeds", "5"], check_chatter(False))
+
+
+def cmd_hole_build(prefix):
+    step_log(first)(prefix)
+    write_attitude(prefix, 24.0, lambda t: (bump_rate(t, ROLL_PEAK), bump_rate(t, THETA), 0.0),
+                   lambda t: (bump(t, ROLL_PEAK), bump(t, THETA)), lambda t: (1.5 * bump(t, ROLL_PEAK), 1.5 * bump(t, THETA)),
+                   cmd_keep=lambda t: not (12.3 < t < 13.2))
+
+
+valid_case("a hole in the attitude setpoint log: commanded tilt not available, response still valid", cmd_hole_build,
+           ["--speeds", "5"],
+           lambda res: (res["steps_down_to_zero"][0]["peak_pitch_cmd_deg"] is None
+                        and any("vehicle_attitude_setpoint" in n for n in res["steps_down_to_zero"][0]["notes"])
+                        and res["steps_down_to_zero"][0]["peak_pitch_deg"] is not None, ""))
+
+
+def att_hole_build(prefix):
+    step_log(first)(prefix)
+    write_attitude(prefix, 24.0, lambda t: (bump_rate(t, ROLL_PEAK), bump_rate(t, THETA), 0.0),
+                   lambda t: (bump(t, ROLL_PEAK), bump(t, THETA)), lambda t: (0.0, 0.0),
+                   att_keep=lambda t: not (12.3 < t < 12.6))
+
+
+invalid_case("a hole in the attitude log is INVALID and names that topic", att_hole_build, ["--speeds", "5"], "vehicle_attitude log")
+# the problems name the topic that failed
+invalid_case("a position gap names the position log", step_log(first, pos_keep=lambda t: not (12.2 < t < 13.0)),
+             ["--speeds", "5"], "vehicle_local_position log")
+invalid_case("a setpoint coverage gap names the setpoint log", step_log(first, sp_until=13.0), ["--speeds", "5"],
+             "vehicle_local_position_setpoint log")
+
+
+class Scaled:
+    """The same system with a steady-state gain."""
+    def __init__(self, system, gain):
+        self.system, self.gain = system, gain
+
+    def S(self, t):
+        return self.gain * self.system.S(t)
+
+    def R(self, t):
+        return self.gain * self.system.R(t)
+
+
+valid_case("settling to 2 percent that never happens says why (null with a note)",
+           lambda prefix: write_logs(prefix, Scaled(first, 0.97), [("step", 2.0, 3.0), ("step", 12.0, -3.0)], 24.0),
+           ["--speeds", "3"],
+           lambda res: (res["steps_up"][0]["settle_2pct_s"] is None
+                        and any("2 percent" in n for n in res["steps_up"][0]["notes"]), str(res["steps_up"][0].get("notes"))))
+
+
 def tool_module():
     spec = importlib.util.spec_from_file_location("tool_under_test", TOOL)
     mod = importlib.util.module_from_spec(spec)
@@ -519,7 +587,7 @@ invalid_case("angular velocity gap inside a response",
                              write_attitude(prefix, 24.0, lambda t: (bump_rate(t, ROLL_PEAK), bump_rate(t, THETA), 0.0),
                                             lambda t: (bump(t, ROLL_PEAK), bump(t, THETA)), lambda t: (0.0, 0.0),
                                             keep=lambda t: not (12.3 < t < 12.6))),
-             ["--speeds", "5"], "angular velocity log")
+             ["--speeds", "5"], "vehicle_angular_velocity log")
 invalid_case("time goes backwards in the angular velocity log",
              lambda prefix: (step_log(first)(prefix),
                              write_attitude(prefix, 24.0, lambda t: (bump_rate(t, ROLL_PEAK), bump_rate(t, THETA), 0.0),
@@ -529,7 +597,7 @@ invalid_case("angular velocity and attitude logs too sparse for a spectrum",
              lambda prefix: (step_log(first)(prefix),
                              write_attitude(prefix, 24.0, lambda t: (bump_rate(t, ROLL_PEAK), bump_rate(t, THETA), 0.0),
                                             lambda t: (bump(t, ROLL_PEAK), bump(t, THETA)), lambda t: (0.0, 0.0), dt=0.2)),
-             ["--speeds", "5"], "angular velocity log")
+             ["--speeds", "5"], "vehicle_angular_velocity log")
 
 print("%d of %d cases passed" % (sum(results), len(results)))
 sys.exit(0 if all(results) else 1)
