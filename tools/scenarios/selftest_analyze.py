@@ -229,6 +229,10 @@ results.append(ramp_case("position samples missing during the response", 1.2, No
 results.append(run("reordered constraint timestamps hide SAFE_STOP", series(stop_ys(stop_at=17.0)), "INVALID",
                    states=((0, 3), (0.3, 5), (0.4, 4)), extra=REQ, swap_constraint_rows=(2, 3)))
 
+# a state that ends exactly when the approach starts (t = 0.30 s) was not in force during it
+results.append(run("SAFE_STOP ends exactly when the approach starts", series([0.0, 0.0] + stop_ys(stop_at=17.0)), "PASS",
+                   states=((0, 5), (0.3, 4)), extra=REQ))
+
 
 def command_case(name, command, actual, expect_code, swap_position_rows=None, drop_position_before=None,
                  truncate_setpoint_after=None, drop_setpoint_between=None):

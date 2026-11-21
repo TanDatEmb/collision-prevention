@@ -166,7 +166,9 @@ def analyse(prefix, wall_dist, direction, lidar_offset, margin, require_constrai
             if covered_to < t_end or any(b - a > max_cgap for a, b in zip(ct, ct[1:]) if b >= t[start] and a <= t_end):
                 raise Invalid("the constraint log has a gap above %.1f s or stops before the vehicle came to rest"
                               % max_cgap)
-            window = [(round(ti, 2), si) for ti, te, si in zip(ct, ends, st) if ti <= t_end and te >= t[start]]
+            # a state holds the half-open interval [ti, te): one that ends when the approach starts, or has no length
+            # (equal stamps), was never in force during the approach
+            window = [(round(ti, 2), si) for ti, te, si in zip(ct, ends, st) if ti <= t_end and te > max(ti, t[start])]
             bad = [w for w in window if w[1] in (0, 1, 2)]
             if bad:
                 raise Invalid("CP was not enforcing during the approach (first [t_s, state]: %s)" % (bad[0],))
