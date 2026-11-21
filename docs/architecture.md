@@ -213,7 +213,7 @@ flowchart LR
 | `px4_obstacle_bridge` | Reference impl | FLU/CCW to BODY_FRD/CW, cm conversion, fail-closed encoding | Filtering to improve results | SYS-CP-002, NFR-CP-002 |
 | Orin node (`obstacle_sector_node`) | Pipeline, platform config loader, ROS node class and an executable with a planar-scan source (Gazebo) and a Livox source (SDK2) | One process composing source, map, bridge; publishes `/fmu/in/obstacle_distance` | Safety policy | SYS-CP-016, NFR-CP-003 |
 | `cp_brake` (PX4 module) | Fork PRs #1 to #6: checks, caps, limiter, state machine; no heading history and no hook yet, ADR 0014 | Input validation, freshness, stopping model, sector caps, state machine | Planning, attitude, sensor filtering | SYS-CP-001, 003, 007, 008, 012, 013, 014 |
-| Horizontal limiter hook (PX4) | Not implemented, ADR 0014 | Apply caps to the final horizontal setpoint | Sensor, DDS, mode logic | SYS-CP-005, 006, 012 |
+| Horizontal limiter hook (PX4) | Implemented in `mc_pos_control` (fork PR #8, merged 2026-11-21), bench proof only | Apply caps to the final horizontal setpoint | Sensor, DDS, mode logic | SYS-CP-005, 006, 012 |
 | Existing PX4 modes and failsafes | Existing | Mode and failsafe handling | CP-owned mode logic | SYS-CP-008 |
 
 ### Feature decomposition (approved by the owner, 2026-11-20)
@@ -234,7 +234,7 @@ flowchart LR
 | FEAT-12 | Cap law: stopping model per sector | `cp_brake` | Exists; `CPB_T_LAT` unmeasured | SYS-CP-001, 012, 027 |
 | FEAT-13 | Release policy: dwell and rise | `cp_brake` | Exists | SYS-CP-013 |
 | FEAT-14 | State machine and start-up | `cp_brake` | Exists; start-up open (#112) | SYS-CP-007, 014, 024 |
-| FEAT-15 | Setpoint limiting hook | `mc_pos_control` | In review, held (fork PR #8) | SYS-CP-005, 006, 012 |
+| FEAT-15 | Setpoint limiting hook | `mc_pos_control` | Exists (fork PR #8, merged), SITL stopping proof at one world | SYS-CP-005, 006, 012 |
 | FEAT-16 | Mode scope and release | hook, `cp_brake` | Partial: Position and Mission only; release not recorded (#113) | SYS-CP-008, 023 |
 | FEAT-17 | Logging, status, diagnostics | `cp_brake`, hook, Orin node | Partial | SYS-CP-009, NFR-CP-003 |
 | FEAT-18 | Configuration and platform values | `config/platforms`, `CPB_` parameters | Partial: values TBD, sentinels fail safe | SYS-CP-007, OPEN-005 |
@@ -322,10 +322,12 @@ source: ADR 0004.
 - `cp_brake_constraints` (uORB, from `cp_brake` to the limiter): publication `timestamp`;
   `sample_timestamp` of the source map; `heading_rad` and `heading_valid` at the sample time; 72
   body-FRD velocity caps in m/s clamped to `[0, CPB_MAX_V]`; `enforcement_active`; `valid`; state;
-  reason flags; counters. `cp_brake_status` (uORB, logging) carries the three timestamps and ages
-  (the status timestamp is taken when the hook applies the constraint, so sample-to-status is
-  sample-to-enforcement), input and output setpoints, actual velocity, active sector, minimum
-  range, free and stopping distance, state, reasons and counters.
+  reason flags; counters. `cp_brake_status` (uORB, logging, from `cp_brake`) carries the module's own
+  status: the three timestamps and ages, state, reasons, input counters and the heading lookup.
+  `cp_brake_hook` (uORB, logging, published by `mc_pos_control`, apart from `cp_brake_status` so that a
+  stopped module does not hide it) carries what the hook did: the three timestamps and ages (its
+  timestamp is taken when the hook applies the constraint, so sample-to-hook is sample-to-enforcement),
+  input and output setpoints and feed-forward, actual velocity, active sector, state, reasons and the action.
 - Hook (verified in the pinned source): `PositionControl::update()` runs `_positionControl()` and
   then `_velocityControl(dt)`. The limiter acts between them on `_vel_sp.xy()` and removes
   horizontal feed-forward acceleration `_acc_sp.xy()` toward an affected sector. `_vel_sp` there
@@ -423,7 +425,7 @@ ceiling above):
 | Acquisition, deskew and mask (`livox_ray_source`) | Perception | Stage timestamps in a latency-profiling run (ADR 0003) |
 | Sector map and bridge | Perception | Same profiling run |
 | uXRCE-DDS transport | Software Integration | Publish time against uORB receive time, HIL (OPEN-011, 015) |
-| `cp_brake` and hook | PX4 + Controls | Sample, constraint and status timestamps in `cp_brake_status` (ICD-CP-05); the status timestamp is taken when the hook applies the constraint |
+| `cp_brake` and hook | PX4 + Controls | Sample, constraint and hook timestamps in `cp_brake_hook` (ICD-CP-05); the hook timestamp is taken when the hook applies the constraint |
 | Reserve | SE | Difference between the measured p99 and the sum of the stages |
 | Orin CPU, memory, temperature | Orin Lead | Per-process CPU and memory, board temperature, worst-case load, HIL |
 | FMU CPU and scheduling | PX4 | `cpuload` topic and the `cp_brake` task load, HIL (`msg/Cpuload.msg`) |
@@ -455,6 +457,18 @@ input stops in flight the state becomes SAFE_STOP. Bench values approved by the 
 only: `CPB_T_LAT` measured from a velocity step response in the same SITL and rounded up, and
 `CPB_CSTR_AGE` 0.25 s. The platform values of the map (elevation band, rays per sector) stay in a
 file outside the repository and unapproved.
+
+Result of the proof run on 2026-11-21 (PR #124, issue #121; bench values, one world, not a G4 claim).
+`CPB_T_LAT` measured from Offboard velocity steps to zero is 0.56 to 0.90 s from 3 to 12 m/s (it grows
+with speed) and is 0.95 s rounded up. With it, on the fork head `e0a2739b90` (the hook) and a 50 m,
+360 degree lidar, criteria a to c held at 3, 5, 8, 10 and 12 m/s against a tall flat wall 125 m
+away: closest approach 2.00 to 2.25 m against the margin 2.0 m, so the slack is 0.00 to 0.06 m at 3
+and 5 m/s, 0.1 to 0.25 m from 8 to 12 m/s. The `CPB_EN` off baseline flew into the wall. With
+`CPB_T_LAT` 0.75 s criterion a failed at 5 m/s (1.85 m), so the pass depends on that value. In these
+runs the nose stayed at north while the vehicle flew east, so the legs were sideways to the nose; one run
+with the nose along the leg (5 m/s) also held, 2.13 m. Not shown: criterion d, wind, other
+obstacle shapes, tilt, ground, other directions, hardware, HIL, flight. The travelled-distance
+correction is not implemented yet (#115).
 
 | Gate | Pass criteria |
 | --- | --- |
@@ -511,7 +525,7 @@ SITL fidelity gaps:
 | OPEN-039 | Attitude envelope (pitch and roll limits from braking, acceleration and wind) over which the horizon in the direction of motion must stay in the field of view; sensor mount pitch (OPEN-029); the owner chose in chat on 2026-11-20 a mount pitched down 10 degrees and lower lateral and rear speeds, to be recorded in the approval PR | SE + Mechanical + Controls | TBD | G4 |
 | OPEN-040 | Terrain and vegetation classes counted as obstacles: slope angle, foliage, hedges, water, glass | SE + Perception | TBD | G4 |
 | OPEN-041 | Treatment of isolated returns: support needed (rays, time), measured false-brake and miss rates, latency cost | Perception + SE + Test | TBD | G4 |
-| OPEN-042 | Start-up rule when the PX4 state becomes valid in flight (#112) and release behaviour on a mode change (#113) | SE + PX4 + Operations | TBD | G4 |
+| OPEN-042 | Start-up rule when the PX4 state becomes valid in flight (#112); release behaviour on a mode change (#113) decided by the owner on 2026-11-20 as ADR 0020 D6 option A: CP does not intervene outside Position and Mission, Hold is not a moving mode and a drift in Hold is a control or localization fault, so the release is the stated non-claim | SE + PX4 + Operations | TBD | G4 |
 | OPEN-043 | Owner approval of a pass criterion for each operational scenario used as evidence | Project Owner + SE | TBD | G4 |
 
 OPEN-022 and 023 block any operational clear-sector claim. OPEN-002 to OPEN-008 block the
@@ -563,5 +577,7 @@ unchanged and has no `cp_brake`. Still undecided: any flash margin and any size 
 commit `2646f97dce` it is 1,886,276 bytes (95.94%), 79,804 bytes free, 800 bytes more than on
 `e8ed65e026`. #94 (the heading history and the time gate, fork PR `TanDatEmb/PX4-Autopilot#7`)
 adds 3,472 bytes: on `e539f947b0` the image is 1,889,748 bytes (96.12%), 76,332 bytes free
-(measured 2026-11-20). #65 adds code whose size is not measured. Any flash margin and any size
-target stay TBD until approved by the owner.
+(measured 2026-11-20). #65 (the limiter hook, fork PR `TanDatEmb/PX4-Autopilot#8`) adds 2,680 bytes: on
+`982a2d83ad` (same tree as the reviewed head `e0a2739b90`) the image is 1,892,428 bytes (96.25%), 73,652
+bytes free (measured 2026-11-21). Any flash margin and any size target stay TBD until approved by the
+owner.
