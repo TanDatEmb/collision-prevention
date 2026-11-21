@@ -119,7 +119,7 @@ def ts_us(t):
     return int(round(t * 1e6))
 
 
-def write_logs(prefix, system, inputs, t_end, pos_keep=None, sp_until=None, swap_pos=None, pos_from=0.0, sp_from=0.0, sp_hold=None, sp_dt=SP_DT, pos_dt=POS_DT):
+def write_logs(prefix, system, inputs, t_end, pos_keep=None, sp_until=None, swap_pos=None, pos_from=0.0, sp_from=0.0, sp_hold=None, sp_dt=SP_DT, pos_dt=POS_DT, sp_nan=None):
     with open(prefix + "vehicle_local_position_0.csv", "w", newline="") as f:
         w = csv.writer(f)
         w.writerow(["timestamp", "vx", "vy"])
@@ -140,7 +140,8 @@ def write_logs(prefix, system, inputs, t_end, pos_keep=None, sp_until=None, swap
             if sp_from <= t and (sp_until is None or t <= sp_until):
                 # sp_hold: the setpoint is updated every sp_hold s and the rows in between repeat it
                 t_cmd = t if sp_hold is None else math.floor(t / sp_hold + 1e-9) * sp_hold
-                w.writerow([ts_us(t), 0.0, command(inputs, t_cmd)])
+                nan = sp_nan is not None and sp_nan[0] <= t <= sp_nan[1]  # position control took over: no velocity setpoint
+                w.writerow([ts_us(t), 0.0, "nan" if nan else command(inputs, t_cmd)])
 
 
 def quat(roll_deg, pitch_deg):
@@ -586,6 +587,49 @@ valid_case("rate and attitude rows exactly 50 ms apart meet the 0.050 s limit", 
 valid_case("position rows exactly 0.2 s apart meet the 0.2 s limit",
            step_log(first, pos_dt=0.2), ["--speeds", "5"],
            lambda res: (res["steps_down_to_zero"][0]["problems"] == [], str(res["steps_down_to_zero"][0]["problems"])))
+
+
+# ---- fourth review round (head c0153f2)
+# 1. a NaN velocity setpoint interrupts velocity control: a fall across it was not commanded continuously
+nan_inputs, nan_ends, _ = ramps_log(First(0.4), [(1, 1.0)])
+invalid_case("a ramp interrupted by NaN setpoints (position control) is not a ramp",
+             lambda prefix: write_logs(prefix, First(0.4), nan_inputs, nan_ends[0] + 8.0, sp_nan=(10.0, 11.0)),
+             ["--speeds", "", "--ramp-decels", "1"], "no complete response")
+valid_case("NaN setpoints before the ramp, on its plateau, do not spoil the ramp",
+           lambda prefix: write_logs(prefix, First(0.4), nan_inputs, nan_ends[0] + 8.0, sp_nan=(5.0, 6.0)),
+           ["--speeds", "", "--ramp-decels", "1"],
+           lambda res: (res["all_ramps_found"] == 1 and near(res["ramps_down_to_zero"][0]["ramp_following_lag_s"], 0.4, 0.02), ""))
+
+
+# 2. every mean over samples is weighted by elapsed time: the yaw rate (0 then 10 deg/s halfway through the window)...
+def yaw_build(sparse_second_half):
+    def build(prefix):
+        step_log(first)(prefix)
+        keep = (lambda t: t < 2.79 or abs(t / 0.02 - round(t / 0.02)) < 1e-6) if sparse_second_half else None
+        write_attitude(prefix, 24.0, lambda t: (0.0, 0.0, 10.0 if 2.79 <= t < 4.0 else 0.0), lambda t: (0.0, 0.0),
+                       lambda t: (0.0, 0.0), keep=keep)
+    return build
+
+
+yaw_values = []
+for sparse in (False, True):
+    valid_case("mean yaw rate of a half-window signal, %s" % ("second half logged at 50 Hz" if sparse else "uniform 250 Hz"),
+               yaw_build(sparse), ["--speeds", "5"],
+               lambda res: (yaw_values.append(res["steps_up"][0]["yaw_rate_mean_deg_s"]) or True,
+                            "yaw mean %s" % res["steps_up"][0]["yaw_rate_mean_deg_s"]))
+report("the mean yaw rate does not depend on how densely each part of the window is logged",
+       len(yaw_values) == 2 and all(v is not None and abs(v - 5.0) < 0.15 for v in yaw_values), "yaw means %s expected 5.0" % yaw_values)
+
+# ... and the steady error of a ramp, when the position log is dense in the first half of the window and sparse in the second
+slow_ramp, _, slow_ramp_end = ramp_block(2.0, 1, 3.0, 1.0, 8.0)
+win = 1.4
+lag_expected = (win - (math.exp(-(3.0 - win)) - math.exp(-3.0))) / win  # mean of 1 - exp(-t) over the last 1.4 s of the 3 s ramp
+valid_case("ramp lag is a time-weighted mean when the position log is dense, then sparse, in the window",
+           lambda prefix: write_logs(prefix, First(1.0), slow_ramp, slow_ramp_end + 14.0,
+                                     pos_keep=lambda t: t <= slow_ramp_end - win / 2 or abs(t * 5 - round(t * 5)) < 1e-6),
+           ["--speeds", "", "--ramp-decels", "1", "--ramp-window-s", str(win), "--ramp-drift-s", "0.5"],
+           lambda res: (near(res["ramps_down_to_zero"][0]["ramp_following_lag_s"], lag_expected, 0.015),
+                        "lag %s expected %.3f" % (res["ramps_down_to_zero"][0]["ramp_following_lag_s"], lag_expected)))
 
 
 def tool_module():

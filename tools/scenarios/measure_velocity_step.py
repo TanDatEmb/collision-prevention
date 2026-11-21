@@ -322,6 +322,15 @@ def settle_band_time(ts, err, band, t_ref):
     return 0.0 if last_out < 0 else ts[last_out + 1] - t_ref
 
 
+def time_mean(ts, vs):
+    """Mean of a sampled signal weighted by elapsed time (trapezoid rule): a densely logged part does not dominate.
+    The plain mean when the samples span no time."""
+    span = ts[-1] - ts[0] if ts else 0.0
+    if span <= 0.0:
+        return sum(vs) / len(vs)
+    return sum(0.5 * (v0 + v1) * (t1 - t0) for v0, v1, t0, t1 in zip(vs, vs[1:], ts, ts[1:])) / span
+
+
 def r3(v):
     return None if v is None else round(v, 3)
 
@@ -362,16 +371,14 @@ def analyze(a):
                 tt = rate["t"][lo:hi]
                 for name, col in (("roll", "xyz[0]"), ("pitch", "xyz[1]")):
                     x = rate[col][lo:hi]
-                    # weighted by elapsed time (trapezoid rule), so a densely logged part does not dominate
-                    span = tt[-1] - tt[0]
-                    mean_sq = (sum(0.5 * (u * u + w * w) * (t1 - t0_) for u, w, t0_, t1 in zip(x, x[1:], tt, tt[1:])) / span
-                               if span > 0.0 else sum(v * v for v in x) / len(x))
+                    # weighted by elapsed time, so a densely logged part does not dominate
+                    mean_sq = time_mean(tt, [v * v for v in x])
                     out[name + "_rate_rms_deg_s"] = r3(math.degrees(math.sqrt(mean_sq)))
                     frac = power_fraction_above(tt, x, a.chatter_hz)
                     out[name + "_rate_power_above_%ghz_fraction" % a.chatter_hz] = None if frac is None else round(frac, 4)
                     if frac is None:
                         problems.append("vehicle_angular_velocity log: the %s-rate window has no spectrum above %.2f Hz (sample rate too low)" % (name, a.chatter_hz))
-                out["yaw_rate_mean_deg_s"] = r3(math.degrees(sum(rate["xyz[2]"][lo:hi]) / (hi - lo)))
+                out["yaw_rate_mean_deg_s"] = r3(math.degrees(time_mean(tt, rate["xyz[2]"][lo:hi])))
         # the peak tilt comes from vehicle_attitude (a hole there is a problem); the commanded tilt from the attitude
         # setpoint, which is logged more slowly and has its own limit: a hole only makes the commanded tilt unavailable
         for log, label, topic, limit, hard in ((att_tilt, "peak_%s_deg", "vehicle_attitude", a.max_rate_gap_s, True),
@@ -446,14 +453,15 @@ def analyze(a):
             win = [(series_t[n], series_y[n] - line(series_t[n])) for n in range(1, len(series_t))
                    if ramp["t_end"] - a.ramp_window_s <= series_t[n] <= ramp["t_end"]]
             mid = ramp["t_end"] - 0.5 * a.ramp_window_s
-            h1, h2 = [e for t, e in win if t < mid], [e for t, e in win if t >= mid]
+            win1, win2 = [(t, e) for t, e in win if t < mid], [(t, e) for t, e in win if t >= mid]
             if dur < 2.0 * a.ramp_window_s:
                 problems.append("ramp shorter than twice --ramp-window-s (%.2f s)" % a.ramp_window_s)
-            if len(h1) < 2 or len(h2) < 2:
+            if len(win1) < 2 or len(win2) < 2:
                 problems.append("fewer than 2 position samples in each half of the ramp window")
             else:
-                steady = sum(e for t, e in win) / len(win)
-                drift_s = abs(sum(h2) / len(h2) - sum(h1) / len(h1)) / rate_ms2
+                steady = time_mean([t for t, e in win], [e for t, e in win])
+                drift_s = abs(time_mean([t for t, e in win2], [e for t, e in win2])
+                              - time_mean([t for t, e in win1], [e for t, e in win1])) / rate_ms2
                 rec.update({"steady_error_m_s": r3(steady), "ramp_following_lag_s": r3(steady / rate_ms2),
                             "steady_drift_s": r3(drift_s), "_lag_raw": steady / rate_ms2})
                 if drift_s > a.ramp_drift_s:
@@ -520,6 +528,12 @@ def analyze(a):
 
         m0 = i - 1
         while m0 > 0:
+            if not math.isfinite(spv[m0 - 1]):
+                # velocity control was interrupted (NaN: position control): the fall must not cross it, and a fall that
+                # is already under way at the interruption was not commanded as a whole
+                if m0 + 1 < i and pair_slope(m0 + 1) > 0.0:
+                    return None
+                break
             if sign * (spv[m0 - 1] - spv[m0]) < -1e-6:
                 break  # the setpoint rises: the plateau began here
             near_slopes = [pair_slope(k) for k in range(max(1, m0 - 3), min(i - 1, m0 + 3) + 1) if k != m0]
