@@ -225,12 +225,12 @@ flowchart LR
 | FEAT-03 | Static self-mask | `livox_ray_source` | Exists | SYS-CP-015 |
 | FEAT-04 | Pose-based deskew | `livox_ray_source` | Missing (#57) | SYS-CP-016 |
 | FEAT-05 | Gravity-aligned leveling (roll and pitch removed) | `livox_ray_source` | Missing; no lidar-side package has an attitude input | SYS-CP-017 |
-| FEAT-06 | Vertical envelope and ground rejection | `livox_ray_source`, `obstacle_sector_map` | Partial: elevation band only (OPEN-036) | SYS-CP-019, 020 |
+| FEAT-06 | Vertical envelope and ground rejection | `livox_ray_source`, `obstacle_sector_map` | Partial: height band and certified free distance built (PR #131, unit tests only, no SITL), applied to unleveled rays until #57 | SYS-CP-019, 020 |
 | FEAT-07 | Evidence classification and isolated-return policy | `livox_ray_source`, `obstacle_sector_map` | Partial: return, no-return and invalid exist; one return makes a sector occupied, no support rule | SYS-CP-011, 021 |
 | FEAT-08 | Sector map: nearest range, coverage, too close | `obstacle_sector_map` | Exists, unit tests | SYS-CP-004, 011 |
 | FEAT-09 | Wire encoding and transport | `px4_obstacle_bridge`, Orin node | Exists | SYS-CP-002 |
 | FEAT-10 | Input validation and freshness | `cp_brake` | Exists | SYS-CP-004, 007 |
-| FEAT-11 | Heading and travelled distance at the sample time | `cp_brake` | Partial: heading history exists (#94); the travelled distance is not implemented, the module passes 0 (#115) | SYS-CP-016, 026 |
+| FEAT-11 | Heading and travelled distance at the sample time | `cp_brake` | Exists: heading history (#94) and the distance moved since the sample, recomputed at every evaluation and only tightening (fork PR #9, #115); `CPB_DECEL_MAX` is a required parameter, bench 3.0 unapproved (OPEN-003); SITL effect +0.0 to +0.08 m | SYS-CP-016, 026 |
 | FEAT-12 | Cap law: stopping model per sector | `cp_brake` | Exists; `CPB_T_LAT` unmeasured | SYS-CP-001, 012, 027 |
 | FEAT-13 | Release policy: dwell and rise | `cp_brake` | Exists | SYS-CP-013 |
 | FEAT-14 | State machine and start-up | `cp_brake` | Exists; start-up open (#112) | SYS-CP-007, 014, 024 |
@@ -243,10 +243,11 @@ flowchart LR
 
 The "Today" column was checked in the sources on 2026-11-20: no attitude or gravity input exists in
 `livox_ray_source`, `obstacle_sector_map`, `obstacle_sector_node` or `px4_obstacle_bridge`;
-`CpBrake.cpp` calls `sectorSpeedCap(..., 0.f, ...)`, so the travelled-distance argument of the
-stopping model is unused; `HeadingHistory` stores heading only; the builder makes a sector occupied
+Before fork PR #9 `CpBrake.cpp` called `sectorSpeedCap(..., 0.f, ...)`, so the travelled-distance argument of the
+stopping model was unused; `HeadingHistory` stores heading only; the builder makes a sector occupied
 from one return inside the elevation band and needs `coverage_min_rays_per_sector` returns without
-obstacle for clear.
+obstacle for clear (before PR #131; since then the builder applies the D2 evidence rule: a height band, a window of
+returns for an obstacle, a free distance certified per half-band).
 
 Operational states (reason flags carry the cause): `DISABLED`, `OBSERVER_ONLY`, `NOT_READY`,
 `ACTIVE_CLEAR`, `BRAKING`, `SAFE_STOP`. `SAFE_STOP` leaves only through pilot acknowledgement and
@@ -282,7 +283,8 @@ ICD-CP-04 is approved by the owner (2026-11-19) with its open items (OPEN-032, 0
 ICD-CP-06 is approved by the owner (2026-11-19) with its open items (OPEN-030, 031, 036).
 ADR 0019 (one pose chain from the FMU for heading and deskew) is approved by the owner (2026-11-20).
 Orin parameters (versioned, logged): `sector_map_rate_hz` 10, `coverage_window_ms` 100,
-`coverage_min_rays_per_sector` (no default until OPEN-023, never tuned after an acceptance run).
+`height_up_m`, `height_down_m`, `obstacle_window_m`, `obstacle_min_returns` and `free_min_rays` (the sector evidence
+values of ADR 0020 D2, no defaults until OPEN-005, 023, 036, 041, never tuned after an acceptance run).
 The range limits (10 cm and 40 m, ICD-CP-03) are fixed constants, not parameters. The
 sector-boundary tolerance is a fixed constant of 2.0e-6 rad in `obstacle_sector_map`, approved by
 the owner (2026-11-19); it is a numerical tolerance, not a safety threshold. Raw point cloud
@@ -312,7 +314,7 @@ source: ADR 0004.
   false, so no sector of that frame becomes clear.
 - Vertical envelope: platform values (OPEN-005) in the gravity-aligned frame. The owner prefers a
   height band to an elevation-angle band; how a no-return ray, which has no endpoint, is tested
-  against a height band is open (OPEN-036), and the builder still uses an elevation band.
+  against a height band is decided by ADR 0020 D2 (OPEN-036 keeps the values) and the builder implements it since PR #131, still without leveling (#57).
 
 ### ICD-CP-04 design (approved 2026-11-19)
 
@@ -400,7 +402,7 @@ source: ADR 0004.
   correction, so it is not counted again. It is a required input with no default (OPEN-004). Inputs are validated finite and positive first (NFR-CP-002).
 - Parameters (`CPB_`): `EN`; `MAX_V` 12 m/s (PERF-01); `A_BRK` 3 m/s^2 and `JERK` 4 m/s^3 (PERF-02);
   `AGE_STOP` 0.5 s (PERF-04); `CLR_T` 0.3 s and `RISE` 2.0 m/s^2 (PERF-05); `MARGIN` 2.0 m
-  (SAFE-01); `T_LAT` TBD (OPEN-004). Values are baselines, not qualified limits.
+  (SAFE-01); `T_LAT` TBD (OPEN-004); `DECEL_MAX` required with no default (TBD, OPEN-003, never below `A_BRK`; bench 3.0 m/s^2, unapproved). Values are baselines, not qualified limits.
 
 ## 6. Budgets
 
@@ -468,7 +470,9 @@ and 5 m/s, 0.1 to 0.25 m from 8 to 12 m/s. The `CPB_EN` off baseline flew into t
 runs the nose stayed at north while the vehicle flew east, so the legs were sideways to the nose; one run
 with the nose along the leg (5 m/s) also held, 2.13 m. Not shown: criterion d, wind, other
 obstacle shapes, tilt, ground, other directions, hardware, HIL, flight. The travelled-distance
-correction is not implemented yet (#115).
+correction was added by fork PR #9 (#115): on this bench it moves the closest approach by +0.0 to +0.08 m
+(sideways legs; the final approach creeps to the margin, so the stop point hardly follows the cap), and the hook
+enforces the caps 0.07 to 0.14 s after the sample, which is why the module recomputes them at every evaluation.
 
 | Gate | Pass criteria |
 | --- | --- |
@@ -690,7 +694,9 @@ unchanged and has no `cp_brake`. Still undecided: any flash margin and any size 
 commit `2646f97dce` it is 1,886,276 bytes (95.94%), 79,804 bytes free, 800 bytes more than on
 `e8ed65e026`. #94 (the heading history and the time gate, fork PR `TanDatEmb/PX4-Autopilot#7`)
 adds 3,472 bytes: on `e539f947b0` the image is 1,889,748 bytes (96.12%), 76,332 bytes free
-(measured 2026-11-20). #65 (the limiter hook, fork PR `TanDatEmb/PX4-Autopilot#8`) adds 2,680 bytes: on
+(measured 2026-11-20). #115 (the travelled distance, fork PR `TanDatEmb/PX4-Autopilot#9`) adds 1,432 bytes on top
+of the hook: on `e1e9f5b3ed` (same tree as the reviewed head `2d8801ed1d`) the image is 1,893,860 bytes (96.33%), 72,220
+bytes free (measured 2026-11-21). #65 (the limiter hook, fork PR `TanDatEmb/PX4-Autopilot#8`) adds 2,680 bytes: on
 `982a2d83ad` (same tree as the reviewed head `e0a2739b90`) the image is 1,892,428 bytes (96.25%), 73,652
 bytes free (measured 2026-11-21). Any flash margin and any size target stay TBD until approved by the
 owner.
