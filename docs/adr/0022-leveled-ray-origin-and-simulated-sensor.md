@@ -24,8 +24,8 @@ are changed by the docs-sync PR after approval, not here. Values marked TBD stay
   #153). With the 10 deg nose-down pitch of decision 4, the reviews found that the X500 propellers enter the
   lower field of view at this height (no propeller geometry is computed here).
 - Pitch moves the lidar. With `z` the sensor height above `base_link`, its forward offset from the vehicle
-  origin at a nose-up pitch `theta` is `0.12 cos(theta) - z sin(theta)` (m, horizontal). The analyzer uses
-  the constant 0.12 (next item). Arithmetic (cos 10 deg = 0.98481, sin 10 deg = 0.17365; cos 17 deg =
+  origin at a nose-up pitch `theta` is `0.12 cos(theta) - z sin(theta)` (m, horizontal). The proofs so far
+  used the constant 0.12 (next item). Arithmetic (cos 10 deg = 0.98481, sin 10 deg = 0.17365; cos 17 deg =
   0.95630, sin 17 deg = 0.29237):
 
   | Nose-up pitch | Current SDF pose, z 0.075 m | Error vs 0.12 | Chosen pose, z 0.14 m | Error vs 0.12 |
@@ -38,8 +38,10 @@ are changed by the docs-sync PR after approval, not here. Values marked TBD stay
   assumes. A closest approach measured from the lidar with the constant 0.12 therefore reads smaller than
   the true lidar-to-wall gap by that amount. This is the error of this term alone; the +-20 cm band the
   owner set for the bench (criterion a) is a separate criterion, not a budget for this term.
-- The 1-D offset of the analyzer ignores the pitch term: `tools/scenarios/analyze_stop.py` subtracts one
-  `--lidar-offset` that is constant along the leg whatever the pitch. The fix is issue #152.
+- The earlier proofs ignored the pitch term: `tools/scenarios/analyze_stop.py` subtracted one
+  `--lidar-offset` constant along the leg whatever the heading and pitch. Issue #152 (merged) projects the
+  offset on the leg and adds the pitch term (`--lidar-offset-z`); those earlier results are also in the
+  EKF frame, not the ground-truth frame (the analyzer now defaults to `--reference truth`).
 - Owner choice for the X500 bench, chat, 2026-11-21 (approval recorded in a separate PR): the sensor at
   (0.12, 0, 0.14) m from `base_link`, rpy (0, +0.1745, 0) rad. In SDF a positive pitch tips +x toward -z,
   so the boresight points down (0.1745 rad = 10 deg). The lever arm from `base_link` is
@@ -143,8 +145,8 @@ distance"). It belongs to issue #148.
 
 ## To measure first
 The odometry rate and latency; the angular rate and acceleration in the step logs; the `kNoSampleAfter`
-rate; the gz cloud layout and no-hit encoding; the analyzer offset used in the proof (the 1-D mode of
-`analyze_stop.py` subtracts `--lidar-offset` along the leg whatever the heading).
+rate; the gz cloud layout and no-hit encoding; the analyzer offset used in the earlier proofs (a constant
+`--lidar-offset` along the leg, before issue #152).
 
 ## Not decided yet
 A per-ray lever arm, the fraction threshold for dropping a whole frame, an extrapolation model, and
