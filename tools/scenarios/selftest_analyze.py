@@ -52,7 +52,24 @@ def stop_ys(v0=5.0, a=3.0, stop_at=17.0, total_s=30.0, a_up=2.0):
 
 def write(prefix, rows, states, nan_at=None, empty_at=None, with_constraints=True, with_position=True, lateral=0.0,
           constraints_until=None, swap_constraint_rows=None, heading_rad=None, north_m=0.0, hook_rows=None,
-          heading_nan_at=None):
+          heading_nan_at=None, pitch_rad=None, attitude_until=None, attitude_nan_at=None, truth_dy=None,
+          truth_nan_at=None, truth_until=None, attitude_no_q=False):
+    if pitch_rad is not None:  # vehicle_attitude: a pure pitch rotation as the quaternion (w, x, y, z), 100 Hz
+        with open(prefix + "vehicle_attitude_0.csv", "w", newline="") as f:
+            w = csv.writer(f)
+            w.writerow(["timestamp"] if attitude_no_q else ["timestamp", "q[0]", "q[1]", "q[2]", "q[3]"])
+            end = attitude_until if attitude_until is not None else rows[-1][0]
+            for n in range(int(end / 0.01) + 1):
+                w.writerow([int(n * 0.01 * 1e6)] if attitude_no_q else
+                           [int(n * 0.01 * 1e6), "nan" if n == attitude_nan_at else math.cos(pitch_rad / 2), 0.0,
+                            math.sin(pitch_rad / 2), 0.0])
+    if truth_dy is not None:  # ground truth: the EKF track shifted by truth_dy along y, on every 2nd stamp
+        with open(prefix + "vehicle_local_position_groundtruth_0.csv", "w", newline="") as f:
+            w = csv.writer(f)
+            w.writerow(["timestamp", "x", "y"])
+            for n, (t, y, vy) in enumerate(rows):
+                if n % 2 == 0 and (truth_until is None or t <= truth_until):
+                    w.writerow([int(t * 1e6), north_m, "nan" if n == truth_nan_at else y + truth_dy])
     if with_position:
         with open(prefix + "vehicle_local_position_0.csv", "w", newline="") as f:
             w = csv.writer(f)
@@ -351,6 +368,109 @@ results.append(run("2-D with a NaN heading sample is INVALID, not a fallback", n
                    heading_rad=math.pi / 2, heading_nan_at=0, extra=("--obstacle", "pole:0,20,0.15", "--lidar-offset", "1.0")))
 results.append(run("2-D with no heading column keeps the leg bearing", series(stop_ys(stop_at=17.0)), "PASS", wall=20.0,
                    extra=("--obstacle", "pole:0,20,0.15", "--lidar-offset", "0.12")))
+
+
+# lidar offset: projected on the leg from the heading, the pitch term, and the optional ground truth. The stop is
+# at 17 m, the wall at 22 m, the leg points East (heading pi/2 is the nose along the leg)
+def offset_case(name, expect_verdict, check, extra=(), stop_at=17.0, wall=22.0, **kw):
+    """analyze_stop.py with a lidar offset; `check` is a predicate on the printed JSON (the numbers asserted)."""
+    with tempfile.TemporaryDirectory() as d:
+        prefix = os.path.join(d, "log_0_")
+        write(prefix, series(stop_ys(stop_at=stop_at)), ((0, 3), (3.0, 4)), **kw)
+        p = subprocess.run([sys.executable, os.path.join(HERE, "analyze_stop.py"), prefix, "--wall-dist", str(wall),
+                            *extra], capture_output=True, text=True)
+    try:
+        res = json.loads(p.stdout)
+    except ValueError:
+        res = {"verdict": "NO JSON: " + p.stderr.strip()[-60:]}
+    try:
+        checked = bool(check(res))
+    except (KeyError, TypeError):
+        checked = False
+    ok = res["verdict"] == expect_verdict and p.returncode == {"PASS": 0, "FAIL": 1, "INVALID": 2}[expect_verdict] and checked
+    print(("PASS" if ok else "FAIL"), "%-58s" % name, "got", res["verdict"], "expected", expect_verdict,
+          "| closest", res.get("closest_approach_m"), "|", (res.get("error") or "")[:60])
+    return ok
+
+
+def near(a, b, tol=0.03):
+    return a is not None and abs(a - b) <= tol
+
+
+def share(res):
+    return res["lidar_offset_applied"]["offset_along_leg_m_at_closest_approach"]
+
+
+OFF = ("--lidar-offset", "1.0")
+for deg, cosine in ((0, 1.0), (45, math.cos(math.radians(45))), (90, 0.0)):
+    results.append(offset_case("offset 1.0, nose %d deg off the leg: share %.3f" % (deg, cosine), "PASS",
+                               lambda r, c=cosine: near(share(r), c, 0.001) and near(r["closest_approach_m"], 5.0 - c),
+                               extra=OFF, heading_rad=math.pi / 2 - math.radians(deg)))
+# the share is the projection of the nose-ward reach, so the verdict follows the heading: 1.7 m with the nose along the
+# leg (FAIL under the 2.0 m margin), 2.7 m with the nose across it (PASS)
+results.append(offset_case("verdict follows the projection: nose along the leg", "FAIL",
+                           lambda r: near(r["closest_approach_m"], 1.7), extra=OFF, stop_at=19.3, heading_rad=math.pi / 2))
+results.append(offset_case("verdict follows the projection: nose across the leg", "PASS",
+                           lambda r: near(r["closest_approach_m"], 2.7), extra=OFF, stop_at=19.3, heading_rad=0.0))
+results.append(offset_case("offset with nose across the leg still fails the nose check", "INVALID",
+                           lambda r: True, extra=OFF + NOSE, heading_rad=0.0))
+results.append(offset_case("no heading in the log: the nose is taken along the leg", "PASS",
+                           lambda r: near(share(r), 1.0, 0.001) and r["lidar_offset_applied"]["heading_source"] != "log",
+                           extra=OFF))
+# the pitch term: nose up positive, reach = x cos(pitch) - z sin(pitch); x = 1.0, z = 0.4, pitch +-0.5 rad
+reach_up = math.cos(0.5) - 0.4 * math.sin(0.5)
+reach_dn = math.cos(0.5) + 0.4 * math.sin(0.5)
+OFFZ = OFF + ("--lidar-offset-z", "0.4")
+results.append(offset_case("pitch term, nose up 0.5 rad, z above: shorter reach", "PASS",
+                           lambda r: near(share(r), reach_up, 0.001) and near(r["closest_approach_m"], 5.0 - reach_up)
+                           and r["lidar_offset_applied"]["pitch_term_applied"] is True,
+                           extra=OFFZ, heading_rad=math.pi / 2, pitch_rad=0.5))
+results.append(offset_case("pitch term, nose down 0.5 rad, z above: longer reach", "PASS",
+                           lambda r: near(share(r), reach_dn, 0.001) and near(r["closest_approach_m"], 5.0 - reach_dn),
+                           extra=OFFZ, heading_rad=math.pi / 2, pitch_rad=-0.5))
+results.append(offset_case("pitch term and heading together (45 deg, 0.5 rad up)", "PASS",
+                           lambda r: near(share(r), reach_up * math.cos(math.pi / 4), 0.001),
+                           extra=OFFZ, heading_rad=math.pi / 4, pitch_rad=0.5))
+results.append(offset_case("no attitude file: pitch term skipped, z not applied, said so", "PASS",
+                           lambda r: near(share(r), 1.0, 0.001) and r["lidar_offset_applied"]["pitch_term_applied"] is False
+                           and "skipped" in r["lidar_offset_applied"]["pitch_term_note"],
+                           extra=OFFZ, heading_rad=math.pi / 2))
+results.append(offset_case("attitude file without quaternion columns is skipped", "PASS",
+                           lambda r: r["lidar_offset_applied"]["pitch_term_applied"] is False, extra=OFFZ,
+                           heading_rad=math.pi / 2, pitch_rad=0.5, attitude_no_q=True))
+results.append(offset_case("NaN in the attitude is INVALID, no fallback", "INVALID", lambda r: "not finite" in r["error"],
+                           extra=OFFZ, heading_rad=math.pi / 2, pitch_rad=0.5, attitude_nan_at=100))
+results.append(offset_case("attitude log ends before the approach ends is INVALID", "INVALID",
+                           lambda r: "does not cover" in r["error"], extra=OFFZ, heading_rad=math.pi / 2, pitch_rad=0.5,
+                           attitude_until=5.0))
+# the old default (both offsets zero): verdict and distances unchanged whatever the heading, and an attitude file is not read
+for hd in (None, math.pi / 2, 0.0):
+    results.append(offset_case("default offset 0: unchanged distance, heading %s" % ("none" if hd is None else "%.2f" % hd),
+                               "PASS", lambda r: near(r["closest_approach_m"], 5.0, 0.02) and share(r) == 0.0,
+                               heading_rad=hd))
+results.append(offset_case("default offset 0 ignores a malformed attitude file", "PASS",
+                           lambda r: near(r["closest_approach_m"], 5.0, 0.02) and r["lidar_offset_applied"]["pitch_term_applied"] is False,
+                           heading_rad=math.pi / 2, pitch_rad=0.5, attitude_nan_at=100))
+results.append(offset_case("2-D pole with the pitch term (0.5 rad up)", "PASS",
+                           lambda r: near(r["closest_approach_m"], 20.0 - 0.15 - 17.0 - reach_up),
+                           extra=OFFZ + ("--obstacle", "pole:0,20,0.15"), heading_rad=math.pi / 2, pitch_rad=0.5))
+# ground truth: the vehicle is 0.5 m further along the leg than the EKF says; separate fields, EKF fields unchanged
+results.append(offset_case("no ground truth file: no ground_truth figures", "PASS",
+                           lambda r: r["ground_truth_used"] is False and "ground_truth_closest_approach_m" not in r,
+                           extra=OFF, heading_rad=math.pi / 2))
+results.append(offset_case("ground truth 0.5 m ahead: its own closest and rest", "PASS",
+                           lambda r: r["ground_truth_used"] is True and near(r["closest_approach_m"], 4.0)
+                           and near(r["ground_truth_closest_approach_m"], 3.5)
+                           and near(r["ground_truth_rest_distance_to_wall_m"], r["rest_distance_to_wall_m"] - 0.5, 0.011),
+                           extra=OFF, heading_rad=math.pi / 2, truth_dy=0.5))
+results.append(offset_case("ground truth never changes the verdict (1.7 m EKF, 2.2 m truth)", "FAIL",
+                           lambda r: near(r["closest_approach_m"], 1.7) and near(r["ground_truth_closest_approach_m"], 2.2),
+                           extra=OFF, stop_at=19.3, heading_rad=math.pi / 2, truth_dy=-0.5))
+results.append(offset_case("NaN in the ground truth is INVALID", "INVALID", lambda r: "not a number" in r["error"],
+                           extra=OFF, heading_rad=math.pi / 2, truth_dy=0.5, truth_nan_at=100))
+results.append(offset_case("ground truth ends before the approach ends is INVALID", "INVALID",
+                           lambda r: "does not cover" in r["error"], extra=OFF, heading_rad=math.pi / 2, truth_dy=0.5,
+                           truth_until=5.0))
 
 print("%d of %d cases pass" % (sum(results), len(results)))
 sys.exit(0 if all(results) else 1)

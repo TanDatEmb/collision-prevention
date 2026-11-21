@@ -1,12 +1,22 @@
 #!/usr/bin/env python3
 """Metrics and verdict of one simulated approach to a wall, from `ulog2csv` output (bench tool).
 
-usage: analyze_stop.py <csv-prefix> --wall-dist D [--dir-ned N,E] [--lidar-offset 0.0] [--margin 2.0]
+usage: analyze_stop.py <csv-prefix> --wall-dist D [--dir-ned N,E] [--lidar-offset 0.0] [--lidar-offset-z 0.0] [--margin 2.0]
                        [--require-constraints] [--min-peak-speed 2.0] [--max-gap-s 0.5] [--near-m 35] [--max-constraint-gap-s 1.0]
                        [--obstacle pole:N,E,R|wall:N0,E0,nN,nE] [--require-nose-along-leg] [--max-nose-error-deg 15]
 
 <csv-prefix> is the path printed by `ulog2csv -o <dir> <log>.ulg` without the topic suffix, for example
 `/tmp/run1/log_0_` (files `<prefix>vehicle_local_position_0.csv`, `<prefix>cp_brake_constraints_0.csv`).
+Optional inputs, used when the file is there: `<prefix>vehicle_attitude_0.csv` (the pitch, for the lidar offset) and
+`<prefix>vehicle_local_position_groundtruth_0.csv` (same local frame as the EKF, columns timestamp, x, y).
+Lidar offset: the lidar sits `--lidar-offset` ahead of the vehicle origin along the BODY forward axis and
+`--lidar-offset-z` above it along the body up axis. Its forward reach along the nose is
+x*cos(pitch) - z*sin(pitch), pitch nose-up positive, from the logged attitude (the pitch term); without the attitude
+file the pitch term is skipped (z is then not applied) and the output says so. That reach lies along the logged
+heading, so in the 1-D mode its share along the leg is the cosine of the angle between the nose and the leg (1 with
+the nose along the leg, or when the log has no heading); in the 2-D mode the lidar point is placed with it. The
+offset applied is reported in `lidar_offset_applied`. With the groundtruth file the same distances are also
+reported from it (`ground_truth_*` fields); the EKF-based fields and the verdict never use it.
 The wall face is D metres from the takeoff origin along `--dir-ned` (a unit vector in local NED; the
 Gazebo +x axis is East, so `0,1`). Criteria (the owner, 2026-11-20): (a) the distance to the wall never
 goes below the margin CPB_MARGIN; (b) the vehicle is at rest before the wall and at rest at the end of the
@@ -25,6 +35,7 @@ The stale-input criterion (d) is read from the state timeline of a separate run.
 Bench tool: the values it is given are not approved platform values.
 """
 import argparse
+import bisect
 import csv
 import json
 import math
@@ -88,6 +99,58 @@ def wrap_pi(angle):
     return (angle + math.pi) % (2.0 * math.pi) - math.pi
 
 
+def resample(ts, vs, query, first, max_gap, what):
+    """Linear interpolation of the samples (ts, vs) at the times `query`. From index `first` on, the samples must
+    cover the query times and have no gap above max_gap between the two samples around a query time; before it
+    the nearest sample is used (nothing is judged there). Raises Invalid when the coverage is not there."""
+    if any(b < a for a, b in zip(ts, ts[1:])):
+        raise Invalid("%s: time goes backwards" % what)
+    out = []
+    for n, q in enumerate(query):
+        i = bisect.bisect_right(ts, q)
+        lo, hi = (i - 1, i) if 0 < i < len(ts) else (min(i, len(ts) - 1), min(i, len(ts) - 1))
+        if n >= first:
+            if q < ts[0] - max_gap or q > ts[-1] + max_gap:
+                raise Invalid("%s does not cover the approach (time %.2f s, samples %.2f to %.2f s)"
+                              % (what, q, ts[0], ts[-1]))
+            if lo != hi and ts[hi] - ts[lo] > max_gap:
+                raise Invalid("%s has a gap of %.2f s in the approach (limit %.2f s)" % (what, ts[hi] - ts[lo], max_gap))
+        if lo == hi or ts[hi] == ts[lo]:
+            out.append(vs[lo])
+        else:
+            w = (q - ts[lo]) / (ts[hi] - ts[lo])
+            out.append(vs[lo] + w * (vs[hi] - vs[lo]))
+    return out
+
+
+def read_pitch(prefix):
+    """(time [s], pitch [rad], nose up positive) from vehicle_attitude_0.csv (quaternion q[0..3] = w, x, y, z, body
+    FRD to NED), or None when the file or the quaternion columns are absent. Malformed values raise Invalid."""
+    path = prefix + "vehicle_attitude_0.csv"
+    cols = [read_optional(path, c) for c in ("timestamp", "q[0]", "q[1]", "q[2]", "q[3]")]
+    if any(c is None for c in cols):
+        return None
+    ts, pitch = [v * 1e-6 for v in cols[0]], []
+    for w, x, y, z in zip(*cols[1:]):
+        norm = math.sqrt(w * w + x * x + y * y + z * z)
+        if norm == 0.0:
+            raise Invalid("zero quaternion in vehicle_attitude_0.csv")
+        pitch.append(math.asin(max(-1.0, min(1.0, 2.0 * (w * y - z * x) / (norm * norm)))))
+    return ts, pitch
+
+
+def read_ground_truth(prefix):
+    """(time [s], x, y) of vehicle_local_position_groundtruth_0.csv, or None when the file is absent; a file that is
+    there with missing, empty or non-finite columns raises Invalid (the optional input is not silently dropped)."""
+    path = prefix + "vehicle_local_position_groundtruth_0.csv"
+    try:
+        open(path).close()
+    except FileNotFoundError:
+        return None
+    gt = read(path, ["timestamp", "x", "y"])
+    return [v * 1e-6 for v in gt["timestamp"]], gt["x"], gt["y"]
+
+
 def distance_to_obstacle(spec, n, e):
     """Distance [m] from the point (n, e), local NED, to the obstacle surface; negative behind it.
     spec is ("pole", N, E, radius) or ("wall", N0, E0, nN, nE) with (nN, nE) the unit normal pointing at the vehicle."""
@@ -114,7 +177,7 @@ def parse_obstacle(text):
 
 
 def analyse(prefix, wall_dist, direction, lidar_offset, margin, require_constraints, min_peak, max_gap, near_m,
-            max_cgap, obstacle=None, require_nose=False, max_nose_error_deg=15.0):
+            max_cgap, obstacle=None, require_nose=False, max_nose_error_deg=15.0, lidar_offset_z=0.0):
     pos = read(prefix + "vehicle_local_position_0.csv", ["timestamp", "x", "y", "vx", "vy"])
     t = [v * 1e-6 for v in pos["timestamp"]]
     # equal stamps occur in real logs (one at start-up); going back is malformed
@@ -124,22 +187,45 @@ def analyse(prefix, wall_dist, direction, lidar_offset, margin, require_constrai
     along = [px * dn + py * de for px, py in zip(pos["x"], pos["y"])]
     speed = [a * dn + b * de for a, b in zip(pos["vx"], pos["vy"])]  # signed, along the approach
     hspeed = [math.hypot(a, b) for a, b in zip(pos["vx"], pos["vy"])]  # horizontal magnitude, for rest
-    gap = [wall_dist - s - lidar_offset for s in along]  # distance from the lidar to the wall face
     bearing = math.atan2(de, dn)
     heading = read_optional(prefix + "vehicle_local_position_0.csv", "heading")
-    if obstacle is not None:
-        # 2-D: the lidar sits `lidar_offset` ahead of the vehicle origin along the nose (the leg direction when
-        # the log has no heading); the distance is to the obstacle surface, not along the leg
-        hd = heading if heading is not None else [bearing] * len(t)
-        gap = [distance_to_obstacle(obstacle, px + lidar_offset * math.cos(h), py + lidar_offset * math.sin(h))
-               for px, py, h in zip(pos["x"], pos["y"], hd)]
-
-    out = {"samples": len(t), "assumptions": {"lidar_offset_m": lidar_offset, "wall_dist_m": wall_dist,
-                                              "distance_metric": "2-D to the obstacle" if obstacle else "1-D along the leg"}}
     start = next((i for i, v in enumerate(speed) if v > START_SPEED), None)
     if start is None:
         raise Invalid("the approach never started: speed along the wall direction stayed under %.1f m/s "
                       "(is --dir-ned right?)" % START_SPEED)
+
+    # the lidar offset: `lidar_offset` ahead along the body forward axis and `lidar_offset_z` above it, so its reach
+    # along the nose is x*cos(pitch) - z*sin(pitch) (pitch nose up positive); it lies along the heading, so its share
+    # along the leg is cos(heading - bearing). Without the attitude the pitch term is skipped; with both offsets
+    # zero the attitude is not needed and is not read (a bad attitude file must not void a run that does not use it).
+    hd = heading if heading is not None else [bearing] * len(t)
+    pitch, pitch_note = None, None
+    if lidar_offset == 0.0 and lidar_offset_z == 0.0:
+        pitch_note = "not needed: both lidar offsets are 0"
+    else:
+        att = read_pitch(prefix)
+        if att is None:
+            pitch_note = "skipped: vehicle_attitude_0.csv has no usable quaternion in the inputs"
+        else:
+            pitch = resample(att[0], att[1], t, start, max_gap, "vehicle_attitude_0.csv")
+    reach = [lidar_offset * math.cos(p) - lidar_offset_z * math.sin(p) for p in pitch] if pitch is not None \
+        else [lidar_offset] * len(t)  # without the pitch only the forward offset is known
+    heading_source = "log" if heading is not None else "assumed along the leg"
+
+    def distance(xs, ys):
+        if obstacle is not None:
+            # 2-D: the lidar point is `reach` ahead of the vehicle origin along the nose; the distance is to the
+            # obstacle surface, not along the leg
+            return [distance_to_obstacle(obstacle, x + r * math.cos(h), y + r * math.sin(h))
+                    for x, y, r, h in zip(xs, ys, reach, hd)]
+        return [wall_dist - (x * dn + y * de) - r * math.cos(h - bearing) for x, y, r, h in zip(xs, ys, reach, hd)]
+
+    gap = distance(pos["x"], pos["y"])
+    share = [r * math.cos(h - bearing) for r, h in zip(reach, hd)]  # the offset along the leg, as projected
+
+    out = {"samples": len(t), "assumptions": {"lidar_offset_m": lidar_offset, "lidar_offset_z_m": lidar_offset_z,
+                                              "wall_dist_m": wall_dist,
+                                              "distance_metric": "2-D to the obstacle" if obstacle else "1-D along the leg"}}
     if gap[start] < margin:
         raise Invalid("the vehicle started inside the margin or beyond the wall (gap %.2f m)" % gap[start])
     peak = max(range(start, len(t)), key=lambda i: speed[i])
@@ -192,6 +278,33 @@ def analyse(prefix, wall_dist, direction, lidar_offset, margin, require_constrai
         out["rest_distance_to_wall_m"] = round(gap[rest], 2)
         out["at_rest_at_end_of_run"] = at_rest_at_end
         out["criterion_b_at_rest_before_wall"] = bool(gap[rest] > 0.0 and at_rest_at_end)
+
+    # the offset actually applied, from the approach start to the end of the log
+    win = range(start, len(t))
+    out["lidar_offset_applied"] = {
+        "lidar_offset_x_m": lidar_offset, "lidar_offset_z_m": lidar_offset_z,
+        "heading_source": heading_source,
+        "pitch_term_applied": pitch is not None,
+        "pitch_term_note": pitch_note if pitch is None else "from vehicle_attitude_0.csv, nose up positive",
+        "pitch_deg_range": [round(math.degrees(min(pitch[i] for i in win)), 1),
+                            round(math.degrees(max(pitch[i] for i in win)), 1)] if pitch is not None else None,
+        "forward_reach_along_nose_m_range": [round(min(reach[i] for i in win), 4), round(max(reach[i] for i in win), 4)],
+        "offset_along_leg_m_range": [round(min(share[i] for i in win), 4), round(max(share[i] for i in win), 4)],
+        "offset_along_leg_m_at_closest_approach": round(share[closest_i], 4),
+        "offset_along_leg_m_at_rest": round(share[rest], 4) if rest is not None else None}
+
+    # optional ground truth: the same distances from the simulator position, as separate fields; the EKF-based
+    # fields above and the verdict never use them
+    truth = read_ground_truth(prefix)
+    if truth is not None:
+        tx = resample(truth[0], truth[1], t, start, max_gap, "vehicle_local_position_groundtruth_0.csv")
+        ty = resample(truth[0], truth[2], t, start, max_gap, "vehicle_local_position_groundtruth_0.csv")
+        gap_truth = distance(tx, ty)
+        out["ground_truth_used"] = True
+        out["ground_truth_closest_approach_m"] = round(min(gap_truth[i] for i in win), 2)
+        out["ground_truth_rest_distance_to_wall_m"] = round(gap_truth[rest], 2) if rest is not None else None
+    else:
+        out["ground_truth_used"] = False
 
     # oscillation: sign changes of the approach velocity beyond +-REST_STAY after the approach started
     reversals, state = 0, 0
@@ -280,7 +393,13 @@ def main():
     ap.add_argument("prefix")
     ap.add_argument("--wall-dist", type=float, required=True)
     ap.add_argument("--dir-ned", default="0,1")
-    ap.add_argument("--lidar-offset", type=float, default=0.0)
+    ap.add_argument("--lidar-offset", type=float, default=0.0,
+                    help="[m] the lidar sits this far ahead of the vehicle origin along the BODY forward axis; its share "
+                         "along the leg is projected from the logged heading (cos of the nose to leg angle)")
+    ap.add_argument("--lidar-offset-z", type=float, default=0.0,
+                    help="[m] optional: the lidar sits this far ABOVE the vehicle origin along the body up axis; with the "
+                         "logged attitude the forward reach is x*cos(pitch) - z*sin(pitch), pitch nose-up positive "
+                         "(from vehicle_attitude_0.csv; without that file the pitch term is skipped and the output says so)")
     ap.add_argument("--margin", type=float, default=2.0)
     ap.add_argument("--require-constraints", action="store_true",
                     help="hook-on runs: INVALID unless the constraint log shows CP enforcing and braking")
@@ -298,11 +417,12 @@ def main():
     try:
         d = [float(v) for v in a.dir_ned.split(",")]
         norm = math.hypot(*d)
-        if len(d) != 2 or norm == 0.0 or not math.isfinite(a.wall_dist) or a.wall_dist <= 0.0:
-            raise Invalid("bad --dir-ned or --wall-dist")
+        if len(d) != 2 or norm == 0.0 or not math.isfinite(a.wall_dist) or a.wall_dist <= 0.0 \
+                or not math.isfinite(a.lidar_offset) or not math.isfinite(a.lidar_offset_z):
+            raise Invalid("bad --dir-ned, --wall-dist or lidar offset")
         result = analyse(a.prefix, a.wall_dist, (d[0] / norm, d[1] / norm), a.lidar_offset, a.margin,
                          a.require_constraints, a.min_peak_speed, a.max_gap_s, a.near_m, a.max_constraint_gap_s,
-                         parse_obstacle(a.obstacle), a.require_nose_along_leg, a.max_nose_error_deg)
+                         parse_obstacle(a.obstacle), a.require_nose_along_leg, a.max_nose_error_deg, a.lidar_offset_z)
         crit = ("criterion_a_margin_kept", "criterion_b_at_rest_before_wall", "criterion_c_no_oscillation")
         result["verdict"] = "PASS" if all(result.get(k) for k in crit) else "FAIL"
     except (Invalid, ValueError, OSError) as e:
