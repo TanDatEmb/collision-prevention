@@ -162,7 +162,7 @@ def analyze(a):
             idx = [k for k in range(j + 1, len(tp)) if t0 <= tp[k] <= wend]
             # the command stream must cover the whole response: a setpoint log that ends early does not show
             # that the zero command (and velocity control) held while the vehicle stopped
-            sp_times = [ts[m] for m in range(i, len(ts)) if ts[m] <= wend]
+            sp_times = [ts[m] for m in range(i - 1, len(ts)) if ts[m] <= wend]  # from the last nonzero row: the step time
             setpoint_gap = max([y - x for x, y in zip(sp_times, sp_times[1:])] + [wend - sp_times[-1]])
             ys = [sign * ps["vy"][k] for k in idx]
             worst_gap = max([tp[k] - tp[k - 1] for k in idx], default=0.0)  # the pair that spans the step counts
