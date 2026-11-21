@@ -163,6 +163,9 @@ and is the usual outcome of a failsafe or a pilot switch; no mode request is mad
 (C) all position-controlled modes, which would also constrain RTL and Land and so conflict with
 failsafe authority. Recommended: B, because in the smoke run the release to Hold carried the vehicle
 6.85 m past the virtual wall; the owner decides.
+**Owner decision 2026-11-20: A.** CP does not intervene outside Position and Mission. Hold is not a moving
+mode, so a drift in Hold is a control or localization fault, not a CP duty; the release on a mode change is
+logged and is the stated non-claim (#113).
 
 ### D7. Verification (FEAT-20; SYS-CP-025, 027)
 A small scenario harness under the existing `tools/` directory: Gazebo worlds, a scenario runner (arm,
@@ -177,7 +180,7 @@ owner-approved pass criterion before it counts (OPEN-043).
 ### PX4-side behaviours of the hook for the owner to approve (fork PR #8)
 | # | Behaviour | Recommendation |
 | --- | --- | --- |
-| 1 | PR #8 removes the feed-forward toward a limiting sector in proportion to how close the vehicle is to its cap, by projection; four review rounds found three defects in this part | Replace by a simpler rule: when any sector limits the velocity setpoint, clear the horizontal feed-forward. Cost: a small acceleration step when limiting starts. Needs a change in PR #8 |
+| 1 | PR #8 removes the feed-forward toward a limiting sector in proportion to how close the vehicle is to its cap, by projection; four review rounds found three defects in this part | Replace by a simpler rule: when any sector limits the velocity setpoint, clear the horizontal feed-forward. Cost: a small acceleration step when limiting starts. Done in fork PR #8 (merged): any limiting sector clears the horizontal feed-forward |
 | 2 | Only Position and Mission enforce; `POSITION_SLOW` is transparent | Accept for V1; D6 may extend it to Hold |
 | 3 | A latched SAFE_STOP gives zero horizontal velocity even when its caps are usable | Accept |
 | 4 | The hook's age check comes before `enforcement_active`: in flight, in an enforced mode, a stale constraint is a safe stop even if the last state was observer-only; with `CPB_CSTR_AGE` unset (-1) the vehicle cannot fly Position or Mission with `CPB_EN` on | Accept as a fail-safe; `CPB_CSTR_AGE` needs approval before real use |
@@ -211,6 +214,8 @@ limiter in place of the setpoint limiter.
   needs no new function), then leveling, sector evidence, braking by direction, travelled distance.
 - Fork PR #8 is not merged until the owner approves the table above, the feed-forward change is made,
   and the stopping proof has run on its head commit.
+  (Done 2026-11-21: the proof ran on head `e0a2739b90`, see section 7 of the architecture document, and the
+  owner approved the merge.)
 - Until D1 to D3 exist, OS-11 to OS-17, OS-33 and OS-34 carry no claim, and the stopping evidence is a
   bench result at one altitude with a level lidar plane (section 7 of the architecture document).
 - Open decisions for the owner: OPEN-038 to 043, the values of D2 and D3, the mode scope of D6, and
