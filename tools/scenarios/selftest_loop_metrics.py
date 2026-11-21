@@ -1,0 +1,441 @@
+#!/usr/bin/env python3
+"""Self-test of measure_velocity_step.py (analyze) on synthetic responses of known shape. It tests the metric
+and verdict code only; it says nothing about PX4. Run: python3 -I tools/scenarios/selftest_loop_metrics.py
+(exit 0 when every case passes). Optional: --tool <path> runs the cases against another copy of the tool, for
+example the previous version, to show which cases it fails.
+
+The responses are exact: a linear system (first order, critically damped, underdamped second order) driven by
+steps and ramps is the sum of its closed-form step response S(t) and ramp response R(t). The expected numbers
+come from those closed forms (bisection on S, the analytic overshoot, the analytic ramp lag), not from the
+code under test. Cases marked [old rule] test an evidence rule the tool already had; the others test new output
+or new rules.
+"""
+import csv
+import json
+import math
+import os
+import subprocess
+import sys
+import tempfile
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+TOOL = os.path.join(HERE, "measure_velocity_step.py")
+if "--tool" in sys.argv:
+    TOOL = sys.argv[sys.argv.index("--tool") + 1]
+POS_DT = 0.02
+SP_DT = 0.05
+
+
+class First:
+    """y' = (r - y) / tau"""
+    def __init__(self, tau):
+        self.tau = tau
+
+    def S(self, t):
+        return 1.0 - math.exp(-t / self.tau)
+
+    def R(self, t):
+        return t - self.tau * self.S(t)
+
+
+class Critical:
+    """wn^2 / (s + wn)^2"""
+    def __init__(self, wn):
+        self.wn = wn
+
+    def S(self, t):
+        x = self.wn * t
+        return 1.0 - (1.0 + x) * math.exp(-x)
+
+    def R(self, t):
+        return t - 2.0 / self.wn + (2.0 / self.wn + t) * math.exp(-self.wn * t)
+
+
+class Under:
+    """wn^2 / (s^2 + 2 zeta wn s + wn^2), zeta < 1"""
+    def __init__(self, wn, zeta):
+        self.wn, self.zeta = wn, zeta
+        self.sigma = zeta * wn
+        self.wd = wn * math.sqrt(1.0 - zeta * zeta)
+
+    def S(self, t):
+        e = math.exp(-self.sigma * t)
+        return 1.0 - e * (math.cos(self.wd * t) + self.sigma / self.wd * math.sin(self.wd * t))
+
+    def R(self, t):
+        e = math.exp(-self.sigma * t)
+        return (t - 2.0 * self.zeta / self.wn
+                + e * (2.0 * self.zeta / self.wn * math.cos(self.wd * t)
+                       + (2.0 * self.zeta ** 2 - 1.0) / (self.wn * math.sqrt(1.0 - self.zeta ** 2)) * math.sin(self.wd * t)))
+
+
+def response(system, inputs, t):
+    """Output at t of the system driven by inputs: ("step", t0, change) and ("ramp", t0, slope change)."""
+    y = 0.0
+    for kind, t0, c in inputs:
+        if t >= t0:
+            y += c * (system.S(t - t0) if kind == "step" else system.R(t - t0))
+    return y
+
+
+def command(inputs, t):
+    r = 0.0
+    for kind, t0, c in inputs:
+        if t >= t0:
+            r += c if kind == "step" else c * (t - t0)
+    return r
+
+
+def ramp_block(t_up, sign, speed, decel, plateau_s):
+    """A step to sign*speed at t_up, held, then a linear fall to zero at decel; returns (inputs, t_ramp, t_end)."""
+    t_ramp = t_up + plateau_s
+    t_end = t_ramp + speed / decel
+    return [("step", t_up, sign * speed), ("ramp", t_ramp, -sign * decel), ("ramp", t_end, sign * decel)], t_ramp, t_end
+
+
+def bisect_time(f, level):
+    """First time f reaches level: a fine scan to the first sample at or above it, then bisection."""
+    k = 0
+    while f(k * 0.001) < level:
+        k += 1
+    lo, hi = (k - 1) * 0.001, k * 0.001
+    for _ in range(60):
+        mid = 0.5 * (lo + hi)
+        lo, hi = (mid, hi) if f(mid) < level else (lo, mid)
+    return 0.5 * (lo + hi)
+
+
+def last_outside(system, band, hi=40.0):
+    """Last time |S - 1| exceeds band, on a fine grid."""
+    out, n = 0.0, int(hi / 0.001)
+    for k in range(n):
+        if abs(system.S(k * 0.001) - 1.0) > band:
+            out = k * 0.001
+    return out
+
+
+def ts_us(t):
+    return int(round(t * 1e6))
+
+
+def write_logs(prefix, system, inputs, t_end, pos_keep=None, sp_until=None, swap_pos=None, pos_from=0.0, sp_from=0.0):
+    with open(prefix + "vehicle_local_position_0.csv", "w", newline="") as f:
+        w = csv.writer(f)
+        w.writerow(["timestamp", "vx", "vy"])
+        rows = []
+        for k in range(int(round(t_end / POS_DT)) + 1):
+            t = k * POS_DT
+            if t >= pos_from and (pos_keep is None or pos_keep(t)):
+                rows.append([ts_us(t), 0.0, response(system, inputs, t)])
+        if swap_pos:
+            i, j = swap_pos
+            rows[i], rows[j] = rows[j], rows[i]
+        w.writerows(rows)
+    with open(prefix + "vehicle_local_position_setpoint_0.csv", "w", newline="") as f:
+        w = csv.writer(f)
+        w.writerow(["timestamp", "vx", "vy"])
+        for k in range(int(round(t_end / SP_DT)) + 1):
+            t = k * SP_DT
+            if sp_from <= t and (sp_until is None or t <= sp_until):
+                w.writerow([ts_us(t), 0.0, command(inputs, t)])
+
+
+def quat(roll_deg, pitch_deg):
+    cr, sr = math.cos(math.radians(roll_deg) / 2), math.sin(math.radians(roll_deg) / 2)
+    cp, sp = math.cos(math.radians(pitch_deg) / 2), math.sin(math.radians(pitch_deg) / 2)
+    return [cr * cp, sr * cp, cr * sp, -sr * sp]  # yaw zero
+
+
+def write_attitude(prefix, t_end, rate_fn, angle_fn, cmd_fn, dt=0.004, keep=None, cmd_dt=0.01, back=False):
+    """rate_fn(t) -> (roll, pitch, yaw) rates [deg/s]; angle_fn / cmd_fn(t) -> (roll, pitch) [deg]."""
+    n = int(round(t_end / dt)) + 1
+    ts = [k * dt for k in range(n) if keep is None or keep(k * dt)]
+    with open(prefix + "vehicle_angular_velocity_0.csv", "w", newline="") as f:
+        w = csv.writer(f)
+        w.writerow(["timestamp", "xyz[0]", "xyz[1]", "xyz[2]"])
+        rows = [[ts_us(t)] + [math.radians(v) for v in rate_fn(t)] for t in ts]
+        if back:
+            rows[100], rows[101] = rows[101], rows[100]
+        w.writerows(rows)
+    with open(prefix + "vehicle_attitude_0.csv", "w", newline="") as f:
+        w = csv.writer(f)
+        w.writerow(["timestamp", "q[0]", "q[1]", "q[2]", "q[3]"])
+        for t in ts:
+            w.writerow([ts_us(t)] + quat(*angle_fn(t)))
+    with open(prefix + "vehicle_attitude_setpoint_0.csv", "w", newline="") as f:
+        w = csv.writer(f)
+        w.writerow(["timestamp", "q_d[0]", "q_d[1]", "q_d[2]", "q_d[3]"])
+        for k in range(int(round(t_end / cmd_dt)) + 1):
+            w.writerow([ts_us(k * cmd_dt)] + quat(*cmd_fn(k * cmd_dt)))
+
+
+def run_tool(prefix, extra):
+    p = subprocess.run([sys.executable, TOOL, "analyze", prefix, *extra], capture_output=True, text=True)
+    try:
+        res = json.loads(p.stdout)
+    except ValueError:
+        res = {"error": "NO JSON: " + (p.stderr.strip()[-80:] or p.stdout[:80])}
+    return p.returncode, res
+
+
+results = []
+
+
+def report(name, ok, detail=""):
+    print(("PASS" if ok else "FAIL"), "%-62s" % name, detail)
+    results.append(ok)
+
+
+def near(x, ref, tol):
+    return x is not None and abs(x - ref) <= tol
+
+
+def valid_case(name, build, extra, check):
+    """The tool must exit 0 and check(res) must return (ok, detail)."""
+    with tempfile.TemporaryDirectory() as d:
+        prefix = os.path.join(d, "log_0_")
+        build(prefix)
+        rc, res = run_tool(prefix, extra)
+    try:
+        ok, detail = check(res)
+    except (KeyError, IndexError, TypeError) as e:
+        ok, detail = False, "missing output %s" % e
+    report(name, ok and rc == 0, "rc=%s %s" % (rc, detail if detail else (res.get("error") or "")[:90]))
+
+
+def invalid_case(name, build, extra, substring):
+    """The tool must exit 2 with an INVALID error that names the reason (not a usage error, not a crash).
+    substring may be a tuple of accepted wordings (an old rule had other words in the previous tool)."""
+    wordings = substring if isinstance(substring, tuple) else (substring,)
+    with tempfile.TemporaryDirectory() as d:
+        prefix = os.path.join(d, "log_0_")
+        build(prefix)
+        rc, res = run_tool(prefix, extra)
+    err = res.get("error") or ""
+    report(name, rc == 2 and err.startswith("INVALID") and any(w in err for w in wordings), "rc=%s %s" % (rc, err[:110]))
+
+
+def step_log(system, speed=5.0, t_up=2.0, t_down=12.0, t_end=24.0, **kw):
+    inputs = [("step", t_up, speed), ("step", t_down, -speed)]
+    return lambda prefix: write_logs(prefix, system, inputs, t_end, **kw)
+
+
+def check_step_shape(system, overshoot, ringing, lag=None):
+    """Both steps (up and down to zero) must show the closed-form rise, overshoot, settling and ringing."""
+    t10, t90 = bisect_time(system.S, 0.1), bisect_time(system.S, 0.9)
+    t_settle = last_outside(system, 0.02)
+
+    def check(res):
+        msgs, ok = [], True
+        for rec in (res["steps_up"][0], res["steps_down_to_zero"][0]):
+            good = (near(rec["rise_10_90_s"], t90 - t10, 0.01)
+                    and near(rec["overshoot_percent"], overshoot, 1.0 if overshoot else 0.05)
+                    and near(rec["settle_2pct_s"], t_settle, 0.03)
+                    and rec["ringing_count"] == ringing)
+            ok = ok and good
+            msgs.append("rise %.3f/%.3f os %.1f/%.1f settle %.2f/%.2f ring %s/%s" % (
+                rec["rise_10_90_s"] or -1, t90 - t10, rec["overshoot_percent"], overshoot,
+                rec["settle_2pct_s"] or -1, t_settle, rec["ringing_count"], ringing))
+        if lag is not None:
+            down = res["steps_down_to_zero"][0]
+            ok = ok and near(down["equivalent_lag_s"], lag, 0.02)
+            msgs.append("lag %.3f/%.3f" % (down["equivalent_lag_s"], lag))
+        return ok, "; ".join(msgs[:1] + msgs[1:])
+    return check
+
+
+# ---- steps of known shape
+crit = Critical(3.0)
+valid_case("critically damped step: rise, no overshoot, no ringing, lag 2/wn", step_log(crit), ["--speeds", "5"],
+           check_step_shape(crit, 0.0, 0, lag=2.0 / 3.0))
+zeta = 0.25
+under = Under(4.0, zeta)
+overshoot_exact = 100.0 * math.exp(-math.pi * zeta / math.sqrt(1.0 - zeta * zeta))
+valid_case("underdamped step: overshoot 44.4 %, ringing 3, rise", step_log(under), ["--speeds", "5"],
+           check_step_shape(under, overshoot_exact, 3))
+first = First(0.4)
+valid_case("first-order step: rise 2.197 tau, no overshoot, lag tau", step_log(first), ["--speeds", "5"],
+           check_step_shape(first, 0.0, 0, lag=0.4))
+valid_case("[old output] first-order step: the 63 % time is tau, CPB_T_LAT 0.4", step_log(first), ["--speeds", "5"],
+           lambda res: (near(res["steps_down_to_zero"][0]["t63_s"], 0.4, 0.03) and res["t_lat_rounded_up_s"] == 0.4,
+                        "t63 %s t_lat %s" % (res["steps_down_to_zero"][0]["t63_s"], res["t_lat_rounded_up_s"])))
+
+# ---- ramps
+tau = 0.5
+
+
+def ramps_log(system, blocks, rest_s=8.0, plateau_s=8.0, **kw):
+    inputs, t_up, ends = [], 2.0, []
+    for sign, decel in blocks:
+        block, t_ramp, t_end = ramp_block(t_up, sign, 8.0, decel, plateau_s)
+        inputs += block
+        ends.append(t_end)
+        t_up = t_end + rest_s
+    return inputs, ends, (lambda prefix: write_logs(prefix, system, inputs, t_up, **kw))
+
+
+inputs3, ends3, build3 = ramps_log(First(tau), [(1, 1.0), (-1, 2.0), (1, 3.0)])
+
+
+def check_ramps(expected_lag, expected_overshoot_for=None):
+    def check(res):
+        recs = res["ramps_down_to_zero"]
+        ok = len(recs) == 3
+        msgs = []
+        for rec, decel in zip(recs, (1.0, 2.0, 3.0)):
+            good = near(rec["ramp_following_lag_s"], expected_lag, 0.02) and near(rec["decel_m_s2"], decel, 0.02)
+            ok = ok and good
+            msgs.append("a=%s lag %s" % (rec["decel_m_s2"], rec["ramp_following_lag_s"]))
+        return ok and near(res["worst_ramp_following_lag_s"], expected_lag, 0.02), "; ".join(msgs)
+    return check
+
+
+valid_case("first-order ramps 1, 2, 3 m/s^2 (signs alternate): lag = tau", build3,
+           ["--speeds", "", "--ramp-decels", "1,2,3"], check_ramps(tau))
+valid_case("first-order ramps: final overshoot is 0 and no ringing", build3, ["--speeds", "", "--ramp-decels", "1,2,3"],
+           lambda res: (all(near(r["final_overshoot_percent"], 0.0, 0.05) and r["ringing_count"] == 0
+                            for r in res["ramps_down_to_zero"]), ""))
+zeta_r, wn_r = 0.5, 4.0
+second = Under(wn_r, zeta_r)
+inputs_s, ends_s, build_s = ramps_log(second, [(1, 2.0)])
+
+
+def check_second_order_ramp(res):
+    rec = res["ramps_down_to_zero"][0]
+    t_end = ends_s[0]
+    grid = [t_end + k * 0.001 for k in range(8000)]
+    under_exact = max(0.0, -min(response(second, inputs_s, t) for t in grid))
+    ok = (near(rec["ramp_following_lag_s"], 2.0 * zeta_r / wn_r, 0.02)
+          and under_exact > 0.1 and near(rec["final_overshoot_m_s"], under_exact, 0.01))
+    return ok, "lag %s/%.3f undershoot %s/%.3f m/s ringing %s" % (
+        rec["ramp_following_lag_s"], 2.0 * zeta_r / wn_r, rec["final_overshoot_m_s"], under_exact, rec["ringing_count"])
+
+
+valid_case("underdamped ramp: lag 2 zeta/wn and the closed-form final overshoot", build_s,
+           ["--speeds", "", "--ramp-decels", "2"], check_second_order_ramp)
+
+# ---- attitude chatter, tilt, yaw rate
+TAU_B, THETA, ROLL_PEAK, YAW_RATE = 0.4, 8.0, 3.0, 30.0
+BUMPS = [(2.0, 1.0), (12.0, -1.0)]  # (command time, sign)
+
+
+def bump(t, scale):
+    """scale * x exp(1 - x) after each command, x in units of TAU_B: peak scale at x = 1."""
+    v = 0.0
+    for t0, s in BUMPS:
+        if t >= t0:
+            x = (t - t0) / TAU_B
+            v += s * scale * x * math.exp(1.0 - x)
+    return v
+
+
+def bump_rate(t, scale):
+    """The derivative of bump() [per s]."""
+    v = 0.0
+    for t0, s in BUMPS:
+        if t >= t0:
+            x = (t - t0) / TAU_B
+            v += s * scale / TAU_B * (1.0 - x) * math.exp(1.0 - x)
+    return v
+
+
+def attitude_build(ripple_hz=0.0, ripple_deg_s=0.0, **kw):
+    def build(prefix):
+        step_log(first)(prefix)
+        write_attitude(
+            prefix, 24.0,
+            lambda t: (bump_rate(t, ROLL_PEAK),
+                       bump_rate(t, THETA) + ripple_deg_s * math.sin(2 * math.pi * ripple_hz * t), YAW_RATE),
+            lambda t: (bump(t, ROLL_PEAK), bump(t, THETA)),
+            lambda t: (1.5 * bump(t, ROLL_PEAK), 1.5 * bump(t, THETA)), **kw)
+    return build
+
+
+def rms_window(fn, t0, length):
+    n = 4000
+    return math.sqrt(sum(fn(t0 + length * k / n) ** 2 for k in range(n + 1)) / (n + 1))
+
+
+def check_chatter(want_high):
+    def check(res):
+        msgs, ok = [], True
+        for rec in (res["steps_up"][0], res["steps_down_to_zero"][0]):
+            frac_p = rec["pitch_rate_power_above_2hz_fraction"]
+            frac_r = rec["roll_rate_power_above_2hz_fraction"]
+            length, t0 = rec["settle_s"], rec["t_s"]
+            rms_expected = rms_window(lambda t: bump_rate(t, THETA), t0, length)
+            good = (frac_r < 0.05 and (frac_p > 0.3 if want_high else frac_p < 0.05)
+                    and near(rec["roll_rate_rms_deg_s"], rms_window(lambda t: bump_rate(t, ROLL_PEAK), t0, length), 0.1)
+                    and (want_high or near(rec["pitch_rate_rms_deg_s"], rms_expected, 0.05 * rms_expected))
+                    and near(rec["peak_pitch_deg"], THETA, 0.05) and near(rec["peak_roll_deg"], ROLL_PEAK, 0.05)
+                    and near(rec["peak_pitch_cmd_deg"], 1.5 * THETA, 0.05) and near(rec["peak_roll_cmd_deg"], 1.5 * ROLL_PEAK, 0.05)
+                    and near(rec["yaw_rate_mean_deg_s"], YAW_RATE, 0.01))
+            ok = ok and good
+            msgs.append("pitch hf %.3f roll hf %.3f rms %.2f peak %.2f/%.2f" % (
+                frac_p, frac_r, rec["pitch_rate_rms_deg_s"], rec["peak_pitch_deg"], rec["peak_roll_deg"]))
+        return ok and res["logs"] == {"angular_velocity": True, "attitude": True, "attitude_setpoint": True}, "; ".join(msgs)
+    return check
+
+
+valid_case("clean pitch rate: power above 2 Hz low, rms, peak tilt, yaw rate", attitude_build(), ["--speeds", "5"],
+           check_chatter(False))
+valid_case("12 Hz ripple on the pitch rate: power above 2 Hz high, roll clean", attitude_build(12.0, 20.0), ["--speeds", "5"],
+           check_chatter(True))
+
+# ---- a falling setpoint nobody asked for is listed, not rejected (no --ramp-decels)
+stray = [("step", 2.0, 5.0), ("step", 12.0, -5.0), ("step", 26.0, 8.0), ("ramp", 36.0, -1.0), ("ramp", 38.0, -2.0), ("ramp", 40.0, 3.0)]
+valid_case("unplanned invalid ramp is listed with its problems and does not reject the steps",
+           lambda prefix: write_logs(prefix, First(tau), stray, 60.0), ["--speeds", "5"],
+           lambda res: (res["all_ramps_found"] == 1 and len(res["ramps_down_to_zero"][0]["problems"]) > 0
+                        and res["t_lat_rounded_up_s"] == 0.5, "ramps %s" % res["all_ramps_found"]))
+
+# ---- INVALID: the evidence rules (a response that violates them is no evidence, exit 2)
+slow = First(3.0)
+invalid_case("[old rule] step down that does not settle in its hold", step_log(slow, t_down=12.0, t_end=16.0), ["--speeds", "5"],
+             "did not settle")
+invalid_case("[old rule] position sample gap inside the step response",
+             step_log(first, pos_keep=lambda t: not (12.2 < t < 13.0)), ["--speeds", "5"], "gap")
+invalid_case("[old rule] setpoint log ends before the response does", step_log(first, sp_until=13.0), ["--speeds", "5"],
+             "coverage")
+invalid_case("[old rule] time goes backwards in the position log", step_log(first, swap_pos=(300, 301)), ["--speeds", "5"],
+             "time goes backwards")
+invalid_case("[old rule] no complete step at the wanted speed", step_log(first, speed=3.0), ["--speeds", "5"], ("no complete step", "no complete response"))
+invalid_case("no step up at the wanted speed (the log starts after it)", step_log(first, pos_from=6.0, sp_from=6.0),
+             ["--speeds", "5"], "'step up'")
+invalid_case("step up without a position sample before the command (position log starts after it)",
+             step_log(first, pos_from=6.0), ["--speeds", "5"], "no fresh position sample")
+up_slow = [("step", 2.0, 5.0), ("step", 5.0, -5.0)]
+invalid_case("step up that does not settle before the next command",
+             lambda prefix: write_logs(prefix, First(1.0), up_slow, 20.0), ["--speeds", "5"], "did not settle")
+invalid_case("a requested ramp is absent", step_log(first), ["--speeds", "5", "--ramp-decels", "2"], "no complete response")
+
+short_inputs, _, _ = ramp_block(2.0, 1, 3.0, 3.0, 8.0)
+invalid_case("ramp shorter than twice the steady window",
+             lambda prefix: write_logs(prefix, First(0.3), short_inputs, 24.0), ["--speeds", "", "--ramp-decels", "3"],
+             "ramp shorter")
+inputs_ns, ends_ns, build_ns = ramps_log(First(2.0), [(1, 2.0)], rest_s=16.0)
+invalid_case("ramp error not steady (loop slower than the ramp)", build_ns, ["--speeds", "", "--ramp-decels", "2"], "not steady")
+t_r = 2.0 + 8.0
+kinked = [("step", 2.0, 8.0), ("ramp", t_r, -1.0), ("ramp", t_r + 2.0, -2.0), ("ramp", t_r + 4.0, 3.0)]
+invalid_case("ramp setpoint that is not a straight line",
+             lambda prefix: write_logs(prefix, First(tau), kinked, 40.0), ["--speeds", "", "--ramp-decels", "2"],
+             "not linear")
+invalid_case("angular velocity gap inside a response",
+             lambda prefix: (step_log(first)(prefix),
+                             write_attitude(prefix, 24.0, lambda t: (bump_rate(t, ROLL_PEAK), bump_rate(t, THETA), 0.0),
+                                            lambda t: (bump(t, ROLL_PEAK), bump(t, THETA)), lambda t: (0.0, 0.0),
+                                            keep=lambda t: not (2.3 < t < 2.6))),
+             ["--speeds", "5"], "angular velocity log")
+invalid_case("time goes backwards in the angular velocity log",
+             lambda prefix: (step_log(first)(prefix),
+                             write_attitude(prefix, 24.0, lambda t: (bump_rate(t, ROLL_PEAK), bump_rate(t, THETA), 0.0),
+                                            lambda t: (bump(t, ROLL_PEAK), bump(t, THETA)), lambda t: (0.0, 0.0), back=True)),
+             ["--speeds", "5"], "time goes backwards")
+invalid_case("angular velocity and attitude logs too sparse for a spectrum",
+             lambda prefix: (step_log(first)(prefix),
+                             write_attitude(prefix, 24.0, lambda t: (bump_rate(t, ROLL_PEAK), bump_rate(t, THETA), 0.0),
+                                            lambda t: (bump(t, ROLL_PEAK), bump(t, THETA)), lambda t: (0.0, 0.0), dt=0.2)),
+             ["--speeds", "5"], "angular velocity log")
+
+print("%d of %d cases passed" % (sum(results), len(results)))
+sys.exit(0 if all(results) else 1)
