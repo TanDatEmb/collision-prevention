@@ -32,7 +32,8 @@ and prints for every response found:
   attitude, per response, from the start of the command to the settled time: roll-rate and pitch-rate RMS,
     the fraction of the (mean-removed, Hann-windowed) power above --chatter-hz, the mean yaw rate, the peak
     roll and pitch from the attitude quaternion and the peak commanded roll and pitch from q_d.
-INVALID (exit 2) when a selected response has not settled (sustained, before the next command), lacks position
+INVALID (exit 2) when a selected response (steps down at --speeds; steps up with --require-steps-up; ramps at
+--ramp-decels) has not settled (sustained, before the next command), lacks position
 samples before the command, lacks setpoint coverage, has a sample gap above --max-gap-s, when time goes
 backwards in any log, when a ramp setpoint is not linear, too short or has no steady error, or when a present
 attitude or rate log has too few samples or a gap above --max-rate-gap-s inside a response. Every limit is a
@@ -539,9 +540,13 @@ def analyze(a):
     # it would understate the lag, so it is no evidence and the measurement is rejected
     # ramps are required only where --ramp-decels names them: a falling setpoint the flight did not plan (position
     # control, a smoothed command) is listed with its problems but does not reject a step measurement
-    incomplete = [s for s in kept_down + kept_up + (kept_ramps if a.ramp_decels else []) if s["problems"]]
+    # steps up are required only with --require-steps-up: the rules of the tool before the step-up metrics did not need them
+    incomplete = [s for s in kept_down + (kept_up if a.require_steps_up else []) + (kept_ramps if a.ramp_decels else [])
+                  if s["problems"]]
     missing = [("step down", w) for w in wanted if not any(abs(s["speed_before_m_s"] - w) < 0.5 and not s["problems"] for s in kept_down)]
-    missing += [("step up", w) for w in wanted if not any(abs(s["target_speed_m_s"] - w) < 0.5 and not s["problems"] for s in kept_up)]
+    if a.require_steps_up:
+        missing += [("step up", w) for w in wanted
+                    if not any(abs(s["target_speed_m_s"] - w) < 0.5 and not s["problems"] for s in kept_up)]
     # each requested ramp needs its own complete recorded ramp (one ramp cannot satisfy two requests): a bipartite
     # matching that reconsiders earlier choices, since the tolerance ranges of close requests overlap
     ok_ramps = [ri for ri, s in enumerate(kept_ramps) if not s["problems"]]
@@ -559,7 +564,8 @@ def analyze(a):
     unmatched = [wi for wi in range(len(a.ramp_decels)) if not assign(wi, set())]
     missing += [("ramp", a.ramp_decels[wi]) for wi in unmatched]
     worst_raw = max((s["_lag_raw"] for s in kept_down if "_lag_raw" in s), default=None)
-    ramp_lags = [s["_lag_raw"] for s in kept_ramps if "_lag_raw" in s]
+    # the summary uses complete ramps only; the records of the others stay listed with their problems
+    ramp_lags = [s["_lag_raw"] for s in kept_ramps if "_lag_raw" in s and not s["problems"]]
     for s in kept_down + kept_up + kept_ramps:
         s.pop("_lag_raw", None)
     if incomplete or missing:
@@ -604,6 +610,8 @@ def main():
                    help="bench value [s]: largest gap between position samples inside a response")
     n.add_argument("--speeds", type=float_list, default=[3.0, 5.0, 8.0],
                    help="speeds [m/s] of the steps that must be present and complete; empty (\"\") requires none")
+    n.add_argument("--require-steps-up", action="store_true",
+                   help="every step up at --speeds must be present and complete (steps down always must)")
     n.add_argument("--ramp-decels", type=float_list, default=[],
                    help="decelerations [m/s^2] of the ramps that must be present and complete; default requires none")
     n.add_argument("--ramp-window-s", type=float, default=1.0,

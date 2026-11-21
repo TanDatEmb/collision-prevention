@@ -390,7 +390,8 @@ stray = [("step", 2.0, 5.0), ("step", 12.0, -5.0), ("step", 26.0, 8.0), ("ramp",
 valid_case("unplanned invalid ramp is listed with its problems and does not reject the steps",
            lambda prefix: write_logs(prefix, First(tau), stray, 60.0), ["--speeds", "5"],
            lambda res: (res["all_ramps_found"] == 1 and len(res["ramps_down_to_zero"][0]["problems"]) > 0
-                        and res["t_lat_rounded_up_s"] == 0.5, "ramps %s" % res["all_ramps_found"]))
+                        and res["t_lat_rounded_up_s"] == 0.5 and "worst_ramp_following_lag_s" not in res,
+                        "ramps %s" % res["all_ramps_found"]))
 
 # ---- review findings (PR 145): each case below failed on the first version of this PR
 # a sample-and-hold ramp: the setpoint updates every 0.1 s, the log has a row every 0.05 s, so values repeat
@@ -427,6 +428,12 @@ valid_case("close ramp requests are matched to distinct ramps by a full matching
            ramps_log(First(tau), [(1, 0.7), (-1, 1.05)])[2], ["--speeds", "", "--ramp-decels", "1,1.2"],
            lambda res: (len(res["ramps_down_to_zero"]) == 2 and near(res["ramps_down_to_zero"][0]["decel_m_s2"], 0.7, 0.05)
                         and near(res["ramps_down_to_zero"][1]["decel_m_s2"], 1.05, 0.05), ""))
+
+
+# the step-up requirement is opt-in: a log with the step down only (as the earlier rules accepted) stays valid
+valid_case("log with a step down only is valid without --require-steps-up",
+           step_log(first, pos_from=6.0, sp_from=6.0), ["--speeds", "5"],
+           lambda res: (res["steps_up"] == [] and res["t_lat_rounded_up_s"] == 0.4, ""))
 
 
 def tool_module():
@@ -488,12 +495,12 @@ invalid_case("[old rule] time goes backwards in the position log", step_log(firs
              "time goes backwards")
 invalid_case("[old rule] no complete step at the wanted speed", step_log(first, speed=3.0), ["--speeds", "5"], ("no complete step", "no complete response"))
 invalid_case("no step up at the wanted speed (the log starts after it)", step_log(first, pos_from=6.0, sp_from=6.0),
-             ["--speeds", "5"], "'step up'")
+             ["--speeds", "5", "--require-steps-up"], "'step up'")
 invalid_case("step up without a position sample before the command (position log starts after it)",
-             step_log(first, pos_from=6.0), ["--speeds", "5"], "no fresh position sample")
+             step_log(first, pos_from=6.0), ["--speeds", "5", "--require-steps-up"], "no fresh position sample")
 up_slow = [("step", 2.0, 5.0), ("step", 5.0, -5.0)]
 invalid_case("step up that does not settle before the next command",
-             lambda prefix: write_logs(prefix, First(1.0), up_slow, 20.0), ["--speeds", "5"], "did not settle")
+             lambda prefix: write_logs(prefix, First(1.0), up_slow, 20.0), ["--speeds", "5", "--require-steps-up"], "did not settle")
 invalid_case("a requested ramp is absent", step_log(first), ["--speeds", "5", "--ramp-decels", "2"], "no complete response")
 
 short_inputs, _, _ = ramp_block(2.0, 1, 3.0, 3.0, 8.0)
@@ -511,7 +518,7 @@ invalid_case("angular velocity gap inside a response",
              lambda prefix: (step_log(first)(prefix),
                              write_attitude(prefix, 24.0, lambda t: (bump_rate(t, ROLL_PEAK), bump_rate(t, THETA), 0.0),
                                             lambda t: (bump(t, ROLL_PEAK), bump(t, THETA)), lambda t: (0.0, 0.0),
-                                            keep=lambda t: not (2.3 < t < 2.6))),
+                                            keep=lambda t: not (12.3 < t < 12.6))),
              ["--speeds", "5"], "angular velocity log")
 invalid_case("time goes backwards in the angular velocity log",
              lambda prefix: (step_log(first)(prefix),
