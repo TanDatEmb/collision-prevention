@@ -103,11 +103,16 @@ def resample(ts, vs, query, first, max_gap, what):
     """Linear interpolation of the samples (ts, vs) at the times `query`. From index `first` on, the samples must
     cover the query times and have no gap above max_gap between the two samples around a query time; before it
     the nearest sample is used (nothing is judged there). Raises Invalid when the coverage is not there."""
+    if not ts:
+        raise Invalid("%s has no samples" % what)
     if any(b < a for a, b in zip(ts, ts[1:])):
         raise Invalid("%s: time goes backwards" % what)
     out = []
     for n, q in enumerate(query):
         i = bisect.bisect_right(ts, q)
+        if i > 0 and ts[i - 1] == q:  # a sample at exactly this time: no interpolation, no neighbouring gap to judge
+            out.append(vs[i - 1])
+            continue
         lo, hi = (i - 1, i) if 0 < i < len(ts) else (min(i, len(ts) - 1), min(i, len(ts) - 1))
         if n >= first:
             if q < ts[0] - max_gap or q > ts[-1] + max_gap:

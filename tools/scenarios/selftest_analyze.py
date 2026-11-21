@@ -53,7 +53,7 @@ def stop_ys(v0=5.0, a=3.0, stop_at=17.0, total_s=30.0, a_up=2.0):
 def write(prefix, rows, states, nan_at=None, empty_at=None, with_constraints=True, with_position=True, lateral=0.0,
           constraints_until=None, swap_constraint_rows=None, heading_rad=None, north_m=0.0, hook_rows=None,
           heading_nan_at=None, pitch_rad=None, attitude_until=None, attitude_nan_at=None, truth_dy=None,
-          truth_nan_at=None, truth_until=None, attitude_no_q=False):
+          truth_nan_at=None, truth_until=None, attitude_no_q=False, truth_empty=False, truth_tail_s=None):
     if pitch_rad is not None:  # vehicle_attitude: a pure pitch rotation as the quaternion (w, x, y, z), 100 Hz
         with open(prefix + "vehicle_attitude_0.csv", "w", newline="") as f:
             w = csv.writer(f)
@@ -68,8 +68,12 @@ def write(prefix, rows, states, nan_at=None, empty_at=None, with_constraints=Tru
             w = csv.writer(f)
             w.writerow(["timestamp", "x", "y"])
             for n, (t, y, vy) in enumerate(rows):
-                if n % 2 == 0 and (truth_until is None or t <= truth_until):
+                if truth_empty:
+                    break
+                if (n % 2 == 0 or truth_tail_s is not None) and (truth_until is None or t <= truth_until):
                     w.writerow([int(t * 1e6), north_m, "nan" if n == truth_nan_at else y + truth_dy])
+            if truth_tail_s is not None and not truth_empty:  # one more sample long after the last position stamp
+                w.writerow([int((rows[-1][0] + truth_tail_s) * 1e6), north_m, rows[-1][1] + truth_dy])
     if with_position:
         with open(prefix + "vehicle_local_position_0.csv", "w", newline="") as f:
             w = csv.writer(f)
@@ -471,6 +475,13 @@ results.append(offset_case("NaN in the ground truth is INVALID", "INVALID", lamb
 results.append(offset_case("ground truth ends before the approach ends is INVALID", "INVALID",
                            lambda r: "does not cover" in r["error"], extra=OFF, heading_rad=math.pi / 2, truth_dy=0.5,
                            truth_until=5.0))
+
+results.append(offset_case("header-only ground truth file is INVALID, not a crash", "INVALID",
+                           lambda r: "no samples" in r["error"], extra=OFF, heading_rad=math.pi / 2, truth_dy=0.5,
+                           truth_empty=True))
+results.append(offset_case("ground truth sample matching exactly, a far one after it, is not a gap", "PASS",
+                           lambda r: near(r["ground_truth_closest_approach_m"], 3.5), extra=OFF, heading_rad=math.pi / 2,
+                           truth_dy=0.5, truth_tail_s=1.0))
 
 print("%d of %d cases pass" % (sum(results), len(results)))
 sys.exit(0 if all(results) else 1)
