@@ -4,13 +4,10 @@
 #include <limits>
 #include <stdexcept>
 
-#include "livox_ray_source/fixed_pose_provider.hpp"
 #include "livox_ray_source/pose_history.hpp"
 
-using livox_ray_source::FixedPoseProvider;
 using livox_ray_source::PoseHistory;
 using livox_ray_source::PoseHistoryConfig;
-using livox_ray_source::PoseHistoryPushStatus;
 using livox_ray_source::PoseLookupResult;
 using livox_ray_source::PoseLookupStatus;
 using livox_ray_source::PoseSample;
@@ -84,8 +81,8 @@ TEST(PoseHistoryTest, EmptyHistoryHasNoPose)
 TEST(PoseHistoryTest, InterpolatesMidwayLinearPositionAndSphericalQuaternion)
 {
   PoseHistory history{fixtureConfig()};
-  ASSERT_EQ(history.push(yawPose(100U * kMs, 0.0, 0.0)), PoseHistoryPushStatus::kStored);
-  ASSERT_EQ(history.push(yawPose(200U * kMs, kPi / 2.0, 1.0)), PoseHistoryPushStatus::kStored);
+  ASSERT_TRUE(history.push(yawPose(100U * kMs, 0.0, 0.0)));
+  ASSERT_TRUE(history.push(yawPose(200U * kMs, kPi / 2.0, 1.0)));
 
   const PoseLookupResult r = history.poseAt(150U * kMs);
   ASSERT_TRUE(r.ok());
@@ -207,7 +204,7 @@ TEST(PoseHistoryTest, NaNQuaternionInTheBracketGivesNoPose)
   history.push(yawPose(100U * kMs, 0.0, 0.0));
   PoseSample bad = yawPose(150U * kMs, 0.0, 0.0);
   bad.q_wxyz[0] = std::numeric_limits<double>::quiet_NaN();
-  EXPECT_EQ(history.push(bad), PoseHistoryPushStatus::kStored);
+  EXPECT_TRUE(history.push(bad));
   history.push(yawPose(200U * kMs, 0.0, 0.0));
   EXPECT_EQ(history.poseAt(125U * kMs).status, PoseLookupStatus::kInvalidSampleInBracket);
   EXPECT_EQ(history.poseAt(175U * kMs).status, PoseLookupStatus::kInvalidSampleInBracket);
@@ -221,10 +218,10 @@ TEST(PoseHistoryTest, NaNQuaternionInTheBracketGivesNoPose)
 TEST(PoseHistoryTest, RejectsZeroTimeDuplicatesAndOutOfOrderSamples)
 {
   PoseHistory history{fixtureConfig()};
-  EXPECT_EQ(history.push(yawPose(0U, 0.0, 0.0)), PoseHistoryPushStatus::kRejectedNoTime);
-  EXPECT_EQ(history.push(yawPose(100U * kMs, 0.0, 0.0)), PoseHistoryPushStatus::kStored);
-  EXPECT_EQ(history.push(yawPose(100U * kMs, 0.0, 1.0)), PoseHistoryPushStatus::kRejectedNotNewer);
-  EXPECT_EQ(history.push(yawPose(90U * kMs, 0.0, 1.0)), PoseHistoryPushStatus::kRejectedNotNewer);
+  EXPECT_FALSE(history.push(yawPose(0U, 0.0, 0.0)));
+  EXPECT_TRUE(history.push(yawPose(100U * kMs, 0.0, 0.0)));
+  EXPECT_FALSE(history.push(yawPose(100U * kMs, 0.0, 1.0)));
+  EXPECT_FALSE(history.push(yawPose(90U * kMs, 0.0, 1.0)));
   EXPECT_EQ(history.size(), 1U);
 }
 
@@ -238,19 +235,4 @@ TEST(PoseHistoryTest, KeepsOnlyTheConfiguredDepth)
   EXPECT_EQ(history.poseAt(25U * kMs).status, PoseLookupStatus::kNoSampleBefore);
   EXPECT_TRUE(history.poseAt(35U * kMs).ok());
   EXPECT_TRUE(history.poseAt(50U * kMs).ok());
-}
-
-TEST(FixedPoseProviderTest, ReturnsTheSamePoseAtTheQueryTime)
-{
-  const FixedPoseProvider provider{yawPose(1U, 0.5, 3.0)};
-  const PoseLookupResult r = provider.poseAt(777U);
-  ASSERT_TRUE(r.ok());
-  EXPECT_EQ(r.pose.timestamp_sample_ns, 777U);
-  EXPECT_DOUBLE_EQ(r.pose.position_ned_m[0], 3.0);
-}
-
-TEST(FixedPoseProviderTest, CanStandForAMissingPose)
-{
-  const FixedPoseProvider provider{PoseLookupResult{PoseLookupStatus::kNoSampleAfter, {}}};
-  EXPECT_EQ(provider.poseAt(1U).status, PoseLookupStatus::kNoSampleAfter);
 }

@@ -76,12 +76,13 @@ bool angleIsValid(double a)
 
 }  // namespace
 
-bool MountRotation::isValid() const
+bool LevelingConfig::isValid() const
 {
-  return angleIsValid(roll_rad) && angleIsValid(pitch_down_rad) && angleIsValid(yaw_left_rad);
+  return angleIsValid(roll_rad) && angleIsValid(pitch_down_rad) && angleIsValid(yaw_left_rad) &&
+         std::isfinite(origin_motion_threshold_m) && origin_motion_threshold_m > 0.0;
 }
 
-RayLeveler::RayLeveler(const PoseProvider & poses, const LevelingConfig & config)
+RayLeveler::RayLeveler(const PoseHistory & poses, const LevelingConfig & config)
 : _poses(poses), _config(config), _mount_rotation{}
 {
   if (!config.isValid()) {
@@ -91,8 +92,8 @@ RayLeveler::RayLeveler(const PoseProvider & poses, const LevelingConfig & config
   }
   // Sensor FLU to body FLU: Rz(yaw) * Ry(pitch) * Rx(roll).
   _mount_rotation = multiply(
-    rotationZ(config.mount.yaw_left_rad),
-    multiply(rotationY(config.mount.pitch_down_rad), rotationX(config.mount.roll_rad)));
+    rotationZ(config.yaw_left_rad),
+    multiply(rotationY(config.pitch_down_rad), rotationX(config.roll_rad)));
 }
 
 LevelingStatus RayLeveler::beginFrame(uint64_t reference_time_ns)

@@ -72,20 +72,20 @@ PoseHistory::PoseHistory(const PoseHistoryConfig & config)
   }
 }
 
-PoseHistoryPushStatus PoseHistory::push(const PoseSample & sample)
+bool PoseHistory::push(const PoseSample & sample)
 {
   if (sample.timestamp_sample_ns == 0U) {
-    return PoseHistoryPushStatus::kRejectedNoTime;
+    return false;
   }
   const std::lock_guard<std::mutex> lock(_mutex);
   if (!_samples.empty() && sample.timestamp_sample_ns <= _samples.back().timestamp_sample_ns) {
-    return PoseHistoryPushStatus::kRejectedNotNewer;
+    return false;
   }
   _samples.push_back(sample);
   while (_samples.size() > _config.depth) {
     _samples.pop_front();
   }
-  return PoseHistoryPushStatus::kStored;
+  return true;
 }
 
 std::size_t PoseHistory::size() const

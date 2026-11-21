@@ -58,17 +58,6 @@ struct PoseLookupResult
   [[nodiscard]] bool ok() const {return status == PoseLookupStatus::kOk;}
 };
 
-/// Source of the vehicle pose at a given time. The leveling transform depends only on this
-/// interface, so it is tested without PX4 (see FixedPoseProvider).
-class PoseProvider
-{
-public:
-  virtual ~PoseProvider() = default;
-
-  /// Pose at `time_ns`, or a status that says why there is none.
-  [[nodiscard]] virtual PoseLookupResult poseAt(uint64_t time_ns) const = 0;
-};
-
 /// Required parameters of PoseHistory. There are no defaults: a default-constructed config holds
 /// the sentinels (0) and is not valid. The values come from the platform configuration once the
 /// owner has approved them; they are not decided in code.
@@ -84,13 +73,6 @@ struct PoseHistoryConfig
   [[nodiscard]] bool isValid() const {return depth >= 2U && max_bracket_gap_ns > 0U;}
 };
 
-enum class PoseHistoryPushStatus : uint8_t
-{
-  kStored,
-  kRejectedNoTime,   ///< `timestamp_sample_ns` is 0
-  kRejectedNotNewer, ///< not strictly later than the newest sample (duplicate or out of order)
-};
-
 /// History of pose samples keyed by their sample time, with interpolation (spherical for the
 /// quaternion, linear for the position) between the two samples that bracket the query time.
 ///
@@ -100,16 +82,21 @@ enum class PoseHistoryPushStatus : uint8_t
 /// fail. Invalid samples are stored (the sample time is known) so that a bracket that touches one
 /// gives no pose instead of being interpolated across it.
 ///
+/// push() returns true when the sample is stored. It returns false, and stores nothing, for a
+/// sample time of 0 and for a time that is not strictly later than the newest sample (a duplicate
+/// or an out of order sample).
+///
 /// Thread safe: the odometry callback may push while another thread queries.
-class PoseHistory : public PoseProvider
+class PoseHistory
 {
 public:
   /// Throws std::invalid_argument when `config` is not valid.
   explicit PoseHistory(const PoseHistoryConfig & config);
 
-  PoseHistoryPushStatus push(const PoseSample & sample);
+  bool push(const PoseSample & sample);
 
-  [[nodiscard]] PoseLookupResult poseAt(uint64_t time_ns) const override;
+  /// Pose at `time_ns`, or a status that says why there is none.
+  [[nodiscard]] PoseLookupResult poseAt(uint64_t time_ns) const;
 
   [[nodiscard]] std::size_t size() const;
 

@@ -11,56 +11,47 @@
 namespace livox_ray_source
 {
 
-/// Frame conventions of the leveling and deskew transform (ADR 0020 D1, ICD-CP-06). A mix-up of
-/// these mirrors lateral obstacles or flips the height band, so they are fixed here once.
-///
-/// - Sensor frame (FLU): x forward along the sensor boresight, y left, z up. This is the frame
-///   of `decodeSphericalPacket` and of the self-mask: azimuth is counter-clockwise from +x
-///   (towards +y, the left), elevation is positive upwards. A point is
-///   `range * (cos(el) cos(az), cos(el) sin(az), sin(el))`.
-/// - Body frame: FLU for the mount (x forward, y left, z up) and FRD for the pose (x forward,
-///   y right, z down). They differ by negating y and z: FRD = (x, -y, -z).
-/// - Pose: `PoseSample.q_wxyz` rotates body FRD to local NED (PX4 `VehicleOdometry.q`).
-/// - Output frame (FLU, ICD-CP-06): origin at the vehicle position at the reference time, x
-///   forward along the reference heading, y LEFT, z UP (against gravity), and azimuth
-///   counter-clockwise from +x (left is positive), elevation positive upwards. Roll and pitch are
-///   removed (z is gravity-aligned); only the heading at the reference time remains.
-///
-/// Mount rotation (sensor FLU to body FLU): R = Rz(yaw) * Ry(pitch) * Rx(roll) with right-hand
-/// rotations about the FLU axes of the body: Rx about forward (positive: left side up, right
-/// side down), Ry about left (positive: the boresight tilts DOWN, so a sensor ray along +x
-/// points below the body horizon), Rz about up (positive: the boresight turns to the left).
-/// The lever arm between the body origin and the sensor is not modelled (the ray origin is the
-/// body origin).
-struct MountRotation
-{
-  /// Rotation about the forward axis, radians. Sentinel NaN.
-  double roll_rad{std::numeric_limits<double>::quiet_NaN()};
-  /// Rotation about the left axis, radians, positive = boresight tilted down. Sentinel NaN.
-  double pitch_down_rad{std::numeric_limits<double>::quiet_NaN()};
-  /// Rotation about the up axis, radians, positive = boresight turned left. Sentinel NaN.
-  double yaw_left_rad{std::numeric_limits<double>::quiet_NaN()};
-
-  /// Valid: every angle is finite and within [-pi, pi].
-  [[nodiscard]] bool isValid() const;
-};
-
+// Frame conventions of the leveling and deskew transform (ADR 0020 D1, ICD-CP-06). A mix-up of
+// these mirrors lateral obstacles or flips the height band, so they are fixed here once.
+//
+// - Sensor frame (FLU): x forward along the sensor boresight, y left, z up. This is the frame
+//   of `decodeSphericalPacket` and of the self-mask: azimuth is counter-clockwise from +x
+//   (towards +y, the left), elevation is positive upwards. A point is
+//   `range * (cos(el) cos(az), cos(el) sin(az), sin(el))`.
+// - Body frame: FLU for the mount (x forward, y left, z up) and FRD for the pose (x forward,
+//   y right, z down). They differ by negating y and z: FRD = (x, -y, -z).
+// - Pose: `PoseSample.q_wxyz` rotates body FRD to local NED (PX4 `VehicleOdometry.q`).
+// - Output frame (FLU, ICD-CP-06): origin at the vehicle position at the reference time, x
+//   forward along the reference heading, y LEFT, z UP (against gravity), and azimuth
+//   counter-clockwise from +x (left is positive), elevation positive upwards. Roll and pitch are
+//   removed (z is gravity-aligned); only the heading at the reference time remains.
+//
+// Mount rotation (sensor FLU to body FLU, `LevelingConfig` roll, pitch, yaw): R = Rz(yaw) * Ry(pitch) * Rx(roll) with right-hand
+// rotations about the FLU axes of the body: Rx about forward (positive: left side up, right
+// side down), Ry about left (positive: the boresight tilts DOWN, so a sensor ray along +x
+// points below the body horizon), Rz about up (positive: the boresight turns to the left).
+// The lever arm between the body origin and the sensor is not modelled (the ray origin is the
+// body origin).
 /// Required parameters of RayLeveler. There are no defaults: a default-constructed config holds
 /// the sentinels (NaN) and is not valid. The mount comes from the calibrated platform
 /// configuration (ADR 0020 names 10 degrees pitched down for the first platform); the
-/// origin-motion threshold is OPEN-031 and has no approved value yet.
+/// origin-motion threshold is OPEN-031 and has no approved value yet. The mount rotation is
+/// R = Rz(yaw) * Ry(pitch) * Rx(roll) from the sensor FLU frame to the body FLU frame (see the
+/// frame conventions above for the sign of each angle).
 struct LevelingConfig
 {
-  MountRotation mount{};
+  /// Mount rotation about the forward axis, radians, positive = left side up. Sentinel NaN.
+  double roll_rad{std::numeric_limits<double>::quiet_NaN()};
+  /// Mount rotation about the left axis, radians, positive = boresight tilted down. Sentinel NaN.
+  double pitch_down_rad{std::numeric_limits<double>::quiet_NaN()};
+  /// Mount rotation about the up axis, radians, positive = boresight turned left. Sentinel NaN.
+  double yaw_left_rad{std::numeric_limits<double>::quiet_NaN()};
   /// A ray is dropped when the distance between the vehicle position at the ray time and at the
   /// reference time exceeds this, metres. Sentinel NaN. Valid: finite and greater than 0.
   double origin_motion_threshold_m{std::numeric_limits<double>::quiet_NaN()};
 
-  [[nodiscard]] bool isValid() const
-  {
-    return mount.isValid() && std::isfinite(origin_motion_threshold_m) &&
-           origin_motion_threshold_m > 0.0;
-  }
+  /// Valid: the three mount angles are finite within [-pi, pi] and the threshold is valid.
+  [[nodiscard]] bool isValid() const;
 };
 
 enum class LevelingStatus : uint8_t
@@ -103,7 +94,7 @@ class RayLeveler
 {
 public:
   /// Throws std::invalid_argument when `config` is not valid.
-  RayLeveler(const PoseProvider & poses, const LevelingConfig & config);
+  RayLeveler(const PoseHistory & poses, const LevelingConfig & config);
 
   /// Sets the reference time (the map timestamp) and looks up the reference pose: position and
   /// heading. Returns kOk, or kNoPose when there is no usable pose at that time (no pose, or an
@@ -116,7 +107,7 @@ public:
   [[nodiscard]] LevelingStatus level(obstacle_sector_map::RaySample & ray) const;
 
 private:
-  const PoseProvider & _poses;
+  const PoseHistory & _poses;
   LevelingConfig _config;
   std::array<double, 9> _mount_rotation;  // sensor FLU to body FLU, row-major
   bool _has_reference{false};

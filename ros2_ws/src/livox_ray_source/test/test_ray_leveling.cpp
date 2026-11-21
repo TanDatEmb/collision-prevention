@@ -6,20 +6,14 @@
 #include <limits>
 #include <stdexcept>
 
-#include "livox_ray_source/fixed_pose_provider.hpp"
 #include "livox_ray_source/pose_history.hpp"
 #include "livox_ray_source/ray_leveling.hpp"
 
 using livox_ray_source::breaksFrameContinuity;
-using livox_ray_source::FixedPoseProvider;
 using livox_ray_source::LevelingConfig;
 using livox_ray_source::LevelingStatus;
-using livox_ray_source::MountRotation;
 using livox_ray_source::PoseHistory;
 using livox_ray_source::PoseHistoryConfig;
-using livox_ray_source::PoseLookupResult;
-using livox_ray_source::PoseLookupStatus;
-using livox_ray_source::PoseProvider;
 using livox_ray_source::PoseSample;
 using livox_ray_source::RayLeveler;
 using obstacle_sector_map::RayReturnKind;
@@ -108,14 +102,23 @@ PoseSample poseOf(
   return s;
 }
 
-MountRotation mountOf(double roll, double pitch_down, double yaw_left)
+// Mount angles of a fixture, in the order and sign of LevelingConfig.
+struct Mount
 {
-  return MountRotation{roll, pitch_down, yaw_left};
+  double roll_rad;
+  double pitch_down_rad;
+  double yaw_left_rad;
+};
+
+Mount mountOf(double roll, double pitch_down, double yaw_left)
+{
+  return Mount{roll, pitch_down, yaw_left};
 }
 
-LevelingConfig configOf(const MountRotation & mount)
+LevelingConfig configOf(const Mount & mount, double origin_motion_threshold_m = kFixtureOriginThresholdM)
 {
-  return LevelingConfig{mount, kFixtureOriginThresholdM};
+  return LevelingConfig{
+    mount.roll_rad, mount.pitch_down_rad, mount.yaw_left_rad, origin_motion_threshold_m};
 }
 
 // Sensor FLU ray (azimuth, elevation, range) of a point given in the output frame convention:
@@ -130,7 +133,7 @@ RaySample sensorReturn(double range_m, double azimuth_rad, double elevation_rad)
 // The ray a sensor on a vehicle with the given attitude and mount would measure for a point
 // `p_ned` (NED, relative to the vehicle position at the ray time).
 RaySample rayToNedPoint(
-  const Vec & p_ned, double roll, double pitch, double yaw, const MountRotation & mount)
+  const Vec & p_ned, double roll, double pitch, double yaw, const Mount & mount)
 {
   const Vec p_frd = matVec(transpose(bodyFrdToNed(roll, pitch, yaw)), p_ned);
   const Vec p_body_flu{p_frd[0], -p_frd[1], -p_frd[2]};
@@ -141,32 +144,44 @@ RaySample rayToNedPoint(
     range, std::atan2(p_s[1], p_s[0]), std::atan2(p_s[2], std::hypot(p_s[0], p_s[1])));
 }
 
-// A pose provider with one pose at the reference time and one for every other time.
-class TwoPoseProvider : public PoseProvider
-{
-public:
-  TwoPoseProvider(uint64_t reference_time_ns, PoseLookupResult at_reference, PoseLookupResult other)
-  : _reference_time_ns(reference_time_ns), _at_reference(at_reference), _other(other) {}
-
-  PoseLookupResult poseAt(uint64_t time_ns) const override
-  {
-    return time_ns == _reference_time_ns ? _at_reference : _other;
-  }
-
-private:
-  uint64_t _reference_time_ns;
-  PoseLookupResult _at_reference;
-  PoseLookupResult _other;
-};
-
-PoseLookupResult ok(const PoseSample & pose)
-{
-  return PoseLookupResult{PoseLookupStatus::kOk, pose};
-}
-
+constexpr uint64_t kFixtureMaxGapNs = 1'000'000'000U;
 constexpr uint64_t kRefNs = 500U;  // differs from the ray time (1000 ns) of the helpers
 
-const MountRotation kZeroMount = mountOf(0.0, 0.0, 0.0);
+PoseSample at(PoseSample pose, uint64_t time_ns)
+{
+  pose.timestamp_sample_ns = time_ns;
+  return pose;
+}
+
+PoseHistoryConfig fixtureHistoryConfig()
+{
+  return PoseHistoryConfig{8U, kFixtureMaxGapNs};
+}
+
+// A history with one pose at the reference time and `at_ray` at 900 ns and 1100 ns, so that every
+// query between them (the ray time of the helpers is 1000 ns) gets `at_ray` and a query at the
+// reference time gets `at_reference`.
+class TwoPoseHistory : public PoseHistory
+{
+public:
+  TwoPoseHistory(const PoseSample & at_reference, const PoseSample & at_ray)
+  : PoseHistory(fixtureHistoryConfig())
+  {
+    push(at(at_reference, kRefNs));
+    push(at(at_ray, 900U));
+    push(at(at_ray, 1100U));
+  }
+};
+
+// The same pose at every time of the helpers.
+class ConstantPoseHistory : public TwoPoseHistory
+{
+public:
+  explicit ConstantPoseHistory(const PoseSample & pose)
+  : TwoPoseHistory(pose, pose) {}
+};
+
+const Mount kZeroMount = mountOf(0.0, 0.0, 0.0);
 
 }  // namespace
 
@@ -175,12 +190,12 @@ const MountRotation kZeroMount = mountOf(0.0, 0.0, 0.0);
 TEST(LevelingConfigTest, DefaultHoldsTheSentinelsAndIsNotValid)
 {
   const LevelingConfig config;
-  EXPECT_TRUE(std::isnan(config.mount.roll_rad));
-  EXPECT_TRUE(std::isnan(config.mount.pitch_down_rad));
-  EXPECT_TRUE(std::isnan(config.mount.yaw_left_rad));
+  EXPECT_TRUE(std::isnan(config.roll_rad));
+  EXPECT_TRUE(std::isnan(config.pitch_down_rad));
+  EXPECT_TRUE(std::isnan(config.yaw_left_rad));
   EXPECT_TRUE(std::isnan(config.origin_motion_threshold_m));
   EXPECT_FALSE(config.isValid());
-  const FixedPoseProvider poses{poseOf(0, 0, 0)};
+  const ConstantPoseHistory poses{poseOf(0, 0, 0)};
   EXPECT_THROW((RayLeveler{poses, config}), std::invalid_argument);
 }
 
@@ -211,7 +226,7 @@ TEST(LevelingConfigTest, EachRequiredValueIsChecked)
 
 TEST(RayLevelerTest, ZeroPoseAndZeroMountReproduceTheFluRayDirectly)
 {
-  const FixedPoseProvider poses{poseOf(0, 0, 0)};
+  const ConstantPoseHistory poses{poseOf(0, 0, 0)};
   RayLeveler leveler{poses, configOf(kZeroMount)};
   ASSERT_EQ(leveler.beginFrame(kRefNs), LevelingStatus::kOk);
   for (const double az : {-2.5, -1.0, 0.0, 0.7, 3.0}) {
@@ -227,14 +242,14 @@ TEST(RayLevelerTest, ZeroPoseAndZeroMountReproduceTheFluRayDirectly)
 
 TEST(RayLevelerTest, TheTimestampTheMaskAndTheKindAreKept)
 {
-  const FixedPoseProvider poses{poseOf(0.1, -0.2, 0.3)};
+  const ConstantPoseHistory poses{poseOf(0.1, -0.2, 0.3)};
   RayLeveler leveler{poses, configOf(kZeroMount)};
   ASSERT_EQ(leveler.beginFrame(kRefNs), LevelingStatus::kOk);
   RaySample ray = sensorReturn(5.0, 0.2, 0.1);
-  ray.timestamp_ns = 123'456'789U;
+  ray.timestamp_ns = 1'050U;
   ray.masked = true;
   ASSERT_EQ(leveler.level(ray), LevelingStatus::kOk);
-  EXPECT_EQ(ray.timestamp_ns, 123'456'789U);
+  EXPECT_EQ(ray.timestamp_ns, 1'050U);
   EXPECT_TRUE(ray.masked);
   EXPECT_EQ(ray.return_kind, RayReturnKind::kReturn);
 }
@@ -244,7 +259,7 @@ TEST(RayLevelerTest, MountPitchedDownPutsTheBoresightBelowTheHorizonWithALevelVe
   // Convention: positive pitch_down_rad tilts the sensor boresight (sensor +x) DOWN, so with a
   // level vehicle a ray along the boresight has an elevation of minus the mount angle. A ray at
   // +mount angle in the sensor frame is the body horizon.
-  const FixedPoseProvider poses{poseOf(0, 0, 0)};
+  const ConstantPoseHistory poses{poseOf(0, 0, 0)};
   RayLeveler leveler{poses, configOf(mountOf(0.0, kFixtureMountPitchDownRad, 0.0))};
   ASSERT_EQ(leveler.beginFrame(kRefNs), LevelingStatus::kOk);
 
@@ -274,7 +289,7 @@ TEST(RayLevelerTest, MountRollAndYawFollowTheirDocumentedSigns)
 {
   // Roll about forward, positive = left side up: the sensor's left axis (+y) rises.
   {
-    const FixedPoseProvider poses{poseOf(0, 0, 0)};
+    const ConstantPoseHistory poses{poseOf(0, 0, 0)};
     RayLeveler leveler{poses, configOf(mountOf(0.1, 0.0, 0.0))};
     ASSERT_EQ(leveler.beginFrame(kRefNs), LevelingStatus::kOk);
     RaySample left = sensorReturn(10.0, kPi / 2.0, 0.0);
@@ -283,7 +298,7 @@ TEST(RayLevelerTest, MountRollAndYawFollowTheirDocumentedSigns)
   }
   // Yaw about up, positive = boresight turned to the left.
   {
-    const FixedPoseProvider poses{poseOf(0, 0, 0)};
+    const ConstantPoseHistory poses{poseOf(0, 0, 0)};
     RayLeveler leveler{poses, configOf(mountOf(0.0, 0.0, 0.2))};
     ASSERT_EQ(leveler.beginFrame(kRefNs), LevelingStatus::kOk);
     RaySample boresight = sensorReturn(10.0, 0.0, 0.0);
@@ -297,7 +312,7 @@ TEST(RayLevelerTest, LateralAndVerticalSignsAreNotMirrored)
   // A point on the vehicle's left stays positive left, a point above stays positive up, for a
   // level vehicle with any heading (the heading is the reference heading too).
   for (const double yaw : {0.0, 0.5, -2.0, 3.0}) {
-    const FixedPoseProvider poses{poseOf(0, 0, yaw)};
+    const ConstantPoseHistory poses{poseOf(0, 0, yaw)};
     RayLeveler leveler{poses, configOf(kZeroMount)};
     ASSERT_EQ(leveler.beginFrame(kRefNs), LevelingStatus::kOk);
     RaySample left = sensorReturn(4.0, kPi / 2.0, 0.0);
@@ -322,7 +337,7 @@ TEST(RayLevelerTest, AnObstacleOnTheLeftOfARolledVehicleStaysOnTheLeft)
   // degrees (left) and elevation 0.
   const double roll = 30.0 * kDeg;
   const Vec p_ned{0.0, -3.0, 0.0};  // yaw 0: west is the vehicle's left
-  const FixedPoseProvider poses{poseOf(roll, 0, 0)};
+  const ConstantPoseHistory poses{poseOf(roll, 0, 0)};
   RayLeveler leveler{poses, configOf(kZeroMount)};
   ASSERT_EQ(leveler.beginFrame(kRefNs), LevelingStatus::kOk);
   RaySample ray = rayToNedPoint(p_ned, roll, 0.0, 0.0, kZeroMount);
@@ -337,7 +352,7 @@ TEST(RayLevelerTest, HeadingChangeSinceTheReferenceRotatesTheRay)
   // The vehicle faces east (yaw 90 degrees) at the ray time and north at the reference time. A
   // ray along the body forward axis points east, which is to the RIGHT of the reference heading:
   // azimuth minus 90 degrees (counter-clockwise positive).
-  const TwoPoseProvider poses{kRefNs, ok(poseOf(0, 0, 0)), ok(poseOf(0, 0, kPi / 2.0))};
+  const TwoPoseHistory poses{poseOf(0, 0, 0), poseOf(0, 0, kPi / 2.0)};
   RayLeveler leveler{poses, configOf(kZeroMount)};
   ASSERT_EQ(leveler.beginFrame(kRefNs), LevelingStatus::kOk);
   RaySample ray = sensorReturn(6.0, 0.0, 0.0);
@@ -352,7 +367,7 @@ TEST(RayLevelerTest, HeadingChangeSinceTheReferenceRotatesTheRay)
 
 TEST(RayLevelerTest, ACommonHeadingOffsetOfBothPosesDoesNotMatter)
 {
-  const TwoPoseProvider poses{kRefNs, ok(poseOf(0, 0, 1.0)), ok(poseOf(0, 0, 1.0))};
+  const TwoPoseHistory poses{poseOf(0, 0, 1.0), poseOf(0, 0, 1.0)};
   RayLeveler leveler{poses, configOf(kZeroMount)};
   ASSERT_EQ(leveler.beginFrame(kRefNs), LevelingStatus::kOk);
   RaySample ray = sensorReturn(6.0, 0.3, 0.1);
@@ -377,15 +392,14 @@ struct Attitude
 // azimuth the ray the tilted vehicle measures is built from the world point, leveled, and
 // compared with the level vehicle: same azimuth, same horizontal range, same elevation.
 void expectWallEquivalentToLevelVehicle(
-  const Attitude & at_ray, const Attitude & at_reference, const MountRotation & mount)
+  const Attitude & at_ray, const Attitude & at_reference, const Mount & mount)
 {
   const Vec vehicle{12.0, -7.0, -20.0};
   const double psi = at_reference.yaw;
   const double wall_ahead_m = 5.0;
   const double wall_height_m = 0.7;
-  const TwoPoseProvider poses{
-    kRefNs, ok(poseOf(at_reference.roll, at_reference.pitch, at_reference.yaw, vehicle)),
-    ok(poseOf(at_ray.roll, at_ray.pitch, at_ray.yaw, vehicle))};
+  const TwoPoseHistory poses{poseOf(at_reference.roll, at_reference.pitch, at_reference.yaw, vehicle),
+    poseOf(at_ray.roll, at_ray.pitch, at_ray.yaw, vehicle)};
   RayLeveler leveler{poses, configOf(mount)};
   ASSERT_EQ(leveler.beginFrame(kRefNs), LevelingStatus::kOk);
   for (const double wall_azimuth_deg : {-60.0, -30.0, -5.0, 0.0, 12.0, 45.0, 70.0}) {
@@ -445,26 +459,23 @@ TEST(RayLevelerTest, ReturnIsShiftedByTheOriginMotionSinceTheReference)
   // The vehicle is 1 m further north at the ray time. A point 5 m north of the reference
   // position is 4 m ahead of the vehicle at the ray time; seen from the reference origin it is
   // 5 m ahead again.
-  const TwoPoseProvider poses{
-    kRefNs, ok(poseOf(0, 0, 0, {0.0, 0.0, 0.0})), ok(poseOf(0, 0, 0, {1.0, 0.0, 0.0}))};
-  RayLeveler leveler{poses, LevelingConfig{kZeroMount, 2.0}};
+  const TwoPoseHistory poses{poseOf(0, 0, 0, {0.0, 0.0, 0.0}), poseOf(0, 0, 0, {1.0, 0.0, 0.0})};
+  RayLeveler leveler{poses, configOf(kZeroMount, 2.0)};
   ASSERT_EQ(leveler.beginFrame(kRefNs), LevelingStatus::kOk);
   RaySample ray = sensorReturn(4.0, 0.0, 0.0);
   ASSERT_EQ(leveler.level(ray), LevelingStatus::kOk);
   EXPECT_NEAR(ray.range_m, 5.0F, kRangeTol);
   EXPECT_NEAR(ray.azimuth_rad, 0.0F, kAngleTol);
   // Moving east by 0.3 m: a point 4 m ahead is, from the reference origin, 0.3 m to the right.
-  const TwoPoseProvider east{
-    kRefNs, ok(poseOf(0, 0, 0, {0.0, 0.0, 0.0})), ok(poseOf(0, 0, 0, {0.0, 0.3, 0.0}))};
-  RayLeveler leveler_east{east, LevelingConfig{kZeroMount, 2.0}};
+  const TwoPoseHistory east{poseOf(0, 0, 0, {0.0, 0.0, 0.0}), poseOf(0, 0, 0, {0.0, 0.3, 0.0})};
+  RayLeveler leveler_east{east, configOf(kZeroMount, 2.0)};
   ASSERT_EQ(leveler_east.beginFrame(kRefNs), LevelingStatus::kOk);
   RaySample ahead = sensorReturn(4.0, 0.0, 0.0);
   ASSERT_EQ(leveler_east.level(ahead), LevelingStatus::kOk);
   EXPECT_NEAR(ahead.azimuth_rad, static_cast<float>(-std::atan2(0.3, 4.0)), kAngleTol);
   // Climbing by 0.3 m (NED z is -0.3): the point is 0.3 m below the reference origin's level.
-  const TwoPoseProvider up{
-    kRefNs, ok(poseOf(0, 0, 0, {0.0, 0.0, 0.0})), ok(poseOf(0, 0, 0, {0.0, 0.0, -0.3}))};
-  RayLeveler leveler_up{up, LevelingConfig{kZeroMount, 2.0}};
+  const TwoPoseHistory up{poseOf(0, 0, 0, {0.0, 0.0, 0.0}), poseOf(0, 0, 0, {0.0, 0.0, -0.3})};
+  RayLeveler leveler_up{up, configOf(kZeroMount, 2.0)};
   ASSERT_EQ(leveler_up.beginFrame(kRefNs), LevelingStatus::kOk);
   RaySample level_ray = sensorReturn(4.0, 0.0, 0.0);
   ASSERT_EQ(leveler_up.level(level_ray), LevelingStatus::kOk);
@@ -473,9 +484,8 @@ TEST(RayLevelerTest, ReturnIsShiftedByTheOriginMotionSinceTheReference)
 
 TEST(RayLevelerTest, OriginMotionAboveTheThresholdDropsTheRay)
 {
-  const TwoPoseProvider over{
-    kRefNs, ok(poseOf(0, 0, 0)),
-    ok(poseOf(0, 0, 0, {kFixtureOriginThresholdM + 0.01, 0.0, 0.0}))};
+  const TwoPoseHistory over{poseOf(0, 0, 0),
+    poseOf(0, 0, 0, {kFixtureOriginThresholdM + 0.01, 0.0, 0.0})};
   RayLeveler leveler{over, configOf(kZeroMount)};
   ASSERT_EQ(leveler.beginFrame(kRefNs), LevelingStatus::kOk);
   RaySample ray = sensorReturn(4.0, 0.2, 0.1);
@@ -486,15 +496,13 @@ TEST(RayLevelerTest, OriginMotionAboveTheThresholdDropsTheRay)
   EXPECT_TRUE(breaksFrameContinuity(LevelingStatus::kOriginMotionExceeded));
 
   // The distance is three-dimensional: a vertical move counts, and the compare is "above".
-  const TwoPoseProvider vertical{
-    kRefNs, ok(poseOf(0, 0, 0)), ok(poseOf(0, 0, 0, {0.0, 0.0, -(kFixtureOriginThresholdM + 0.01)}))};
+  const TwoPoseHistory vertical{poseOf(0, 0, 0), poseOf(0, 0, 0, {0.0, 0.0, -(kFixtureOriginThresholdM + 0.01)})};
   RayLeveler vertical_leveler{vertical, configOf(kZeroMount)};
   ASSERT_EQ(vertical_leveler.beginFrame(kRefNs), LevelingStatus::kOk);
   RaySample v = sensorReturn(4.0, 0.0, 0.0);
   EXPECT_EQ(vertical_leveler.level(v), LevelingStatus::kOriginMotionExceeded);
 
-  const TwoPoseProvider at_limit{
-    kRefNs, ok(poseOf(0, 0, 0)), ok(poseOf(0, 0, 0, {kFixtureOriginThresholdM, 0.0, 0.0}))};
+  const TwoPoseHistory at_limit{poseOf(0, 0, 0), poseOf(0, 0, 0, {kFixtureOriginThresholdM, 0.0, 0.0})};
   RayLeveler limit_leveler{at_limit, configOf(kZeroMount)};
   ASSERT_EQ(limit_leveler.beginFrame(kRefNs), LevelingStatus::kOk);
   RaySample l = sensorReturn(4.0, 0.0, 0.0);
@@ -503,8 +511,7 @@ TEST(RayLevelerTest, OriginMotionAboveTheThresholdDropsTheRay)
 
 TEST(RayLevelerTest, NoReturnKeepsItsDirectionAndHasNoRangeButStillObeysTheOriginFilter)
 {
-  const TwoPoseProvider poses{
-    kRefNs, ok(poseOf(0, 0, 0)), ok(poseOf(0, 0, kPi / 2.0, {0.2, 0.0, 0.0}))};
+  const TwoPoseHistory poses{poseOf(0, 0, 0), poseOf(0, 0, kPi / 2.0, {0.2, 0.0, 0.0})};
   RayLeveler leveler{poses, configOf(kZeroMount)};
   ASSERT_EQ(leveler.beginFrame(kRefNs), LevelingStatus::kOk);
   RaySample ray{
@@ -516,8 +523,7 @@ TEST(RayLevelerTest, NoReturnKeepsItsDirectionAndHasNoRangeButStillObeysTheOrigi
   EXPECT_NEAR(ray.azimuth_rad, static_cast<float>(-kPi / 2.0), kAngleTol);  // the heading turn
   EXPECT_NEAR(ray.elevation_rad, 0.1F, kAngleTol);
 
-  const TwoPoseProvider far{
-    kRefNs, ok(poseOf(0, 0, 0)), ok(poseOf(0, 0, 0, {5.0, 0.0, 0.0}))};
+  const TwoPoseHistory far{poseOf(0, 0, 0), poseOf(0, 0, 0, {5.0, 0.0, 0.0})};
   RayLeveler far_leveler{far, configOf(kZeroMount)};
   ASSERT_EQ(far_leveler.beginFrame(kRefNs), LevelingStatus::kOk);
   RaySample dropped{
@@ -533,7 +539,7 @@ TEST(RayLevelerTest, DeskewsWithTheInterpolatedPoseOfTheHistory)
   PoseHistory history{PoseHistoryConfig{8U, 200U * kMs}};
   history.push(poseOf(0, 0, 0, {0.0, 0.0, 0.0}, 0U, 100U * kMs));
   history.push(poseOf(0, 0, kPi / 2.0, {2.0, 0.0, 0.0}, 0U, 200U * kMs));
-  RayLeveler leveler{history, LevelingConfig{kZeroMount, 1.5}};
+  RayLeveler leveler{history, configOf(kZeroMount, 1.5)};
   ASSERT_EQ(leveler.beginFrame(100U * kMs), LevelingStatus::kOk);
   RaySample ray = sensorReturn(5.0, 0.0, 0.0);
   ray.timestamp_ns = 150U * kMs;
@@ -569,8 +575,8 @@ TEST(RayLevelerTest, RaysOnTheExactBracketEdgesAreTransformed)
 
 TEST(RayLevelerTest, RayWithoutPoseIsDroppedAndReported)
 {
-  const TwoPoseProvider poses{
-    kRefNs, ok(poseOf(0, 0, 0)), PoseLookupResult{PoseLookupStatus::kNoSampleAfter, {}}};
+  PoseHistory poses{fixtureHistoryConfig()};
+  poses.push(at(poseOf(0, 0, 0), kRefNs));  // no sample after the reference: rays have no pose
   RayLeveler leveler{poses, configOf(kZeroMount)};
   ASSERT_EQ(leveler.beginFrame(kRefNs), LevelingStatus::kOk);
   RaySample ray = sensorReturn(4.0, 0.2, 0.1);
@@ -584,7 +590,7 @@ TEST(RayLevelerTest, RayWithoutPoseIsDroppedAndReported)
 
 TEST(RayLevelerTest, NoPoseAtTheReferenceTimeFailsTheFrame)
 {
-  const FixedPoseProvider poses{PoseLookupResult{PoseLookupStatus::kNoSampleBefore, {}}};
+  const PoseHistory poses{fixtureHistoryConfig()};  // empty: no pose at any time
   RayLeveler leveler{poses, configOf(kZeroMount)};
   EXPECT_EQ(leveler.beginFrame(kRefNs), LevelingStatus::kNoPose);
   RaySample ray = sensorReturn(4.0, 0.2, 0.1);
@@ -594,7 +600,7 @@ TEST(RayLevelerTest, NoPoseAtTheReferenceTimeFailsTheFrame)
 
 TEST(RayLevelerTest, LevelBeforeBeginFrameHasNoReference)
 {
-  const FixedPoseProvider poses{poseOf(0, 0, 0)};
+  const ConstantPoseHistory poses{poseOf(0, 0, 0)};
   RayLeveler leveler{poses, configOf(kZeroMount)};
   RaySample ray = sensorReturn(4.0, 0.2, 0.1);
   EXPECT_EQ(leveler.level(ray), LevelingStatus::kNoReference);
@@ -602,8 +608,8 @@ TEST(RayLevelerTest, LevelBeforeBeginFrameHasNoReference)
 
 TEST(RayLevelerTest, AFailedBeginFrameForgetsTheEarlierReference)
 {
-  const TwoPoseProvider poses{
-    kRefNs, ok(poseOf(0, 0, 0)), PoseLookupResult{PoseLookupStatus::kNoSampleAfter, {}}};
+  PoseHistory poses{fixtureHistoryConfig()};
+  poses.push(at(poseOf(0, 0, 0), kRefNs));  // no sample after the reference: rays have no pose
   RayLeveler leveler{poses, configOf(kZeroMount)};
   ASSERT_EQ(leveler.beginFrame(kRefNs), LevelingStatus::kOk);
   EXPECT_EQ(leveler.beginFrame(kRefNs + 1U), LevelingStatus::kNoPose);
@@ -615,8 +621,7 @@ TEST(RayLevelerTest, ResetCounterChangeBetweenReferenceAndRayDropsTheRay)
 {
   // Each lookup is valid, but a reset happened between the two times, so the position difference
   // means nothing.
-  const TwoPoseProvider poses{
-    kRefNs, ok(poseOf(0, 0, 0, {0, 0, 0}, 3U)), ok(poseOf(0, 0, 0, {0, 0, 0}, 4U))};
+  const TwoPoseHistory poses{poseOf(0, 0, 0, {0, 0, 0}, 3U), poseOf(0, 0, 0, {0, 0, 0}, 4U)};
   RayLeveler leveler{poses, configOf(kZeroMount)};
   ASSERT_EQ(leveler.beginFrame(kRefNs), LevelingStatus::kOk);
   RaySample ray = sensorReturn(4.0, 0.2, 0.1);
@@ -640,7 +645,7 @@ TEST(RayLevelerTest, ResetCounterChangeInsideTheBracketOfTheHistoryDropsTheRay)
   EXPECT_EQ(leveler.level(on_new), LevelingStatus::kResetSinceReference);
 }
 
-TEST(RayLevelerTest, NaNQuaternionGivesNoPoseThroughTheHistoryAndFromAProvider)
+TEST(RayLevelerTest, NaNQuaternionGivesNoPoseForTheRayAndForTheReference)
 {
   PoseHistory history{PoseHistoryConfig{8U, 200U * kMs}};
   history.push(poseOf(0, 0, 0, {0, 0, 0}, 0U, 100U * kMs));
@@ -654,30 +659,30 @@ TEST(RayLevelerTest, NaNQuaternionGivesNoPoseThroughTheHistoryAndFromAProvider)
   ray.timestamp_ns = 125U * kMs;
   EXPECT_EQ(leveler.level(ray), LevelingStatus::kNoPose);
 
-  // A provider that reports kOk with an unusable pose is not trusted either.
+  // The same with a NaN quaternion on both sides of the ray time.
   PoseSample nan_pose = poseOf(0, 0, 0);
   nan_pose.q_wxyz[2] = std::numeric_limits<double>::quiet_NaN();
-  const TwoPoseProvider provider{kRefNs, ok(poseOf(0, 0, 0)), ok(nan_pose)};
-  RayLeveler provider_leveler{provider, configOf(kZeroMount)};
-  ASSERT_EQ(provider_leveler.beginFrame(kRefNs), LevelingStatus::kOk);
+  const TwoPoseHistory nan_ray_history{poseOf(0, 0, 0), nan_pose};
+  RayLeveler nan_ray_leveler{nan_ray_history, configOf(kZeroMount)};
+  ASSERT_EQ(nan_ray_leveler.beginFrame(kRefNs), LevelingStatus::kOk);
   RaySample r = sensorReturn(4.0, 0.0, 0.0);
-  EXPECT_EQ(provider_leveler.level(r), LevelingStatus::kNoPose);
+  EXPECT_EQ(nan_ray_leveler.level(r), LevelingStatus::kNoPose);
   // And NaN at the reference time fails the frame.
-  const FixedPoseProvider nan_reference{nan_pose};
+  const ConstantPoseHistory nan_reference{nan_pose};
   RayLeveler nan_leveler{nan_reference, configOf(kZeroMount)};
   EXPECT_EQ(nan_leveler.beginFrame(kRefNs), LevelingStatus::kNoPose);
 }
 
 TEST(RayLevelerTest, AttitudeWithAVerticalForwardAxisHasNoReferenceHeading)
 {
-  const FixedPoseProvider poses{poseOf(0, kPi / 2.0, 0)};
+  const ConstantPoseHistory poses{poseOf(0, kPi / 2.0, 0)};
   RayLeveler leveler{poses, configOf(kZeroMount)};
   EXPECT_EQ(leveler.beginFrame(kRefNs), LevelingStatus::kNoPose);
 }
 
 TEST(RayLevelerTest, InvalidRaysAreLeftUnchangedAndDoNotBreakContinuity)
 {
-  const FixedPoseProvider poses{poseOf(0, 0, 0)};
+  const ConstantPoseHistory poses{poseOf(0, 0, 0)};
   RayLeveler leveler{poses, configOf(kZeroMount)};
   ASSERT_EQ(leveler.beginFrame(kRefNs), LevelingStatus::kOk);
 
