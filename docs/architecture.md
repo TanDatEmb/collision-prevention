@@ -230,7 +230,7 @@ flowchart LR
 | FEAT-08 | Sector map: nearest range, coverage, too close | `obstacle_sector_map` | Exists, unit tests | SYS-CP-004, 011 |
 | FEAT-09 | Wire encoding and transport | `px4_obstacle_bridge`, Orin node | Exists | SYS-CP-002 |
 | FEAT-10 | Input validation and freshness | `cp_brake` | Exists | SYS-CP-004, 007 |
-| FEAT-11 | Heading and travelled distance at the sample time | `cp_brake` | Partial: heading history exists (#94); the travelled distance is not implemented, the module passes 0 (#115) | SYS-CP-016, 026 |
+| FEAT-11 | Heading and travelled distance at the sample time | `cp_brake` | Exists: heading history (#94) and the distance moved since the sample, recomputed at every evaluation and only tightening (fork PR #9, #115); `CPB_DECEL_MAX` is a required parameter, bench 3.0 unapproved (OPEN-003); SITL effect +0.0 to +0.08 m | SYS-CP-016, 026 |
 | FEAT-12 | Cap law: stopping model per sector | `cp_brake` | Exists; `CPB_T_LAT` unmeasured | SYS-CP-001, 012, 027 |
 | FEAT-13 | Release policy: dwell and rise | `cp_brake` | Exists | SYS-CP-013 |
 | FEAT-14 | State machine and start-up | `cp_brake` | Exists; start-up open (#112) | SYS-CP-007, 014, 024 |
@@ -243,8 +243,8 @@ flowchart LR
 
 The "Today" column was checked in the sources on 2026-11-20: no attitude or gravity input exists in
 `livox_ray_source`, `obstacle_sector_map`, `obstacle_sector_node` or `px4_obstacle_bridge`;
-`CpBrake.cpp` calls `sectorSpeedCap(..., 0.f, ...)`, so the travelled-distance argument of the
-stopping model is unused; `HeadingHistory` stores heading only; the builder makes a sector occupied
+Before fork PR #9 `CpBrake.cpp` called `sectorSpeedCap(..., 0.f, ...)`, so the travelled-distance argument of the
+stopping model was unused; `HeadingHistory` stores heading only; the builder makes a sector occupied
 from one return inside the elevation band and needs `coverage_min_rays_per_sector` returns without
 obstacle for clear.
 
@@ -400,7 +400,7 @@ source: ADR 0004.
   correction, so it is not counted again. It is a required input with no default (OPEN-004). Inputs are validated finite and positive first (NFR-CP-002).
 - Parameters (`CPB_`): `EN`; `MAX_V` 12 m/s (PERF-01); `A_BRK` 3 m/s^2 and `JERK` 4 m/s^3 (PERF-02);
   `AGE_STOP` 0.5 s (PERF-04); `CLR_T` 0.3 s and `RISE` 2.0 m/s^2 (PERF-05); `MARGIN` 2.0 m
-  (SAFE-01); `T_LAT` TBD (OPEN-004). Values are baselines, not qualified limits.
+  (SAFE-01); `T_LAT` TBD (OPEN-004); `DECEL_MAX` required with no default (TBD, OPEN-003, never below `A_BRK`; bench 3.0 m/s^2, unapproved). Values are baselines, not qualified limits.
 
 ## 6. Budgets
 
@@ -468,7 +468,9 @@ and 5 m/s, 0.1 to 0.25 m from 8 to 12 m/s. The `CPB_EN` off baseline flew into t
 runs the nose stayed at north while the vehicle flew east, so the legs were sideways to the nose; one run
 with the nose along the leg (5 m/s) also held, 2.13 m. Not shown: criterion d, wind, other
 obstacle shapes, tilt, ground, other directions, hardware, HIL, flight. The travelled-distance
-correction is not implemented yet (#115).
+correction was added by fork PR #9 (#115): on this bench it moves the closest approach by +0.0 to +0.08 m
+(sideways legs; the final approach creeps to the margin, so the stop point hardly follows the cap), and the hook
+enforces the caps 0.07 to 0.14 s after the sample, which is why the module recomputes them at every evaluation.
 
 | Gate | Pass criteria |
 | --- | --- |
@@ -690,7 +692,9 @@ unchanged and has no `cp_brake`. Still undecided: any flash margin and any size 
 commit `2646f97dce` it is 1,886,276 bytes (95.94%), 79,804 bytes free, 800 bytes more than on
 `e8ed65e026`. #94 (the heading history and the time gate, fork PR `TanDatEmb/PX4-Autopilot#7`)
 adds 3,472 bytes: on `e539f947b0` the image is 1,889,748 bytes (96.12%), 76,332 bytes free
-(measured 2026-11-20). #65 (the limiter hook, fork PR `TanDatEmb/PX4-Autopilot#8`) adds 2,680 bytes: on
+(measured 2026-11-20). #115 (the travelled distance, fork PR `TanDatEmb/PX4-Autopilot#9`) adds 1,432 bytes on top
+of the hook: on `e1e9f5b3ed` (same tree as the reviewed head `2d8801ed1d`) the image is 1,893,860 bytes (96.33%), 72,220
+bytes free (measured 2026-11-21). #65 (the limiter hook, fork PR `TanDatEmb/PX4-Autopilot#8`) adds 2,680 bytes: on
 `982a2d83ad` (same tree as the reviewed head `e0a2739b90`) the image is 1,892,428 bytes (96.25%), 73,652
 bytes free (measured 2026-11-21). Any flash margin and any size target stay TBD until approved by the
 owner.
