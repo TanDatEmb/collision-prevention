@@ -119,13 +119,13 @@ def ts_us(t):
     return int(round(t * 1e6))
 
 
-def write_logs(prefix, system, inputs, t_end, pos_keep=None, sp_until=None, swap_pos=None, pos_from=0.0, sp_from=0.0, sp_hold=None, sp_dt=SP_DT):
+def write_logs(prefix, system, inputs, t_end, pos_keep=None, sp_until=None, swap_pos=None, pos_from=0.0, sp_from=0.0, sp_hold=None, sp_dt=SP_DT, pos_dt=POS_DT):
     with open(prefix + "vehicle_local_position_0.csv", "w", newline="") as f:
         w = csv.writer(f)
         w.writerow(["timestamp", "vx", "vy"])
         rows = []
-        for k in range(int(round(t_end / POS_DT)) + 1):
-            t = k * POS_DT
+        for k in range(int(round(t_end / pos_dt)) + 1):
+            t = k * pos_dt
             if t >= pos_from and (pos_keep is None or pos_keep(t)):
                 rows.append([ts_us(t), 0.0, response(system, inputs, t)])
         if swap_pos:
@@ -449,8 +449,9 @@ valid_case("perfect ramps logged at 10 Hz, starting between two rows, are valid"
                         and all(near(r["ramp_following_lag_s"], tau, 0.03) for r in res["ramps_down_to_zero"])
                         and all(r["setpoint_nonlinearity_m_s"] < 0.02 for r in res["ramps_down_to_zero"]),
                         str([r["setpoint_nonlinearity_m_s"] for r in res["ramps_down_to_zero"]])))
-invalid_case("a stepped ramp (setpoint changes every 0.5 s) is still not linear",
-             ramps_log(First(tau), [(1, 1.0)], sp_hold=0.5)[2], ["--speeds", "", "--ramp-decels", "1"], "not linear")
+invalid_case("a stepped ramp (setpoint changes every 0.5 s) is still INVALID",
+             ramps_log(First(tau), [(1, 1.0)], sp_hold=0.5)[2], ["--speeds", "", "--ramp-decels", "1"],
+             ("not linear", "no complete response"))
 # 2. the attitude setpoint is logged at about 18 to 21 Hz, the attitude and the rates much faster
 valid_case("attitude setpoint at 18 Hz does not invalidate a response that uses rates and attitude",
            attitude_build(cmd_dt=0.056), ["--speeds", "5"], check_chatter(False))
@@ -530,6 +531,61 @@ for n_rows in (8, 0):
     valid_case("attitude setpoint log with %d rows only nulls the commanded tilt" % n_rows, sparse_cmd_build(n_rows), ["--speeds", "5"],
                lambda res: (res["steps_down_to_zero"][0]["peak_pitch_deg"] is not None
                             and res["steps_down_to_zero"][0].get("peak_pitch_cmd_deg") is None, str(res["logs"])))
+
+
+# ---- third review round (main merged, head 1b26aba)
+# 1. a ramp logged every 0.2 s falls 1 m/s per row: the ramp is a sustained linear fall, not a step
+sparse_inputs, sparse_ends, sparse_build = ramps_log(First(0.1), [(1, 5.0)], plateau_s=8.0, rest_s=8.0, sp_dt=0.2)
+valid_case("ramp of 5 m/s^2 logged every 0.2 s (1 m/s per row) is a ramp", sparse_build,
+           ["--speeds", "", "--ramp-decels", "5", "--ramp-window-s", "0.5", "--max-gap-s", "0.21"],
+           lambda res: (res["all_ramps_found"] == 1 and near(res["ramps_down_to_zero"][0]["ramp_following_lag_s"], 0.1, 0.02)
+                        and near(res["ramps_down_to_zero"][0]["decel_m_s2"], 5.0, 0.1), "found %s" % res["all_ramps_found"]))
+# a single large drop is still a step, with or without one intermediate row
+valid_case("a step down of 6 m/s is still a step, not a ramp",
+           step_log(first, speed=6.0), ["--speeds", "6"],
+           lambda res: (res["all_ramps_found"] == 0 and len(res["steps_down_to_zero"]) == 1, "ramps %s" % res["all_ramps_found"]))
+
+# an isolated step to a lower plateau before the ramp is not part of the ramp
+lower = [("step", 2.0, 8.0), ("step", 8.0, -3.0), ("ramp", 16.0, -1.0), ("ramp", 21.0, 1.0)]
+valid_case("a ramp that starts from a plateau reached by a step down measures from that plateau",
+           lambda prefix: write_logs(prefix, First(tau), lower, 40.0), ["--speeds", "", "--ramp-decels", "1"],
+           lambda res: (res["all_ramps_found"] == 1 and near(res["ramps_down_to_zero"][0]["from_speed_m_s"], 5.0, 0.01)
+                        and near(res["ramps_down_to_zero"][0]["ramp_following_lag_s"], tau, 0.03), ""))
+
+# 2. the rate RMS is weighted by elapsed time: the same signal logged at 250 Hz and, in its second half, at 50 Hz
+def rms_build(sparse_second_half):
+    def build(prefix):
+        step_log(first)(prefix)
+        keep = (lambda t: t < 2.79 or abs(t / 0.02 - round(t / 0.02)) < 1e-6) if sparse_second_half else None
+        write_attitude(prefix, 24.0, lambda t: (10.0 if 2.79 <= t < 4.0 else 0.0, 0.0, 0.0), lambda t: (0.0, 0.0),
+                       lambda t: (0.0, 0.0), keep=keep)
+    return build
+
+
+rms_values = []
+for sparse in (False, True):
+    valid_case("roll-rate rms of a half-window signal, %s" % ("second half logged at 50 Hz" if sparse else "uniform 250 Hz"),
+               rms_build(sparse), ["--speeds", "5"],
+               lambda res: (rms_values.append(res["steps_up"][0]["roll_rate_rms_deg_s"]) or True,
+                            "rms %s settle %s" % (res["steps_up"][0]["roll_rate_rms_deg_s"], res["steps_up"][0]["settle_s"])))
+report("the rms does not depend on how densely each part of the window is logged",
+       len(rms_values) == 2 and rms_values[0] is not None and rms_values[1] is not None
+       and abs(rms_values[0] - rms_values[1]) < 0.03 * rms_values[0] and abs(rms_values[0] - 10.0 * math.sqrt(0.79 / 1.58)) < 0.4,
+       "rms %s expected about %.2f" % (rms_values, 10.0 * math.sqrt(0.79 / 1.58)))
+
+
+# 3. equality at a gap limit is accepted (timestamps are microseconds; seconds as floats differ by rounding)
+def exact_gap_build(prefix):
+    step_log(first)(prefix)
+    write_attitude(prefix, 24.0, lambda t: (bump_rate(t, ROLL_PEAK), bump_rate(t, THETA), 0.0),
+                   lambda t: (bump(t, ROLL_PEAK), bump(t, THETA)), lambda t: (0.0, 0.0), dt=0.05)
+
+
+valid_case("rate and attitude rows exactly 50 ms apart meet the 0.050 s limit", exact_gap_build, ["--speeds", "5"],
+           lambda res: (res["steps_up"][0]["problems"] == [] and res["steps_down_to_zero"][0]["problems"] == [], ""))
+valid_case("position rows exactly 0.2 s apart meet the 0.2 s limit",
+           step_log(first, pos_dt=0.2), ["--speeds", "5"],
+           lambda res: (res["steps_down_to_zero"][0]["problems"] == [], str(res["steps_down_to_zero"][0]["problems"])))
 
 
 def tool_module():

@@ -60,6 +60,8 @@ SETTLE_HOLD_S = 1.0  # s the stop must last to count as stopped
 MAX_RESPONSE_S = 15.0
 ROUND_UP_S = 0.05    # CPB_T_LAT is rounded up to this resolution (owner, 2026-11-20: "rounded up")
 BAND_FRACTION = 0.02  # settling and ringing band: 2 % of the step (the issue's definition)
+ABRUPT_FACTOR = 2.5  # a row-to-row slope above this times every slope within 3 rows of it is a step, not part of a ramp
+GAP_TOL_S = 1e-9     # timestamps are microseconds read as float seconds: equality at a limit must pass
 RAMP_MIN_ROWS = 3    # setpoint rows on the falling line before a run counts as a ramp
 MIN_RATE_SAMPLES = 16  # samples a rate window needs before a spectrum means anything
 MASK_VELOCITY = 0b110111000111       # SET_POSITION_TARGET_LOCAL_NED: velocity only
@@ -286,7 +288,7 @@ def window_covered(times, lo, hi, t_a, t_b, max_gap_s, min_samples):
     st = times[lo:hi]
     if len(st) < min_samples or not st:
         return False
-    return max([st[0] - t_a, t_b - st[-1]] + [y - x for x, y in zip(st, st[1:])]) <= max_gap_s
+    return max([st[0] - t_a, t_b - st[-1]] + [y - x for x, y in zip(st, st[1:])]) <= max_gap_s + GAP_TOL_S
 
 
 def cross_time(ts, ps, level):
@@ -347,7 +349,7 @@ def analyze(a):
         """(covered, j): the last position sample at or before t_pre, and whether it is fresh enough to be evidence."""
         have = tp[0] <= t_pre + 1e-9
         j = max(k for k in range(len(tp)) if tp[k] <= t_pre + 1e-9) if have else 0
-        return have and t_pre - tp[j] <= a.max_gap_s, j
+        return have and t_pre - tp[j] <= a.max_gap_s + GAP_TOL_S, j
 
     def attitude(t_a, t_b, problems, notes):
         """Chatter and tilt of the window [t_a, t_b] from the logs that exist; a window they do not cover is a problem."""
@@ -360,7 +362,11 @@ def analyze(a):
                 tt = rate["t"][lo:hi]
                 for name, col in (("roll", "xyz[0]"), ("pitch", "xyz[1]")):
                     x = rate[col][lo:hi]
-                    out[name + "_rate_rms_deg_s"] = r3(math.degrees(math.sqrt(sum(v * v for v in x) / len(x))))
+                    # weighted by elapsed time (trapezoid rule), so a densely logged part does not dominate
+                    span = tt[-1] - tt[0]
+                    mean_sq = (sum(0.5 * (u * u + w * w) * (t1 - t0_) for u, w, t0_, t1 in zip(x, x[1:], tt, tt[1:])) / span
+                               if span > 0.0 else sum(v * v for v in x) / len(x))
+                    out[name + "_rate_rms_deg_s"] = r3(math.degrees(math.sqrt(mean_sq)))
                     frac = power_fraction_above(tt, x, a.chatter_hz)
                     out[name + "_rate_power_above_%ghz_fraction" % a.chatter_hz] = None if frac is None else round(frac, 4)
                     if frac is None:
@@ -407,7 +413,7 @@ def analyze(a):
             first = max(first, next((n for n, k in enumerate(idx) if tp[k] >= ramp["t_end"]), len(idx)))
         onset = next((n for n in range(first, len(ys)) if abs(ys[n] - target) < SETTLE_BAND), None)
         settled_t = None
-        if onset is not None and tp[idx[-1]] - tp[idx[onset]] >= SETTLE_HOLD_S:
+        if onset is not None and tp[idx[-1]] - tp[idx[onset]] >= SETTLE_HOLD_S - GAP_TOL_S:
             settled_t = tp[idx[onset]]
         end = onset if settled_t is not None else len(idx) - 1
         # the speed interpolated at the command time starts every series: giving a sample's speed to the whole
@@ -425,9 +431,9 @@ def analyze(a):
             problems.append("did not settle (sustained, before the next command)")
         if not covered:
             problems.append("vehicle_local_position log: no fresh position sample before the command")
-        if worst_gap > a.max_gap_s:
+        if worst_gap > a.max_gap_s + GAP_TOL_S:
             problems.append("vehicle_local_position log: sample gap above %.2f s" % a.max_gap_s)
-        if setpoint_gap > a.max_gap_s:
+        if setpoint_gap > a.max_gap_s + GAP_TOL_S:
             problems.append("vehicle_local_position_setpoint log: coverage gap above %.2f s" % a.max_gap_s)
         rec = {"t_s": round(t0, 2), "max_sample_gap_s": r3(worst_gap), "position_covered_before_step": covered,
                "max_setpoint_gap_s": r3(setpoint_gap)}
@@ -501,9 +507,61 @@ def analyze(a):
         rec["problems"] = problems
         return rec
 
+    def find_ramp(i):
+        """A sustained linear fall of the setpoint that ends at row i (the first row inside the settle band), or None.
+        A step is one abrupt change, a ramp a fall over many rows: the run of non-increasing rows is followed back
+        until a row-to-row slope is far above all slopes within 3 rows of it (an isolated step) or the setpoint
+        rises; the run is a ramp when at least RAMP_MIN_ROWS rows lie between 10 and 90 percent of its top."""
+        sign = 1.0 if spv[i - 1] > 0 else -1.0
+
+        def pair_slope(k):  # fall rate between rows k-1 and k, 0 when it does not fall
+            drop = sign * (spv[k - 1] - spv[k])
+            return drop / (ts[k] - ts[k - 1]) if drop > 1e-6 and ts[k] > ts[k - 1] else 0.0
+
+        m0 = i - 1
+        while m0 > 0:
+            if sign * (spv[m0 - 1] - spv[m0]) < -1e-6:
+                break  # the setpoint rises: the plateau began here
+            near_slopes = [pair_slope(k) for k in range(max(1, m0 - 3), min(i - 1, m0 + 3) + 1) if k != m0]
+            if pair_slope(m0) > ABRUPT_FACTOR * max(near_slopes, default=0.0) and pair_slope(m0) > 0.0:
+                break  # an isolated abrupt change (a step), not part of this fall
+            m0 -= 1
+        v_top = sign * spv[m0]
+        # the ramp is measured on its body, between 10 and 90 percent of the plateau value, because the rows next to the
+        # plateau and to zero are partial: a ramp starts and ends between two logged rows, and a row is only a sample of
+        # the command
+        body = [k for k in range(m0, i) if 0.1 * v_top <= sign * spv[k] <= 0.9 * v_top]
+        if v_top < STEP_MIN or len(body) < RAMP_MIN_ROWS:
+            return None
+        # the falling line is the least-squares line through the body rows: exact for a linear setpoint, through the
+        # middle of the stairs for a sample-and-hold one; it is extended to the plateau value and to zero
+        tk, rk = [ts[k] for k in body], [sign * spv[k] for k in body]
+        t_mean, r_mean = sum(tk) / len(tk), sum(rk) / len(rk)
+        denom = sum((t - t_mean) ** 2 for t in tk)
+        if denom <= 0.0:
+            return None
+        slope = -sum((t - t_mean) * (r - r_mean) for t, r in zip(tk, rk)) / denom  # the fall rate, m/s^2
+        if slope <= 0.0:
+            return None
+        t_start = t_mean - (v_top - r_mean) / slope
+        # every row of the fall is checked against the fitted line clamped to the plateau value and to zero, not only
+        # the body: a change of slope in the first or last 10 percent is not a linear ramp
+        nonlin = max(abs(sign * spv[k] - min(v_top, max(0.0, r_mean - slope * (ts[k] - t_mean)))) for k in range(m0, i + 1))
+        i_prev = max([k for k in range(m0, i) if ts[k] <= t_start + 1e-9] or [m0])
+        covered, j = pre_sample(ts[i_prev])
+        v_pre = pv[j] if covered else spv[i_prev]
+        t_next = next((ts[k] for k in range(i, len(ts)) if not abs(spv[k]) < SETTLE_BAND), float("inf"))
+        ramp = {"V": v_top, "rate": slope, "line0": v_top, "t_end": t_start + v_top / slope, "nonlinearity": nonlin}
+        return respond("ramp_down", i_prev, i_prev, sign, 0.0, sign * v_pre, covered, j, t_start, t_next, ramp)
+
     downs, ups, ramps = [], [], []
     for i in range(1, len(ts)):
         p, c = spv[i - 1], spv[i]
+        if abs(p) >= SETTLE_BAND and abs(c) < SETTLE_BAND:  # the end of a fall to zero: a ramp, else a step
+            ramp_rec = find_ramp(i)
+            if ramp_rec is not None:
+                ramps.append(ramp_rec)
+                continue
         if abs(p) >= STEP_MIN and abs(c) < SETTLE_BAND:  # a step to zero: beyond STEP_MIN before, within the band now
             # the speed before the step comes from a position sample at or just before the command; a log that
             # starts after the step, or whose last earlier sample is stale, gives no pre-step evidence
@@ -524,39 +582,6 @@ def analyze(a):
             # the window ends when the setpoint leaves the commanded value (a step, a ramp, position control)
             t_next = next((ts[m] for m in range(i + 1, len(ts)) if not abs(spv[m] - c) < SETTLE_BAND), float("inf"))
             ups.append(respond("step_up", i, i - 1, sign, abs(c), sign * v_pre, covered, j, ts[i], t_next))
-        elif abs(p) >= SETTLE_BAND and abs(c) < SETTLE_BAND:  # the end of a falling setpoint (a step down was handled above)
-            sign = 1.0 if p > 0 else -1.0
-            # the run of non-increasing setpoints that ends here starts at the plateau (repeated values, as in a
-            # sample-and-hold log, belong to it); the ramp is measured on its body, between 10 and 90 percent of the
-            # plateau value, because the rows next to the plateau and to zero are partial: a ramp starts and ends
-            # between two logged rows, and a row is only a sample of the command
-            m0 = i - 1
-            while m0 > 0 and -1e-6 <= sign * (spv[m0 - 1] - spv[m0]) < STEP_MIN:
-                m0 -= 1
-            v_top = sign * spv[m0]
-            body = [k for k in range(m0, i) if 0.1 * v_top <= sign * spv[k] <= 0.9 * v_top]
-            if v_top < STEP_MIN or len(body) < RAMP_MIN_ROWS:
-                continue
-            # the falling line is the least-squares line through the body rows: exact for a linear setpoint, through the
-            # middle of the stairs for a sample-and-hold one; it is extended to the plateau value and to zero
-            tk, rk = [ts[k] for k in body], [sign * spv[k] for k in body]
-            t_mean, r_mean = sum(tk) / len(tk), sum(rk) / len(rk)
-            denom = sum((t - t_mean) ** 2 for t in tk)
-            if denom <= 0.0:
-                continue
-            slope = -sum((t - t_mean) * (r - r_mean) for t, r in zip(tk, rk)) / denom  # the fall rate, m/s^2
-            if slope <= 0.0:
-                continue
-            t_start = t_mean - (v_top - r_mean) / slope
-            # every row of the fall is checked against the fitted line clamped to the plateau value and to zero, not only
-            # the body: a change of slope in the first or last 10 percent is not a linear ramp
-            nonlin = max(abs(sign * spv[k] - min(v_top, max(0.0, r_mean - slope * (ts[k] - t_mean)))) for k in range(m0, i + 1))
-            i_prev = max([k for k in range(m0, i) if ts[k] <= t_start + 1e-9] or [m0])
-            covered, j = pre_sample(ts[i_prev])
-            v_pre = pv[j] if covered else spv[i_prev]
-            t_next = next((ts[k] for k in range(i, len(ts)) if not abs(spv[k]) < SETTLE_BAND), float("inf"))
-            ramp = {"V": v_top, "rate": slope, "line0": v_top, "t_end": t_start + v_top / slope, "nonlinearity": nonlin}
-            ramps.append(respond("ramp_down", i_prev, i_prev, sign, 0.0, sign * v_pre, covered, j, t_start, t_next, ramp))
     wanted = [round(v, 1) for v in a.speeds]
     kept_down = [s for s in downs if any(abs(s["speed_before_m_s"] - w) < 0.5 for w in wanted)]
     kept_up = [s for s in ups if any(abs(s["target_speed_m_s"] - w) < 0.5 for w in wanted)]
