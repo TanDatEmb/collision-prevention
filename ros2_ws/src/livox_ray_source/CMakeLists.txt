@@ -11,7 +11,8 @@ find_package(obstacle_sector_map REQUIRED)
 find_package(yaml-cpp REQUIRED)
 
 add_library(livox_ray_source src/frame_segmenter.cpp src/replay_ray_source.cpp src/self_mask.cpp
-  src/masking_ray_source.cpp src/spherical_packet.cpp)
+  src/masking_ray_source.cpp src/spherical_packet.cpp src/pose_history.cpp
+  src/ray_leveling.cpp)
 target_include_directories(livox_ray_source PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
   $<INSTALL_INTERFACE:include>)
@@ -56,6 +57,10 @@ if(BUILD_TESTING)
   target_link_libraries(test_masking_ray_source livox_ray_source)
   ament_add_gtest(test_spherical_packet test/test_spherical_packet.cpp)
   target_link_libraries(test_spherical_packet livox_ray_source)
+  ament_add_gtest(test_pose_history test/test_pose_history.cpp)
+  target_link_libraries(test_pose_history livox_ray_source)
+  ament_add_gtest(test_ray_leveling test/test_ray_leveling.cpp)
+  target_link_libraries(test_ray_leveling livox_ray_source)
   ament_add_gtest(test_self_mask test/test_self_mask.cpp)
   target_link_libraries(test_self_mask livox_ray_source)
   target_compile_definitions(test_self_mask PRIVATE
