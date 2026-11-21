@@ -2,6 +2,7 @@
 """Self-test of analyze_stop.py on synthetic runs. It tests the metric and verdict code only; it says
 nothing about PX4. Run: python3 -I tools/scenarios/selftest_analyze.py (exit 0 when every case passes).
 
+Every case that has no truth file passes --reference ekf explicitly (the default is the truth).
 Cases cover the owner's criteria (stops short, enters the margin, flies through, oscillates) and the
 evidence rules (a run is INVALID rather than PASS when the evidence is weak): a spike that never
 approaches, a rest declared across a time gap, SAFE_STOP the whole approach, CP disabled, CP that
@@ -53,7 +54,8 @@ def stop_ys(v0=5.0, a=3.0, stop_at=17.0, total_s=30.0, a_up=2.0):
 def write(prefix, rows, states, nan_at=None, empty_at=None, with_constraints=True, with_position=True, lateral=0.0,
           constraints_until=None, swap_constraint_rows=None, heading_rad=None, north_m=0.0, hook_rows=None,
           heading_nan_at=None, pitch_rad=None, attitude_until=None, attitude_nan_at=None, truth_dy=None,
-          truth_nan_at=None, truth_until=None, attitude_no_q=False, truth_empty=False, truth_tail_s=None):
+          truth_nan_at=None, truth_until=None, attitude_no_q=False, truth_empty=False, truth_tail_s=None, truth_vy_fn=None, truth_no_vel=False,
+          truth_pitch_rad=None):
     if pitch_rad is not None:  # vehicle_attitude: a pure pitch rotation as the quaternion (w, x, y, z), 100 Hz
         with open(prefix + "vehicle_attitude_0.csv", "w", newline="") as f:
             w = csv.writer(f)
@@ -63,17 +65,29 @@ def write(prefix, rows, states, nan_at=None, empty_at=None, with_constraints=Tru
                 w.writerow([int(n * 0.01 * 1e6)] if attitude_no_q else
                            [int(n * 0.01 * 1e6), "nan" if n == attitude_nan_at else math.cos(pitch_rad / 2), 0.0,
                             math.sin(pitch_rad / 2), 0.0])
+    if truth_pitch_rad is not None:  # vehicle_attitude_groundtruth: the simulator attitude, a pure pitch
+        with open(prefix + "vehicle_attitude_groundtruth_0.csv", "w", newline="") as f:
+            w = csv.writer(f)
+            w.writerow(["timestamp", "q[0]", "q[1]", "q[2]", "q[3]"])
+            for n in range(int(rows[-1][0] / 0.01) + 1):
+                w.writerow([int(n * 0.01 * 1e6), math.cos(truth_pitch_rad / 2), 0.0, math.sin(truth_pitch_rad / 2), 0.0])
     if truth_dy is not None:  # ground truth: the EKF track shifted by truth_dy along y, on every 2nd stamp
         with open(prefix + "vehicle_local_position_groundtruth_0.csv", "w", newline="") as f:
             w = csv.writer(f)
-            w.writerow(["timestamp", "x", "y"])
+            w.writerow(["timestamp", "x", "y"] if truth_no_vel else
+                       ["timestamp", "x", "y", "vx", "vy"] + (["heading"] if heading_rad is not None else []))
             for n, (t, y, vy) in enumerate(rows):
                 if truth_empty:
                     break
                 if (n % 2 == 0 or truth_tail_s is not None) and (truth_until is None or t <= truth_until):
-                    w.writerow([int(t * 1e6), north_m, "nan" if n == truth_nan_at else y + truth_dy])
+                    row = [int(t * 1e6), north_m, "nan" if n == truth_nan_at else y + truth_dy]
+                    if not truth_no_vel:
+                        row += [lateral, truth_vy_fn(t, vy) if truth_vy_fn else vy]
+                        row += [heading_rad] if heading_rad is not None else []
+                    w.writerow(row)
             if truth_tail_s is not None and not truth_empty:  # one more sample long after the last position stamp
-                w.writerow([int((rows[-1][0] + truth_tail_s) * 1e6), north_m, rows[-1][1] + truth_dy])
+                w.writerow([int((rows[-1][0] + truth_tail_s) * 1e6), north_m, rows[-1][1] + truth_dy]
+                           + ([] if truth_no_vel else [lateral, 0.0] + ([heading_rad] if heading_rad is not None else [])))
     if with_position:
         with open(prefix + "vehicle_local_position_0.csv", "w", newline="") as f:
             w = csv.writer(f)
@@ -104,12 +118,12 @@ def write(prefix, rows, states, nan_at=None, empty_at=None, with_constraints=Tru
             w.writerows(lines)
 
 
-def run(name, rows, expect, states=((0, 3), (7.5, 4)), wall=22.0, extra=(), **kw):
+def run(name, rows, expect, states=((0, 3), (7.5, 4)), wall=22.0, extra=(), ref="ekf", **kw):
     with tempfile.TemporaryDirectory() as d:
         prefix = os.path.join(d, "log_0_")
         write(prefix, rows, states, **kw)
         p = subprocess.run([sys.executable, os.path.join(HERE, "analyze_stop.py"), prefix, "--wall-dist",
-                            str(wall), "--margin", "2.0", *extra], capture_output=True, text=True)
+                            str(wall), "--margin", "2.0", *(("--reference", ref) if ref else ()), *extra], capture_output=True, text=True)
     try:
         res = json.loads(p.stdout)
     except ValueError:
@@ -349,7 +363,8 @@ def field_case(name, field, expect, **kw):
     with tempfile.TemporaryDirectory() as d:
         prefix = os.path.join(d, "log_0_")
         write(prefix, series(stop_ys(stop_at=17.0)), ((0, 3), (3.0, 4)), **kw)
-        p = subprocess.run([sys.executable, os.path.join(HERE, "analyze_stop.py"), prefix, "--wall-dist", "22.0"],
+        p = subprocess.run([sys.executable, os.path.join(HERE, "analyze_stop.py"), prefix, "--wall-dist", "22.0",
+                            "--reference", "ekf"],
                            capture_output=True, text=True)
     try:
         got = json.loads(p.stdout).get(field)
@@ -376,13 +391,13 @@ results.append(run("2-D with no heading column keeps the leg bearing", series(st
 
 # lidar offset: projected on the leg from the heading, the pitch term, and the optional ground truth. The stop is
 # at 17 m, the wall at 22 m, the leg points East (heading pi/2 is the nose along the leg)
-def offset_case(name, expect_verdict, check, extra=(), stop_at=17.0, wall=22.0, **kw):
+def offset_case(name, expect_verdict, check, extra=(), stop_at=17.0, wall=22.0, ref="ekf", **kw):
     """analyze_stop.py with a lidar offset; `check` is a predicate on the printed JSON (the numbers asserted)."""
     with tempfile.TemporaryDirectory() as d:
         prefix = os.path.join(d, "log_0_")
         write(prefix, series(stop_ys(stop_at=stop_at)), ((0, 3), (3.0, 4)), **kw)
         p = subprocess.run([sys.executable, os.path.join(HERE, "analyze_stop.py"), prefix, "--wall-dist", str(wall),
-                            *extra], capture_output=True, text=True)
+                            *(("--reference", ref) if ref else ()), *extra], capture_output=True, text=True)
     try:
         res = json.loads(p.stdout)
     except ValueError:
@@ -482,6 +497,65 @@ results.append(offset_case("header-only ground truth file is INVALID, not a cras
 results.append(offset_case("ground truth sample matching exactly, a far one after it, is not a gap", "PASS",
                            lambda r: near(r["ground_truth_closest_approach_m"], 3.5), extra=OFF, heading_rad=math.pi / 2,
                            truth_dy=0.5, truth_tail_s=1.0))
+
+
+# reference: the truth (default) or the EKF track decides the verdict; the other one is information
+results.append(offset_case("default reference is the truth, EKF reported beside it", "PASS",
+                           lambda r: r["reference"] == "truth" and r["reference_file"].endswith("groundtruth_0.csv")
+                           and near(r["closest_approach_m"], 5.0) and r["ekf_informational"]["ekf_minus_truth_closest_approach_m"] == 0.0,
+                           ref=None, truth_dy=0.0))
+results.append(offset_case("truth 1.0 m further along: truth FAILS where the EKF would pass", "FAIL",
+                           lambda r: near(r["closest_approach_m"], 1.7) and near(r["ekf_informational"]["closest_approach_m"], 2.7)
+                           and r["ekf_informational"]["criterion_a_margin_kept"] is True
+                           and near(r["ekf_informational"]["ekf_minus_truth_closest_approach_m"], 1.0, 0.011)
+                           and near(r["ekf_informational"]["ekf_minus_truth_at_truth_closest_instant_m"], 1.0, 0.011),
+                           ref=None, stop_at=19.3, truth_dy=1.0))
+results.append(offset_case("same files with --reference ekf: the EKF passes", "PASS",
+                           lambda r: r["reference"] == "ekf" and near(r["closest_approach_m"], 2.7)
+                           and near(r["ground_truth_closest_approach_m"], 1.7),
+                           ref="ekf", stop_at=19.3, truth_dy=1.0))
+results.append(offset_case("truth 1.0 m behind: truth passes where the EKF would fail", "PASS",
+                           lambda r: near(r["closest_approach_m"], 2.7) and near(r["ekf_informational"]["closest_approach_m"], 1.7)
+                           and near(r["ekf_informational"]["ekf_minus_truth_closest_approach_m"], -1.0, 0.011),
+                           ref=None, stop_at=20.3, truth_dy=-1.0))
+results.append(offset_case("truth reference without a truth file is INVALID", "INVALID",
+                           lambda r: "reference truth" in r["error"] and "groundtruth" in r["error"] and "--reference ekf" in r["error"],
+                           ref=None))
+results.append(offset_case("explicit --reference truth without a truth file is INVALID", "INVALID",
+                           lambda r: "reference truth" in r["error"], ref="truth"))
+results.append(offset_case("--reference ekf without a truth file is accepted", "PASS",
+                           lambda r: r["reference"] == "ekf" and r["ground_truth_used"] is False, ref="ekf"))
+results.append(offset_case("truth reference, NaN in a truth position is INVALID", "INVALID",
+                           lambda r: "reference truth" in r["error"] and "not a number" in r["error"],
+                           ref=None, truth_dy=0.0, truth_nan_at=100))
+results.append(offset_case("truth reference, truth without velocity columns is INVALID", "INVALID",
+                           lambda r: "reference truth" in r["error"] and "vx" in r["error"],
+                           ref=None, truth_dy=0.0, truth_no_vel=True))
+results.append(offset_case("truth reference, header-only truth file is INVALID", "INVALID",
+                           lambda r: "reference truth" in r["error"] and "no samples" in r["error"],
+                           ref=None, truth_dy=0.0, truth_empty=True))
+# the truth velocity, not the EKF one, decides rest, reversals and the criteria
+flip = lambda t, vy: 1.0 if (12.0 <= t < 14.0 or 16.0 <= t < 18.0) else (-1.0 if 14.0 <= t < 16.0 else vy)
+results.append(offset_case("truth velocity reverses twice: FAIL (criterion c) from the truth", "FAIL",
+                           lambda r: r["velocity_reversals_after_start"] == 2 and r["criterion_c_no_oscillation"] is False
+                           and r["ekf_informational"]["velocity_reversals_after_start"] == 0,
+                           ref=None, truth_dy=0.0, truth_vy_fn=flip))
+results.append(offset_case("same truth velocity with --reference ekf: EKF passes", "PASS",
+                           lambda r: r["velocity_reversals_after_start"] == 0, ref="ekf", truth_dy=0.0, truth_vy_fn=flip))
+# the cap excess: the hook row carries the EKF velocity (4.0, 3.5 against caps 3.0, 2.0: excess 1.0 and 1.5); the truth
+# speed at the row time (about 2.0 and 2.2 m/s) gives -1.0 and 0.2
+hooks = [(1000000, 3, 0.0, 4.0, 0.0, 3.0), (1100000, 3, 0.0, 3.5, 0.0, 2.0)]
+results.append(offset_case("cap excess from the truth velocity under the truth reference", "PASS",
+                           lambda r: near(r["cap_excess_max_m_s"], 0.2, 0.06), ref=None, truth_dy=0.0, hook_rows=hooks))
+results.append(offset_case("cap excess from the hook velocity under the EKF reference", "PASS",
+                           lambda r: r["cap_excess_max_m_s"] == 1.5, ref="ekf", truth_dy=0.0, hook_rows=hooks))
+# the pitch of the truth reference comes from the simulator attitude when the log has it
+results.append(offset_case("truth reference takes the pitch from the truth attitude", "PASS",
+                           lambda r: near(share(r), reach_up, 0.001) and "groundtruth" in r["lidar_offset_applied"]["pitch_term_note"],
+                           extra=OFFZ, ref=None, truth_dy=0.0, heading_rad=math.pi / 2, pitch_rad=0.0, truth_pitch_rad=0.5))
+results.append(offset_case("EKF reference keeps the estimated attitude", "PASS",
+                           lambda r: near(share(r), 1.0, 0.001), extra=OFFZ, ref="ekf", truth_dy=0.0,
+                           heading_rad=math.pi / 2, pitch_rad=0.0, truth_pitch_rad=0.5))
 
 print("%d of %d cases pass" % (sum(results), len(results)))
 sys.exit(0 if all(results) else 1)
