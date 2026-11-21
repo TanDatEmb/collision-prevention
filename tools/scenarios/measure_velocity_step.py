@@ -62,6 +62,12 @@ MASK_VELOCITY_YAW_RATE = 0b010111000111  # velocity and yaw rate (bit 11 clear)
 
 
 def fly(a):
+    # a ramp that never reaches zero (deceleration 0, negative or not a number) would hold or raise the speed for good
+    if a.ramp_decels and (not all(math.isfinite(d) and d > 0.0 for d in a.ramp_decels)
+                          or not (math.isfinite(a.ramp_speed) and a.ramp_speed > 0.0)):
+        print(json.dumps({"error": "every --ramp-decels value and --ramp-speed must be finite and above zero",
+                          "steps": [], "ramps": []}))
+        return 3
     from pymavlink import mavutil
     link = mavutil.mavlink_connection(a.connect)
     link.wait_heartbeat(timeout=30)
@@ -121,7 +127,7 @@ def fly(a):
         hold(v, a.ramp_hold_s, yaw)
         t_start = time.time()
         result["ramps"].append({"t_unix": round(t_start, 2), "from_m_s": v, "decel_m_s2": decel})
-        while True:
+        while time.time() < t_start + a.ramp_speed / decel + 1.0:  # the bound is a guard; the loop ends at zero
             vy = math.copysign(max(0.0, a.ramp_speed - decel * (time.time() - t_start)), v)
             send(vy, yaw)
             if vy == 0.0:
@@ -234,7 +240,7 @@ def fft(x):
 
 def power_fraction_above(t, x, cut_hz):
     """Fraction of the power above cut_hz: resampled to a uniform grid, mean removed, Hann window, FFT, DC excluded.
-    None when the window is too short or its Nyquist frequency does not exceed cut_hz."""
+    0.0 when the mean-removed signal has no power; None when the window is too short or its Nyquist frequency does not exceed cut_hz."""
     n = len(t)
     if n < MIN_RATE_SAMPLES or t[-1] <= t[0]:
         return None
@@ -255,10 +261,12 @@ def power_fraction_above(t, x, cut_hz):
     while size < n:
         size <<= 1
     spec = fft([complex(v, 0.0) for v in u] + [0j] * (size - n))
-    power = [abs(spec[k]) ** 2 for k in range(1, size // 2 + 1)]
+    # a real signal: every bin below Nyquist has a mirror image at the negative frequency, the Nyquist bin has none
+    half = size // 2
+    power = [abs(spec[k]) ** 2 * (1.0 if k == half else 2.0) for k in range(1, half + 1)]
     total = sum(power)
     if total <= 0.0:
-        return None
+        return 0.0  # no power after the mean is removed (a motion about no axis): nothing is above the cut
     return sum(p for k, p in enumerate(power, start=1) if k / (size * dt) > cut_hz) / total
 
 
@@ -375,6 +383,8 @@ def analyze(a):
         # is followed by movement is no stop (the same rule as the rest of analyze_stop.py)
         violations = [n for n, y in enumerate(ys) if abs(y - target) >= SETTLE_STAY]
         first = violations[-1] + 1 if violations else 0
+        if ramp:  # a ramp is over only when its setpoint is: a fast loop is inside the band before that
+            first = max(first, next((n for n, k in enumerate(idx) if tp[k] >= ramp["t_end"]), len(idx)))
         onset = next((n for n in range(first, len(ys)) if abs(ys[n] - target) < SETTLE_BAND), None)
         settled_t = None
         if onset is not None and tp[idx[-1]] - tp[idx[onset]] >= SETTLE_HOLD_S:
@@ -403,7 +413,7 @@ def analyze(a):
                "max_setpoint_gap_s": r3(setpoint_gap)}
         if kind == "ramp_down":
             v_ramp, rate_ms2 = ramp["V"], ramp["rate"]
-            line = lambda t: v_ramp - rate_ms2 * (t - t0)
+            line = lambda t: ramp["line0"] - rate_ms2 * (t - t0)
             dur = ramp["t_end"] - t0
             rec.update({"decel_m_s2": r3(rate_ms2), "from_speed_m_s": r3(v_ramp), "duration_s": r3(dur),
                         "setpoint_nonlinearity_m_s": r3(ramp["nonlinearity"])})
@@ -489,18 +499,31 @@ def analyze(a):
             ups.append(respond("step_up", i, i - 1, sign, abs(c), sign * v_pre, covered, j, ts[i], t_next))
         elif abs(p) >= SETTLE_BAND and abs(c) < SETTLE_BAND:  # the end of a falling setpoint (a step down was handled above)
             sign = 1.0 if p > 0 else -1.0
+            # walk back over a non-increasing run (a sample-and-hold ramp repeats values) to its top, then forward to
+            # the last row that still has the top value: the ramp starts after the plateau
             m = i - 1
-            while m > 0 and 1e-6 < sign * (spv[m - 1] - spv[m]) < STEP_MIN:
+            while m > 0 and -1e-6 <= sign * (spv[m - 1] - spv[m]) < STEP_MIN:
                 m -= 1
+            m = max(k for k in range(m, i) if abs(spv[k] - spv[m]) <= 1e-6)
             v_top = sign * spv[m]
             if i - 1 - m < RAMP_MIN_ROWS - 1 or v_top < STEP_MIN or ts[i - 1] <= ts[m]:
                 continue
-            slope = (v_top - sign * spv[i - 1]) / (ts[i - 1] - ts[m])
-            nonlin = max(abs(sign * spv[k] - (v_top - slope * (ts[k] - ts[m]))) for k in range(m, i))
+            # the falling line is the least-squares line through the rows m..i-1: for a sample-and-hold setpoint it runs
+            # through the middle of the stairs, so the error of the vehicle is measured against what it was commanded
+            tk, rk = [ts[k] for k in range(m, i)], [sign * spv[k] for k in range(m, i)]
+            t_mean, r_mean = sum(tk) / len(tk), sum(rk) / len(rk)
+            denom = sum((t - t_mean) ** 2 for t in tk)
+            if denom <= 0.0:
+                continue
+            slope = -sum((t - t_mean) * (r - r_mean) for t, r in zip(tk, rk)) / denom  # the fall rate, m/s^2
+            if slope <= 0.0:
+                continue
+            line0 = r_mean + slope * (t_mean - ts[m])  # the line at the ramp start
+            nonlin = max(abs(r - (line0 - slope * (t - ts[m]))) for t, r in zip(tk, rk))
             covered, j = pre_sample(ts[m])
             v_pre = pv[j] if covered else spv[m]
             t_next = next((ts[k] for k in range(i, len(ts)) if not abs(spv[k]) < SETTLE_BAND), float("inf"))
-            ramp = {"V": v_top, "rate": slope, "t_end": ts[i - 1] + sign * spv[i - 1] / slope, "nonlinearity": nonlin}
+            ramp = {"V": v_top, "rate": slope, "line0": line0, "t_end": ts[m] + line0 / slope, "nonlinearity": nonlin}
             ramps.append(respond("ramp_down", m, m, sign, 0.0, sign * v_pre, covered, j, ts[m], t_next, ramp))
     wanted = [round(v, 1) for v in a.speeds]
     kept_down = [s for s in downs if any(abs(s["speed_before_m_s"] - w) < 0.5 for w in wanted)]
@@ -519,7 +542,15 @@ def analyze(a):
     incomplete = [s for s in kept_down + kept_up + (kept_ramps if a.ramp_decels else []) if s["problems"]]
     missing = [("step down", w) for w in wanted if not any(abs(s["speed_before_m_s"] - w) < 0.5 and not s["problems"] for s in kept_down)]
     missing += [("step up", w) for w in wanted if not any(abs(s["target_speed_m_s"] - w) < 0.5 and not s["problems"] for s in kept_up)]
-    missing += [("ramp", w) for w in a.ramp_decels if not any(abs(s["decel_m_s2"] - w) < 0.5 and not s["problems"] for s in kept_ramps)]
+    # each requested ramp needs its own complete recorded ramp: one ramp cannot satisfy two close requests
+    pairs = sorted((abs(s["decel_m_s2"] - w), wi, ri) for wi, w in enumerate(a.ramp_decels)
+                   for ri, s in enumerate(kept_ramps) if not s["problems"] and abs(s["decel_m_s2"] - w) < 0.5)
+    used_w, used_r = set(), set()
+    for _, wi, ri in pairs:
+        if wi not in used_w and ri not in used_r:
+            used_w.add(wi)
+            used_r.add(ri)
+    missing += [("ramp", w) for wi, w in enumerate(a.ramp_decels) if wi not in used_w]
     worst_raw = max((s["_lag_raw"] for s in kept_down if "_lag_raw" in s), default=None)
     ramp_lags = [s["_lag_raw"] for s in kept_ramps if "_lag_raw" in s]
     for s in kept_down + kept_up + kept_ramps:

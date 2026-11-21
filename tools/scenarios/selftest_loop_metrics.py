@@ -11,6 +11,7 @@ code under test. Cases marked [old rule] test an evidence rule the tool already 
 or new rules.
 """
 import csv
+import importlib.util
 import json
 import math
 import os
@@ -118,7 +119,7 @@ def ts_us(t):
     return int(round(t * 1e6))
 
 
-def write_logs(prefix, system, inputs, t_end, pos_keep=None, sp_until=None, swap_pos=None, pos_from=0.0, sp_from=0.0):
+def write_logs(prefix, system, inputs, t_end, pos_keep=None, sp_until=None, swap_pos=None, pos_from=0.0, sp_from=0.0, sp_hold=None):
     with open(prefix + "vehicle_local_position_0.csv", "w", newline="") as f:
         w = csv.writer(f)
         w.writerow(["timestamp", "vx", "vy"])
@@ -137,7 +138,9 @@ def write_logs(prefix, system, inputs, t_end, pos_keep=None, sp_until=None, swap
         for k in range(int(round(t_end / SP_DT)) + 1):
             t = k * SP_DT
             if sp_from <= t and (sp_until is None or t <= sp_until):
-                w.writerow([ts_us(t), 0.0, command(inputs, t)])
+                # sp_hold: the setpoint is updated every sp_hold s and the rows in between repeat it
+                t_cmd = t if sp_hold is None else math.floor(t / sp_hold + 1e-9) * sp_hold
+                w.writerow([ts_us(t), 0.0, command(inputs, t_cmd)])
 
 
 def quat(roll_deg, pitch_deg):
@@ -388,6 +391,83 @@ valid_case("unplanned invalid ramp is listed with its problems and does not reje
            lambda prefix: write_logs(prefix, First(tau), stray, 60.0), ["--speeds", "5"],
            lambda res: (res["all_ramps_found"] == 1 and len(res["ramps_down_to_zero"][0]["problems"]) > 0
                         and res["t_lat_rounded_up_s"] == 0.5, "ramps %s" % res["all_ramps_found"]))
+
+# ---- review findings (PR 145): each case below failed on the first version of this PR
+# a sample-and-hold ramp: the setpoint updates every 0.1 s, the log has a row every 0.05 s, so values repeat
+zoh_inputs, zoh_ends, _ = ramps_log(First(tau), [(1, 1.0)])
+valid_case("ramp whose setpoint rows repeat between updates is still measured",
+           lambda prefix: write_logs(prefix, First(tau), zoh_inputs, zoh_ends[0] + 8.0, sp_hold=0.1),
+           ["--speeds", "", "--ramp-decels", "1"],
+           lambda res: (res["all_ramps_found"] == 1 and near(res["ramps_down_to_zero"][0]["ramp_following_lag_s"], tau, 0.04)
+                        and near(res["ramps_down_to_zero"][0]["decel_m_s2"], 1.0, 0.05),
+                        "found %s" % res["all_ramps_found"]))
+# a fast loop on a slow ramp: the speed is inside the settle band before the ramp ends
+slow_inputs, slow_t, slow_end = ramp_block(2.0, 1, 3.0, 0.25, 8.0)
+valid_case("settling of a ramp is searched only after the ramp end",
+           lambda prefix: write_logs(prefix, First(0.2), slow_inputs, slow_end + 8.0), ["--speeds", "", "--ramp-decels", "0.25"],
+           lambda res: (res["ramps_down_to_zero"][0]["settle_s_after_ramp"] >= 0.0,
+                        "settle_s_after_ramp %s" % res["ramps_down_to_zero"][0]["settle_s_after_ramp"]))
+# a maneuver with no roll at all: the zero roll-rate power is no reason to reject the response
+def zero_roll_build(prefix):
+    step_log(first)(prefix)
+    write_attitude(prefix, 24.0, lambda t: (0.0, bump_rate(t, THETA), 0.0), lambda t: (0.0, bump(t, THETA)),
+                   lambda t: (0.0, bump(t, THETA)))
+
+
+valid_case("zero roll rate in a response is a zero fraction, not INVALID", zero_roll_build, ["--speeds", "5"],
+           lambda res: (res["steps_up"][0]["roll_rate_power_above_2hz_fraction"] == 0.0
+                        and res["steps_up"][0]["pitch_rate_power_above_2hz_fraction"] is not None
+                        and res["steps_up"][0]["roll_rate_rms_deg_s"] == 0.0, ""))
+invalid_case("two requested ramp decelerations are not both met by one recorded ramp",
+             ramps_log(First(tau), [(1, 1.0)])[2], ["--speeds", "", "--ramp-decels", "1,1.2"], "('ramp', 1.2)")
+
+
+def tool_module():
+    spec = importlib.util.spec_from_file_location("tool_under_test", TOOL)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def nyquist_check():
+    """Power fraction above 2 Hz of a 1 Hz sine plus a Nyquist-frequency alternation, against the two-sided Hann-windowed
+    DFT sum computed here from the definition."""
+    n, rate_hz, cut = 256, 25.0, 2.0
+    t = [k / rate_hz for k in range(n)]
+    x = [math.sin(2 * math.pi * 1.0 * tk) + (-1.0) ** k for k, tk in enumerate(t)]
+    mean = sum(x) / n
+    u = [(v - mean) * 0.5 * (1.0 - math.cos(2 * math.pi * k / (n - 1))) for k, v in enumerate(x)]
+    num = den = 0.0
+    for k in range(1, n):
+        re = sum(u[m] * math.cos(2 * math.pi * k * m / n) for m in range(n))
+        im = sum(u[m] * math.sin(2 * math.pi * k * m / n) for m in range(n))
+        power = re * re + im * im
+        freq = min(k, n - k) * rate_hz / n
+        den += power
+        if freq > cut:
+            num += power
+    got = tool_module().power_fraction_above(t, x, cut)
+    return got, num / den
+
+
+try:
+    got, want = nyquist_check()
+    report("power fraction weights the Nyquist bin once and the others twice", abs(got - want) < 1e-6, "got %.6f want %.6f" % (got, want))
+except AttributeError as e:
+    report("power fraction weights the Nyquist bin once and the others twice", False, "missing %s" % e)
+
+
+def fly_refuses(extra):
+    p = subprocess.run([sys.executable, TOOL, "fly", "--px4-bin", "/nonexistent/px4-cp_brake", *extra], capture_output=True, text=True)
+    try:
+        res = json.loads(p.stdout)
+    except ValueError:
+        res = {}
+    return p.returncode == 3 and "error" in res and "ramp" in str(res["error"])
+
+
+report("fly refuses a zero, negative or non-finite ramp deceleration before any flight command",
+       all(fly_refuses(["--ramp-decels", v]) for v in ("0", "-1", "2,0", "nan")), "")
 
 # ---- INVALID: the evidence rules (a response that violates them is no evidence, exit 2)
 slow = First(3.0)
