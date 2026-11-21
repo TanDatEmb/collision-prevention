@@ -105,9 +105,11 @@ distance"). It belongs to issue #148.
 - ICD and requirement texts are amended by the docs-sync PR after approval.
 - The multi-ring lidar (#138) is needed before any SITL result on leveling is valid evidence.
 - The node wiring (#137) waits for this ADR and for two bench values from the owner: the origin-motion
-  threshold of OPEN-031 (proposal 1.5 m, above the 1.2 m of the top speed) and the mount (proposal
-  x 0.12, y 0, z 0.315 m from the vehicle reference, rpy 0, 10 deg pitch down, bench). Both are
-  proposals, not approved values.
+  threshold of OPEN-031, which stays TBD until the owner decides (it must be above the 1.2 m that the
+  vehicle travels in the 0.1 s window at 12 m/s, or every frame at speed breaks continuity; that bound
+  does not make it conservative, because of the dz / tan|el| error above), and the mount (proposal
+  x 0.12, y 0, z 0.315 m from the vehicle reference, rpy 0, 10 deg pitch down, bench: read from the
+  SDF, not an approved value).
 
 ## To measure first
 The odometry rate and latency; the angular rate and acceleration in the step logs; the `kNoSampleAfter`
