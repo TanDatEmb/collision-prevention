@@ -56,8 +56,8 @@ Verified facts (PX4 1.17 at `f65ddce`, `px4_msgs` at `86d8239`):
 ### Operational scenarios (approved by the owner, 2026-11-20)
 
 The catalogue extends the ODD with the cases that decide whether V1 works in the field. Expected
-behaviour is stated with the existing requirements and the added ones below (SYS-CP-017 to 027,
-HZ-CP-016 to 023). "Today": Specified (a requirement and a design exist), Partial, Not specified (no
+behaviour is stated with the existing requirements and the added ones below (SYS-CP-017 to 032,
+HZ-CP-016 to 024). "Today": Specified (a requirement and a design exist), Partial, Not specified (no
 requirement, so no claim), Out of ODD (a stated non-claim). Lanes: UT unit test, GZ Gazebo, RPL
 replay of captured data, HIL, FLT flight (section 7). A scenario counts as evidence only after the
 owner approves its pass criterion (SYS-CP-025, OPEN-043).
@@ -84,7 +84,7 @@ owner approves its pass criterion (SYS-CP-025, OPEN-043).
 | OS-18 | Climb or descent while moving horizontally | Horizontal caps only; no vertical collision claim | SYS-CP-010 | none | Out of ODD |
 | OS-19 | Isolated or sparse returns (light rain, dust, insects) | The support a return needs before it counts, and its latency, are explicit; today one return in the envelope makes the sector occupied | HZ-CP-006, 019, REL-01, SYS-CP-021 | RPL, GZ with injection, FLT | Not specified |
 | OS-20 | Rain at the ODD limit, dirty or blocked window | Degrades; the response follows the evidence the sensor still returns (returns outside the mask are obstacles or too close, missing returns leave sectors unknown), not an assumed end of the sample stream; the limits are qualified by OPEN-008 | ENV-01, SYS-CP-004, 011 | FLT | Partial |
-| OS-21 | Self-returns from propellers, legs, mount, payload | Static self-mask; masked rays are neither obstacle nor clear evidence | SYS-CP-015 | UT, RPL | Specified |
+| OS-21 | Self-returns from propellers, legs, mount, payload | Static self-mask; masked rays are neither obstacle nor clear evidence. With the mount pitched 10 degrees down only the propeller tips enter the field of view, at its -7 degree edge (sensor azimuth +-43 to 52 degrees, range 0.29 to 0.31 m, 0.13 degrees inside the edge, so a mount error of 0.5 degrees decides whether they return); the mask is defined in the body frame, not as upright cylinders in the sensor frame (SYS-CP-032, OPEN-046) | SYS-CP-015, 032 | UT, RPL | Specified |
 | OS-22 | Lost packets or partial frame | A discontinuous frame gives no clear evidence (ICD-CP-06): sectors with credible obstacle returns stay occupied at their nearest range, the others are unknown and their cap is 0 | SYS-CP-004, 011, ICD-CP-06 | UT, GZ | Specified |
 | OS-23 | Sample stream stops in flight (sensor or process failure, or only frames with no valid ray) | No map is published, `obstacle_distance` goes stale, SAFE_STOP at 0.5 s sample age | PERF-04, SYS-CP-007 | GZ, HIL | Specified |
 | OS-24 | Time sync lost or clock jump | The map is rejected, its sectors are unknown, safe stop follows | SYS-CP-016, ICD-CP-02 | HIL | Specified |
@@ -97,7 +97,12 @@ owner approves its pass criterion (SYS-CP-025, OPEN-043).
 | OS-31 | Another PX4 failsafe acts at the same time (RC loss, battery, geofence) | PX4 owns the failsafe; the interplay with the hook is not specified | ADR 0007 | GZ | Partial |
 | OS-32 | Pilot holds full stick toward an obstacle in Position mode | The caps limit the setpoint; the stick does not override them | SYS-CP-001, 005 | GZ | Specified |
 | OS-33 | Cruise above the obstacles with nothing in view (open sky, ground far below) | Near-horizon no-return rays and ground returns below the band certify a free distance; the vehicle flies at the speed that distance allows and is not stopped for lack of returns | SYS-CP-011, 020 | GZ, FLT | Not specified |
-| OS-34 | Flying sideways or backward in Position mode | Lower lateral and rear speeds than forward (owner, 2026-11-20); behind the vehicle only the part of the envelope above the lidar is observed (10 degree pitched-down mount), so obstacles lower than the lidar behind are a stated non-claim | SYS-CP-018, 022, OPEN-039 | GZ | Not specified |
+| OS-34 | Flying sideways or backward in Position mode | Movement stays allowed. Forward (within 45 degrees of the nose) is protected. Backward, the lowest rear ray is 3 degrees above the lidar level, so at range r only obstacles higher than 0.052 r above the lidar are seen (detection range h_up / tan 3 degrees: 3.8 m for h_up 0.2 m, 9.5 m for 0.5 m); nothing at propeller level or below the lidar is detected (stated non-claim; while the vehicle is nose-up the field reaches lower, not guaranteed). Every direction outside the forward class has its maximum speed locked at 5 m/s, the Mission nominal tier of PERF-01 (owner, 2026-11-22; the Position nominal 10 m/s is not stoppable laterally: 54.7 m needed against the 40 m range with 1.2 m/s^2 and the bench `CPB_T_LAT` of 0.95 s, 17.9 m at 5 m/s) | SYS-CP-018, 022, 028, 031, OPEN-039 | GZ | Not specified |
+| OS-35 | Braking toward a direction whose horizon leaves the field of view (tilt above T_hz(bearing), about 7 + 10 cos(bearing) degrees: 17, 14.5, 7.6, 2.4 degrees at 0, 45, 90, 120 degrees, never beyond about 135 degrees) | Sectors in that direction certify only what is observed; with no evidence the cap is 0 and the vehicle brakes to rest; release only after the horizon is back in view and the dwell has passed; the loss is logged per sector | HZ-CP-016, 024, SYS-CP-018, 028, 029 | UT, GZ | Not specified |
+| OS-36 | A cap falls to zero in one evaluation (a sector turns unknown) | The setpoint step stays inside what the controller follows without leaving coverage; no step to a 40 to 44 degree tilt (ADR 0021) | HZ-CP-024, SYS-CP-030 | GZ | Not specified |
+| OS-37 | Steady wind or a gust within the ODD (5 m/s), no braking | The wind tilt is part of the tilt budget (a tailwind nose-up of 5 degrees leaves 2.1 m/s^2 forward instead of 3.0); a gust that takes the horizon out of view is a false brake and counts toward REL-01 | ENV-01, REL-01, SYS-CP-028 | GZ with wind | Not specified |
+| OS-38 | Motion between lateral and rear (90 to 135 degrees), or a heading not along the track | Reduced or no protection, speed locked at 5 m/s, stated non-claim; Mission legs are protected only with the nose along the track (ODD constraint) | SYS-CP-022, 028, 031 | GZ | Not specified |
+| OS-39 | Pitch and roll together (banked turn) | Coverage is computed in the level frame from both angles; the braking limit uses the tilt toward the direction of travel | SYS-CP-028, 029 | UT, GZ | Not specified |
 
 ## 2. Requirements
 
@@ -149,6 +154,11 @@ Requirements added by the SE review, approved by the owner on 2026-11-20 (chat; 
 | SYS-CP-025 | A scenario counts as evidence only after the owner approves its pass criterion; a scenario without one is exploratory and carries no claim | ADR 0011 | Review | Approved |
 | SYS-CP-026 | The range used for a cap is corrected for the distance moved toward the sector since the sample time (ICD-CP-04) | HZ-CP-023, HZ-CP-001 | UT, GZ | Approved; designed, not implemented (#115) |
 | SYS-CP-027 | The stopping model inputs (`CPB_T_LAT`, `CPB_A_BRK`, `CPB_JERK`) are set from measurement, and the achieved stopping distance is compared with the model across the speed range; a shortfall invalidates the speed claim | PERF-01, 02, OPEN-002, 003, 004 | GZ, FLT | Approved |
+| SYS-CP-028 | The braking acceleration toward a bearing is at most g tan(T_hz(bearing) - rho - wind tilt), computed from the mount pose and the sensor field of view, and zero where the horizon is never in view; it replaces the lateral and rear classes of ADR 0020 D3 (amendment by a new ADR) | HZ-CP-016, 024 | UT, GZ | Proposed; rho and the wind tilt TBD (OPEN-044) |
+| SYS-CP-029 | For each sector the observed elevation interval, in the level frame, and whether the horizon lies inside it are computed every frame and logged; a sector whose horizon is out of view never certifies free distance beyond its observed part and never raises its cap; the flag has hysteresis | HZ-CP-016, 024 | UT, GZ | Proposed |
+| SYS-CP-030 | A cap that falls because coverage is lost falls no faster than the controller can follow without leaving coverage | HZ-CP-024 | GZ | Proposed; value TBD (OPEN-045) |
+| SYS-CP-031 | Outside the forward class (within 45 degrees of the nose) the maximum speed is locked at 5 m/s, the PERF-01 Mission nominal tier, whatever the evidence: the cap of a rear sector with no usable evidence is this value, not 0; the directions outside the claim are listed in the operator documentation (SYS-CP-022) and the vehicle state tells the pilot when it moves toward one | HZ-CP-016, SYS-CP-022 | UT, GZ | Proposed (owner decision 2026-11-22) |
+| SYS-CP-032 | The self-mask is defined in the body frame from the mount rotation and the lever arm (not as upright cylinders in the sensor frame), is applied before leveling, and the airframe parts that can enter the field of view over the mount tolerance are listed; the mount keeps the airframe out of the field of view with a margin larger than the mount tolerance, or the mask covers them with the smallest approved margin | SYS-CP-015, HZ-CP-016 | UT, GZ | Proposed; values TBD (OPEN-046) |
 
 Stopping envelope (screening, not an oracle): jerk-limited braking from 12 m/s is about 28.5 m;
 with the 0.5 s freshness gate and 2.0 m margin the envelope is `28.5 + 12 * 0.5 + 2.0 = 36.5 m`
@@ -187,6 +197,7 @@ Hazards added by the SE review, approved by the owner on 2026-11-20:
 | HZ-CP-021 | CP latches SAFE_STOP when the PX4 state becomes valid in flight | State machine start-up | Defined start-up: SYS-CP-024 |
 | HZ-CP-022 | The operator expects protection from obstacle classes outside the claim | Unstated limits | Documented non-claims: SYS-CP-022 |
 | HZ-CP-023 | A cap uses a range older than the vehicle position: the vehicle has moved since the sample | Motion since the sample not corrected | Range correction and measured stopping distance: SYS-CP-026, 027 |
+| HZ-CP-024 | The braking that CP itself commands tilts the vehicle until the direction of motion leaves the field of view; the cap then falls (unknown), the setpoint steps to zero and the tilt grows | Braking acceleration not tied to the bearing (three classes: the 45 degree edge of the forward class allows 2.5 m/s^2, not 3.0; the lateral class 1.2 m/s^2 is above what 120 degrees allows, 0.4); wind tilt; cap steps | Braking limit by bearing and tilt reserve, coverage flag, bounded cap descent: SYS-CP-028, 029, 030 |
 
 Preliminary: no safety review, no residual-risk owners.
 
@@ -240,6 +251,9 @@ flowchart LR
 | FEAT-18 | Configuration and platform values | `config/platforms`, `CPB_` parameters | Partial: values TBD, sentinels fail safe | SYS-CP-007, OPEN-005 |
 | FEAT-19 | Pilot procedure: enable, disable, acknowledge | Operations | Not specified | HZ-CP-009, OPEN-020 |
 | FEAT-20 | Verification infrastructure: worlds, sensor models, replay, noise injection, scenario harness | tests, tools | Partial: unit tests and a Gazebo software-flow run | SYS-CP-025, ADR 0011 |
+| FEAT-21 | Per-sector coverage and horizon flag | `obstacle_sector_map`, `cp_brake` | Missing | SYS-CP-029 |
+| FEAT-22 | Braking limit by bearing and the locked speed outside the forward class | `cp_brake` | Missing (extends #123, #141) | SYS-CP-028, 031 |
+| FEAT-23 | Self-mask in the body frame with the mount rotation and lever arm | `livox_ray_source` | Missing (FEAT-03 uses upright cylinders in the sensor frame) | SYS-CP-032 |
 
 The "Today" column was checked in the sources on 2026-11-20: no attitude or gravity input exists in
 `livox_ray_source`, `obstacle_sector_map`, `obstacle_sector_node` or `px4_obstacle_bridge`;
@@ -560,7 +574,7 @@ Suite column: the smallest suite holding the GZ and RPL records of the row; UT r
 | VM-24 | E | Time sync lost: a lost, b clock jump. Expected: map rejected, sectors unknown, safe stop | HIL 1 | 2 | OS-24; SYS-CP-016; FEAT-02 | F |
 | VM-25 | S | Noise returns inside the envelope (rain, dust, insects): a isolated returns, b a burst, rates TBD (OPEN-041). Exploratory, M9 reported | GZ 1-4; UT 1-8 | 2 | OS-19; SYS-CP-021; FEAT-07 | R |
 | VM-26 | S | Tree-like sparse returns (foliage), classes TBD (OPEN-040). Exploratory | UT 1-8; RPL 1; FLT 1 | 1 | OS-09; SYS-CP-011; FEAT-07 | R |
-| VM-27 | E | Self-returns from propeller, leg, mount: masked, neither obstacle nor clear | UT 1-8; RPL 1 | 1 | OS-21; SYS-CP-015; FEAT-03 | R |
+| VM-27 | E | Self-returns from propeller, leg, mount: masked, neither obstacle nor clear; a mount pitch 9.5, 10.0, 10.5 degrees (the propeller tips cross the -7 degree edge between 9.5 and 10), the mask in the body frame (SYS-CP-032) | UT 1-8; RPL 1 | 1 | OS-21; SYS-CP-015; FEAT-03 | R |
 | VM-28 | E | Low reflectivity or glass in captured data: no-return not clear without ADR 0004 evidence. Exploratory | RPL 1; FLT 1 | 1 | OS-07; DET-01, SYS-CP-011; FEAT-07 | F |
 | VM-29 | S | Range extremes: a first return at 36.5 m at 12 m/s, b at 40 m, c 10% reflectivity target at 40 m | GZ 1; RPL 1; FLT 1 | 3 | OS-01, 03; DET-01, PERF-01; FEAT-08, 12 | F |
 | VM-30 | E | Start-up while moving: PX4 state becomes valid in flight at speed (#112). Exploratory | GZ 1-4 | 1 | OS-28; SYS-CP-024; FEAT-14 | R |
@@ -588,6 +602,12 @@ Suite column: the smallest suite holding the GZ and RPL records of the row; UT r
 | VM-47 | E | Hover next to the obstacle with a yaw command, one full turn: a 5, b 30 deg/s [P9, P11], hover at margin + 0.5 m [P7]. Expected: no creep toward the obstacle, M2 at least `CPB_MARGIN`, M9 reported | GZ 1-4 | 2 | H, W, A, T | M2, M9 | OS-02, 13; SYS-CP-012, 001; FEAT-11, 12 | R |
 | VM-48 | S | All four axes moving: a diagonal leg at 3 m/s [P3] with climb 1 m/s and yaw 5 deg/s, b the same leg with climb 3 m/s and yaw 30 deg/s [P8, P9, P10]. Expected a to c on M2 | GZ 5-8; FLT 5 | 2 | H, Vz, W, A, T | M2, M4, M5 | OS-01, 13, 18; SYS-CP-001, 010, 012; FEAT-11, 12, 15 | R |
 | VM-49 | E | Attitude and horizon compensation of the rays (ADR 0020 D1, FEAT-05, #57): a 10 degree pitched-down mount, vehicle level, b vehicle pitched and rolled (angles TBD, OPEN-039). UT assertion: the sector distances equal those of a level vehicle with no mount pitch; GZ: M2 as VM-14. Cases that need it: VM-14, 15, 16, 17, 18, 19, 46, 48 | UT 1-8; GZ 1-4 | 2 | H, A | M2 | OS-11, 12, 13; SYS-CP-017, 018; FEAT-05 | R |
+| VM-50 | N | Coverage by bearing and tilt: synthetic rays rotated by pitch and roll in the level frame. Expected: the horizon flag and the observed interval equal the analytic values (the horizon leaves at 17, 14.5, 7.6, 2.4 degrees for 0, 45, 90, 120 degrees) | UT 1-8 | 1 | OS-35, 39; SYS-CP-029; FEAT-21 | S |
+| VM-51 | E | Braking toward bearings 0, 45, 90, 105, 120 degrees at the SYS-CP-028 limit with the multi-ring lidar and leveling. Expected: the horizon stays in view, a to c | GZ 1-8 | 3 | OS-35, 38; SYS-CP-028; FEAT-22 | R |
+| VM-52 | E | Tilt injected past T_hz (braking above the limit). Expected: cap 0 for the sector, no rise before the horizon returns plus the dwell, no setpoint step above the SYS-CP-030 rate | GZ 1-4 | 2 | OS-35, 36; SYS-CP-029, 030; FEAT-21 | R |
+| VM-53 | E | Steady wind 5 m/s, head, tail and cross, at the forward limit. Expected: the tilt budget is respected, false brakes counted (M9) | GZ 1-4 | 3 | OS-37; SYS-CP-028; FEAT-22 | R |
+| VM-54 | N | Movement toward lateral and rear directions at the locked 5 m/s. Expected: the speed never exceeds the lock, the non-claim is stated in the report | GZ 2-8 | 2 | OS-34, 38; SYS-CP-031; FEAT-22 | R |
+| VM-55 | E | Self-mask frame: UT with the mount rotation, lever arm and a propeller-tip return at the -7 degree edge; GZ static: rays near the propeller tips with mount pitch 9.5, 10.0, 10.5 degrees. Expected: the tips are masked, no ray that does not cross the airframe is masked | UT 1-8; GZ 1 | 2 | OS-21; SYS-CP-032; FEAT-23 | R |
 
 The records of VM-14, 15, 16, 17, 18, 19, 46, 48 and VM-49 (GZ) depend on #57 and are NOT claimable until it is built: they are run and reported as BLOCKED (#57); a BLOCKED record is outside the pass of smoke and regression and stops the full suite at G4 and G5 [P12].
 
@@ -644,6 +664,9 @@ Coverage: every OS row with a UT, GZ, RPL, HIL or FLT lane is in a record; none 
 | OPEN-041 | Treatment of isolated returns: support needed (rays, time), measured false-brake and miss rates, latency cost | Perception + SE + Test | TBD | G4 |
 | OPEN-042 | Start-up rule when the PX4 state becomes valid in flight (#112); release behaviour on a mode change (#113) decided by the owner on 2026-11-20 as ADR 0020 D6 option A: CP does not intervene outside Position and Mission, Hold is not a moving mode and a drift in Hold is a control or localization fault, so the release is the stated non-claim | SE + PX4 + Operations | TBD | G4 |
 | OPEN-043 | Owner approval of a pass criterion for each operational scenario used as evidence, and of the proposals P1 to P12 of the verification matrix (section 7, #132) | Project Owner + SE | TBD | G4 |
+| OPEN-044 | Tilt reserve rho and the wind tilt allowance of SYS-CP-028: measure the scatter of the braking tilt and the steady tilt in 5 m/s wind in SITL, then on the target | SE + Controls | TBD | G4 |
+| OPEN-045 | Cap descent rate when coverage is lost (SYS-CP-030) | Controls | TBD | G4 |
+| OPEN-046 | Self-mask values for the mount pitched 10 degrees down and the margin of the propeller tips to the -7 degree edge (0.13 degrees at 10 degrees: raise the sensor by about 2 cm, lower the pitch to 9 degrees or mask; masking the four propeller discs with 0.02 m margin takes 960 of 43200 rays of a 720 x 60 grid against 40 that cross the discs) | Mechanical + SE | TBD | G4 |
 
 OPEN-022 and 023 block any operational clear-sector claim. OPEN-002 to OPEN-008 block the
 12 m/s claim. Neither blocks the implementation and SITL work that produces the evidence.
