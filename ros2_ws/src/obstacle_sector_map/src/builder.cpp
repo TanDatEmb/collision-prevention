@@ -101,6 +101,8 @@ void SectorMapBuilder::reset(bool packet_continuity_valid)
     accumulator.contributing_ray_count = 0U;
     accumulator.clear_ray_count = 0U;
     accumulator.too_close = false;
+    accumulator.up_ray_count = 0U;
+    accumulator.down_ray_count = 0U;
     accumulator.obstacle_ranges_m.clear();
     accumulator.free_up_m.clear();
     accumulator.free_down_m.clear();
@@ -142,10 +144,10 @@ void SectorMapBuilder::addRay(const RaySample & ray)
       if (liesOnSectorBoundary(wrapped_azimuth_rad)) {
         const auto lower_index =
           static_cast<std::size_t>(std::floor(wrapped_azimuth_rad / kSectorWidthRad)) % kSectorCount;
-        addObstacleReturn(lower_index, horizontal_range_m);
-        addObstacleReturn((lower_index + 1U) % kSectorCount, horizontal_range_m);
+        addObstacleReturn(lower_index, horizontal_range_m, height_m);
+        addObstacleReturn((lower_index + 1U) % kSectorCount, horizontal_range_m, height_m);
       } else {
-        addObstacleReturn(nearest, horizontal_range_m);
+        addObstacleReturn(nearest, horizontal_range_m, height_m);
       }
       return;
     }
@@ -155,10 +157,18 @@ void SectorMapBuilder::addRay(const RaySample & ray)
   addFreeEvidence(nearest, ray);
 }
 
-void SectorMapBuilder::addObstacleReturn(std::size_t sector_index, float horizontal_range_m)
+void SectorMapBuilder::addObstacleReturn(
+  std::size_t sector_index, float horizontal_range_m, float height_m)
 {
   auto & accumulator = _accumulators.at(sector_index);
   ++accumulator.contributing_ray_count;
+  // The ray was seen in the half it lies in (a return at the horizon is in both halves).
+  if (height_m >= 0.0F) {
+    ++accumulator.up_ray_count;
+  }
+  if (height_m <= 0.0F) {
+    ++accumulator.down_ray_count;
+  }
 
   if (horizontal_range_m < kMinDistanceM) {
     accumulator.too_close = true;
@@ -185,12 +195,14 @@ void SectorMapBuilder::addFreeEvidence(std::size_t sector_index, const RaySample
     const float leaves_band_m =
       elevation_rad > 0.0F ? _config.height_up_m / std::tan(elevation_rad) : inf;
     accumulator.free_up_m.push_back(std::min(horizontal_end_m, leaves_band_m));
+    ++accumulator.up_ray_count;
   }
 
   if (elevation_rad <= 0.0F) {
     const float leaves_band_m =
       elevation_rad < 0.0F ? _config.height_down_m / std::tan(-elevation_rad) : inf;
     accumulator.free_down_m.push_back(std::min(horizontal_end_m, leaves_band_m));
+    ++accumulator.down_ray_count;
   }
 }
 
@@ -220,6 +232,17 @@ SectorMap SectorMapBuilder::finalize() const
       accumulator.obstacle_ranges_m, _config.obstacle_window_m, _config.obstacle_min_returns);
     sector.obstacle_distance_m = obstacle_m;
     const bool has_obstacle = std::isfinite(obstacle_m);
+
+    // Coverage (SYS-CP-029, issue #148): a half of the band that holds fewer than n_free rays, free or
+    // obstacle, is outside the field of view (the vehicle is pitched or rolled past the margin), not
+    // filled by a wall. The sector is then unknown, cap 0, even when an obstacle is confirmed farther
+    // away: with no evidence in a half the map must not let the cap rise on the data it still has.
+    // A frame without packet continuity keeps the old rule (credible obstacle returns stay occupied).
+    const bool both_halves_seen = accumulator.up_ray_count >= _config.free_min_rays &&
+                                  accumulator.down_ray_count >= _config.free_min_rays;
+    if (_packet_continuity_valid && !both_halves_seen) {
+      continue;
+    }
 
     // Free distance: the smaller of the two halves of the band; a half with fewer than n_free rays
     // certifies nothing. It needs packet continuity, like the old clear rule.

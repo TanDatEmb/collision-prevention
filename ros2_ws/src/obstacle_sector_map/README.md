@@ -29,6 +29,12 @@ limits (0.10 m and 40 m, ICD-CP-03) and the boundary tolerance are fixed constan
   the qualified range with no obstacle is `kObservedClear`. No obstacle and nothing certified is
   `kUnknown`. A sector that no free ray reached has no free distance, and that never shortens a
   confirmed obstacle distance (a wall that fills the sector has no free ray).
+- Coverage (SYS-CP-029, issue #148): a half of the band that holds fewer than `free_min_rays` rays, free
+  or obstacle (an in-band return counts in the half it lies in, a horizon return in both), is outside the
+  field of view, not filled by a wall. With packet continuity the sector is then `kUnknown` (cap 0), even
+  when an obstacle is confirmed farther away, so the cap cannot rise on the data that is left. The
+  confirmed distance stays in `obstacle_distance_m` as a diagnostic. Without packet continuity credible
+  obstacle returns stay occupied as before.
 
 ## Usage
 ```cpp

@@ -235,6 +235,9 @@ TEST(SectorMapBuilderTest, UsesHorizontalProjectedRangeForTheObstacleDistance)
   builder.reset(true);
   builder.addRay(makeReturn(10.0F, 0.0F, 1'000U, elevation));
   builder.addRay(makeReturn(10.0F, 0.0F, 1'000U, elevation));
+  // The same wall seen in the lower half too (both halves are seen, issue #148).
+  builder.addRay(makeReturn(10.0F, 0.0F, 1'000U, -elevation));
+  builder.addRay(makeReturn(10.0F, 0.0F, 1'000U, -elevation));
 
   const auto sector = builder.finalize().sectors[0];
   EXPECT_EQ(sector.state, SectorState::kOccupied);
@@ -315,6 +318,80 @@ TEST(SectorMapBuilderTest, ThePartialSectorIsUnknownUntilBothHalvesHaveEnoughRay
   one_horizon_ray.reset(true);
   one_horizon_ray.addRay(makeNoReturn());
   EXPECT_EQ(one_horizon_ray.finalize().sectors[0].state, SectorState::kUnknown);
+}
+
+// Issue #148, SYS-CP-029: a half outside the field of view is not a half filled by a wall.
+TEST(SectorMapBuilderTest, ConfirmedObstacleWithAHalfOutsideTheFieldOfViewIsUnknown)
+{
+  // A confirmed obstacle at 8 m, free rays in the upper half only (the lower half lies outside the field
+  // of view): the sector is unknown, cap 0, not occupied at 8 m, so the cap cannot rise on it.
+  const float three = 3.0F * kDegreesToRadians;
+  SectorMapBuilder builder{kConfig};
+  builder.reset(true);
+  builder.addRay(makeReturn(8.0F, 0.0F, 1'000U, three));  // in the band (0.42 m high), upper half
+  builder.addRay(makeReturn(8.1F, 0.0F, 1'000U, three));
+  builder.addRay(makeNoReturn(0.0F, 1'000U, three));
+  builder.addRay(makeNoReturn(0.0F, 1'000U, three));
+  builder.addRay(makeNoReturn(0.0F, 1'000U, three));
+
+  const auto sector = builder.finalize().sectors[0];
+  EXPECT_EQ(sector.state, SectorState::kUnknown);
+  EXPECT_TRUE(std::isnan(sector.distance_m));
+  EXPECT_NEAR(sector.obstacle_distance_m, 8.0F * std::cos(three), 1.0e-3F);  // kept as a diagnostic
+}
+
+TEST(SectorMapBuilderTest, AHalfWithFewerThanNFreeRaysIsOutsideTheFieldOfView)
+{
+  const float up = 3.0F * kDegreesToRadians;
+  SectorMapBuilder builder{kConfig};
+  builder.reset(true);
+  builder.addRay(makeReturn(8.0F, 0.0F, 1'000U, up));
+  builder.addRay(makeReturn(8.1F, 0.0F, 1'000U, up));
+  builder.addRay(makeNoReturn(0.0F, 1'000U, up));
+  builder.addRay(makeNoReturn(0.0F, 1'000U, up));
+  builder.addRay(makeNoReturn(0.0F, 1'000U, -up));  // one ray below, n_free is 2
+
+  EXPECT_EQ(builder.finalize().sectors[0].state, SectorState::kUnknown);
+}
+
+TEST(SectorMapBuilderTest, AWallThatFillsBothHalvesStaysOccupiedAtItsDistance)
+{
+  // Returns above and below the horizon, all inside the band: both halves are seen, filled by obstacle.
+  const float two = 2.0F * kDegreesToRadians;
+  SectorMapBuilder builder{kConfig};
+  builder.reset(true);
+  builder.addRay(makeReturn(8.0F, 0.0F, 1'000U, two));
+  builder.addRay(makeReturn(8.1F, 0.0F, 1'000U, two));
+  builder.addRay(makeReturn(8.0F, 0.0F, 1'000U, -two));
+  builder.addRay(makeReturn(8.1F, 0.0F, 1'000U, -two));
+
+  const auto sector = builder.finalize().sectors[0];
+  EXPECT_EQ(sector.state, SectorState::kOccupied);
+  EXPECT_NEAR(sector.distance_m, 8.0F * std::cos(two), 1.0e-3F);
+}
+
+TEST(SectorMapBuilderTest, ObstacleReturnsAtTheHorizonCountForBothHalves)
+{
+  SectorMapBuilder builder{kConfig};
+  builder.reset(true);
+  builder.addRay(makeReturn(8.0F));
+  builder.addRay(makeReturn(8.1F));
+
+  const auto sector = builder.finalize().sectors[0];
+  EXPECT_EQ(sector.state, SectorState::kOccupied);
+}
+
+TEST(SectorMapBuilderTest, WithoutPacketContinuityAConfirmedObstacleStaysOccupiedWhateverTheCoverage)
+{
+  const float three = 3.0F * kDegreesToRadians;
+  SectorMapBuilder builder{kConfig};
+  builder.reset(false);
+  builder.addRay(makeReturn(8.0F));
+  builder.addRay(makeReturn(8.1F));
+  builder.addRay(makeNoReturn(0.0F, 1'000U, three));
+  builder.addRay(makeNoReturn(0.0F, 1'000U, three));
+
+  EXPECT_EQ(builder.finalize().sectors[0].state, SectorState::kOccupied);
 }
 
 TEST(SectorMapBuilderTest, ReturnBeyondTheQualifiedRangeIsFreeEvidence)
@@ -519,6 +596,29 @@ TEST(SectorMapBuilderTest, WrapBoundaryNeverIndexesOutsideSeventyTwoSectors)
   EXPECT_EQ(map.sectors[36].state, SectorState::kOccupied);
   EXPECT_FLOAT_EQ(map.sectors[36].distance_m, 9.0F);
   EXPECT_EQ(map.accepted_ray_count, 2U);
+}
+
+TEST(SectorMapBuilderTest, ResetClearsTheCoverageOfThePreviousFrame)
+{
+  // A reused builder (SectorMapPipeline::step) must describe the current frame only: coverage of both
+  // halves in frame 1 must not hide the lost lower half of frame 2 (review of #167).
+  const float three = 3.0F * kDegreesToRadians;
+  SectorMapBuilder builder{kConfig};
+  builder.reset(true);
+  builder.addRay(makeReturn(8.0F));  // horizon returns: both halves seen
+  builder.addRay(makeReturn(8.1F));
+  EXPECT_EQ(builder.finalize().sectors[0].state, SectorState::kOccupied);
+
+  builder.reset(true);
+  builder.addRay(makeReturn(8.0F, 0.0F, 1'000U, three));  // upper half only
+  builder.addRay(makeReturn(8.1F, 0.0F, 1'000U, three));
+  EXPECT_EQ(builder.finalize().sectors[0].state, SectorState::kUnknown);
+
+  SectorMapBuilder fresh{kConfig};
+  fresh.reset(true);
+  fresh.addRay(makeReturn(8.0F, 0.0F, 1'000U, three));
+  fresh.addRay(makeReturn(8.1F, 0.0F, 1'000U, three));
+  EXPECT_EQ(fresh.finalize().sectors[0].state, builder.finalize().sectors[0].state);
 }
 
 TEST(SectorMapBuilderTest, ResetClearsPreviousWindow)
