@@ -28,10 +28,12 @@ private:
     std::vector<float> obstacle_ranges_m;  // horizontal range of each in-band return within the range
     std::vector<float> free_up_m;          // free distance certified by each ray, upper half of the band
     std::vector<float> free_down_m;        // and lower half; a horizon ray counts in both
+    uint32_t up_ray_count{0U};    // rays seen in the upper half of the band: free and obstacle (SYS-CP-029)
+    uint32_t down_ray_count{0U};  // and in the lower half; a horizon ray counts in both
   };
 
   void rejectRay();
-  void addObstacleReturn(std::size_t sector_index, float horizontal_range_m);
+  void addObstacleReturn(std::size_t sector_index, float horizontal_range_m, float height_m);
   void addFreeEvidence(std::size_t sector_index, const RaySample & ray);
 
   SectorMapConfig _config;
