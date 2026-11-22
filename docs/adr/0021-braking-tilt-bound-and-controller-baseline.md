@@ -1,8 +1,8 @@
 # 0021. Braking tilt bound and the controller baseline
 
-Status: Proposed. The owner agreed to decisions 1 to 4 below in chat on 2026-11-21, and to the revised
-definition of decision 5 the same day; the approval is recorded in a separate PR. Bench values only: no
-value here is approved for a vehicle. Issues #142 and #154.
+Status: Accepted. The owner agreed to decisions 1 to 4 below in chat on 2026-11-21, and to the revised
+definition of decision 5 the same day, and approved this record in chat on 2026-11-22 (issue #165). Bench
+values only: no value here is approved for a vehicle. Issues #142 and #154.
 The IDs it uses (SYS-CP-012, 018, 027, ICD-CP-04, OPEN-003, 004, 039, 043) are defined in
 `docs/architecture.md`.
 
@@ -185,8 +185,9 @@ the table above. The residual band `B_model` and the number of repeats per cell 
 after more data); until `B_model` exists the model is a candidate, not validated, and the agreement above is
 in-sample.
 
-Bench value in use: 0.95 s. It meets the band of the Consequences in the truth frame at both speeds (1.90
-and 2.03 m). It is a bench platform value for the owner's approval, not an approved safety value, and it is
+Bench value in use: 0.95 s, approved by the owner in chat on 2026-11-22 as a bench value for the X500 in SITL
+with the controller baseline of decision 4. It meets the band of the Consequences in the truth frame at both
+speeds (1.90 and 2.03 m). It is a bench platform value, not an approved safety value for a vehicle, and it is
 expected to fall when leveling removes the slant part (effect (b) is 0.058 to 0.075 m at the instant the
 cap reaches 0 with 0.5 s, and 0.013 to 0.017 m with 0.95 s). The model with both effects predicts 1.82 m (5
 m/s) and 1.84 m (12 m/s) for 0.7 s, inside the band, while 1.76 m was measured at 5 m/s (residual -0.06 m); how

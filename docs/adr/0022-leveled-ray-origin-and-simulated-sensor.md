@@ -1,7 +1,7 @@
 # 0022. Leveled-ray origin, band reference and the simulated sensor
 
-Status: Proposed. The owner agreed to the decisions below in chat on 2026-11-21; the approval is
-recorded in a separate PR. Issue #143; the origin-motion mechanism of decision 1 is issue #155 (owner
+Status: Accepted. The owner agreed to the decisions below in chat on 2026-11-21 and approved this record in
+chat on 2026-11-22 (issue #165). Issue #143; the origin-motion mechanism of decision 1 is issue #155 (owner
 decision in chat, 2026-11-21). It amends ADR 0020 D1 and D2, the conservative filter of ADR 0018 and
 ICD-CP-03 and ICD-CP-06 text; those texts are changed by the docs-sync PR after approval, not here.
 Values marked TBD stay TBD.
@@ -236,9 +236,9 @@ sector certify both halves, and leveling cannot return a short wall to a plane t
 multi-ring lidar over the Mid-360S field (-7 to +52 deg from the boresight, ICD-CP-01) mounted
 pitched down 10 deg (#138). One 3D sensor is preferred to several `LaserScan` planes.
 
-Unverified, to check with one `gz topic` sample: the stock `ros_gz` `LaserScan` conversion copies
-only the middle ring (from memory), so a multi-ring scan reaches ROS as a point cloud
-(`PointCloud2`). A no-return has infinite or NaN xyz, so azimuth and elevation come from the ray
+Checked (issue #138, PR #162): the stock `ros_gz` `LaserScan` conversion keeps one ring (720 ranges of the
+43200 of the Gazebo message), so a multi-ring scan reaches ROS as a point cloud (`PointCloud2`, organised
+720 x 60, ring-major, the `ring` field always 0, a no-hit point +-inf in x, y and z, no NaN seen). A no-return has infinite or NaN xyz, so azimuth and elevation come from the ray
 index, with the layout configured from the SDF and a self-check that each return's `atan2` matches
 its index angle.
 
