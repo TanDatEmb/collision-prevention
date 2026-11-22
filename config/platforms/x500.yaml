@@ -1,19 +1,22 @@
 # Platform values for the X500 Gazebo SITL reference platform.
-# Every value is null until the owner approves it: never fill one without an owner decision.
+# Every value is null until the owner approves it: never fill one without an owner decision. Filled so far:
+# the mount (owner, 2026-11-21), the model name, `height_up_m` and `height_down_m` (chosen under the owner's
+# delegation of 2026-11-22, bench values, OPEN-036). The file is still refused by the executable while any
+# other value is null.
 platform: x500
 sim:
-  gz_model: null  # TBD: OPEN-029
+  gz_model: x500_lidar_multi_ring  # OPEN-029 (tools/scenarios/models, bench asset)
 sensor:
   mount_pose_in_base_link:  # livox_frame -> base_link
-    xyz_m: [null, null, null]  # TBD: OPEN-029
-    rpy_rad: [null, null, null]  # TBD: OPEN-029
+    xyz_m: [0.12, 0.0, 0.14]  # OPEN-029, bench mount R1 (owner, 2026-11-21): sensor from base_link; lever arm 0.184 m
+    rpy_rad: [0.0, 0.1745, 0.0]  # boresight 10 degrees down (positive pitch about +y turns +x toward -z)
 sector_map:
-  height_up_m: null  # TBD: OPEN-005, OPEN-036 (band above the vehicle, level frame)
-  height_down_m: null  # TBD: OPEN-005, OPEN-036
+  height_up_m: 0.25  # OPEN-036, bench, delegated 2026-11-22: from the lidar, level frame (ADR 0022)
+  height_down_m: 0.60  # OPEN-036, bench, delegated 2026-11-22: from the lidar, level frame
   obstacle_window_m: null  # TBD: OPEN-041 (dr)
   obstacle_min_returns: null  # TBD: OPEN-041 (n_obstacle)
   free_min_rays: null  # TBD: OPEN-023 (n_free)
-self_mask:  # upright cylinders in livox_frame (docs/adr/0006)
+self_mask:  # decided 2026-11-22 (OPEN-046): four propeller cylinders in the BODY frame, filled with the body-frame mask code (FEAT-23, #137)
   cylinders:
     - center_m: [null, null]  # TBD: OPEN-005 (x, y of the axis)
       radius_m: null  # TBD: OPEN-005
