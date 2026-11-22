@@ -233,7 +233,7 @@ flowchart LR
 | --- | --- | --- | --- | --- |
 | FEAT-01 | Lidar acquisition with per-point time | `livox_ray_source` | Exists; real-lidar checks open (#58) | SYS-CP-016 |
 | FEAT-02 | Time alignment of the map and PX4 | Orin node, `cp_brake` | Exists; limits TBD (OPEN-033) | SYS-CP-016, ICD-CP-02 |
-| FEAT-03 | Static self-mask | `livox_ray_source` | Exists | SYS-CP-015 |
+| FEAT-03 | Static self-mask | `livox_ray_source` | Library exists (`SelfMask`, `MaskingRaySource`, unit tests; upright cylinders in the sensor frame); the `obstacle_sector_node` executable does not call it, so no self-return is excluded in any run yet (FEAT-23, #137) | SYS-CP-015 |
 | FEAT-04 | Pose-based deskew | `livox_ray_source` | Missing (#57) | SYS-CP-016 |
 | FEAT-05 | Gravity-aligned leveling (roll and pitch removed) | `livox_ray_source` | Missing; no lidar-side package has an attitude input | SYS-CP-017 |
 | FEAT-06 | Vertical envelope and ground rejection | `livox_ray_source`, `obstacle_sector_map` | Partial: height band and certified free distance built (PR #131, unit tests only, no SITL), applied to unleveled rays until #57 | SYS-CP-019, 020 |
@@ -253,7 +253,7 @@ flowchart LR
 | FEAT-20 | Verification infrastructure: worlds, sensor models, replay, noise injection, scenario harness | tests, tools | Partial: unit tests and a Gazebo software-flow run | SYS-CP-025, ADR 0011 |
 | FEAT-21 | Per-sector coverage and horizon flag | `obstacle_sector_map`, `cp_brake` | Missing | SYS-CP-029 |
 | FEAT-22 | Braking limit by bearing and the locked speed outside the forward class | `cp_brake` | Missing (extends #123, #141) | SYS-CP-028, 031 |
-| FEAT-23 | Self-mask in the body frame with the mount rotation and lever arm | `livox_ray_source` | Missing (FEAT-03 uses upright cylinders in the sensor frame) | SYS-CP-032 |
+| FEAT-23 | Self-mask in the body frame with the mount rotation and lever arm, applied to every ray source of the node before leveling | `livox_ray_source`, `obstacle_sector_node` | Missing (FEAT-03 is a library with upright cylinders in the sensor frame, not wired into the node) | SYS-CP-015, 032 |
 
 The "Today" column was checked in the sources on 2026-11-20: no attitude or gravity input exists in
 `livox_ray_source`, `obstacle_sector_map`, `obstacle_sector_node` or `px4_obstacle_bridge`;
