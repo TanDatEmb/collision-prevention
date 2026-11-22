@@ -17,7 +17,7 @@ find_package(sensor_msgs REQUIRED)
 find_package(yaml-cpp REQUIRED)
 
 add_library(obstacle_sector_node src/pipeline.cpp src/platform_config.cpp src/node.cpp
-  src/laser_scan_source.cpp)
+  src/laser_scan_source.cpp src/ring_cloud_source.cpp)
 target_include_directories(obstacle_sector_node PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
   $<INSTALL_INTERFACE:include>)
@@ -61,6 +61,8 @@ if(BUILD_TESTING)
   target_link_libraries(test_node obstacle_sector_node)
   ament_add_gtest(test_laser_scan_source test/test_laser_scan_source.cpp)
   target_link_libraries(test_laser_scan_source obstacle_sector_node)
+  ament_add_gtest(test_ring_cloud_source test/test_ring_cloud_source.cpp)
+  target_link_libraries(test_ring_cloud_source obstacle_sector_node)
   ament_add_gtest(test_node_integration test/test_node_integration.cpp)
   target_link_libraries(test_node_integration obstacle_sector_node)
   ament_target_dependencies(test_node_integration rosgraph_msgs)
