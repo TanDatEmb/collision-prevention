@@ -116,13 +116,13 @@ rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr subscribeToRingCl
       auto result = obstacle_sector_node::ringCloudToFrame(
         *cloud, layout, tracker->update(cloud_time_ns));
       counters->clouds.fetch_add(1U);
-      if (!result.check.shape_ok) {
+      if (!result.stats.shape_ok) {
         counters->shape_errors.fetch_add(1U);
       }
-      counters->returns.fetch_add(result.check.returns);
-      counters->no_returns.fetch_add(result.check.no_returns);
-      counters->invalid.fetch_add(result.check.invalid);
-      counters->index_mismatches.fetch_add(result.check.index_mismatch);
+      counters->returns.fetch_add(result.stats.returns);
+      counters->no_returns.fetch_add(result.stats.no_returns);
+      counters->invalid.fetch_add(result.stats.invalid);
+      counters->index_mismatches.fetch_add(result.stats.index_mismatch);
       queue->push(std::move(result.frame));
     });
 }

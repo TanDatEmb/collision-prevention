@@ -15,7 +15,7 @@ cast with the ray turned by up to `eps` in azimuth and in elevation. The script 
 
 Bench tool, simulation only: it proves what the simulated sensor does, not what a Livox does.
 
-usage: check_lidar_rings.py [--topic T] [--vehicle-z 2.0] [--wall-x 5.0]
+usage: check_multi_ring_lidar.py [--topic T] [--vehicle-z 2.0] [--wall-x 5.0]
 Exit code 0 when every ray agrees, 1 otherwise.
 """
 import argparse
@@ -27,9 +27,9 @@ from pathlib import Path
 
 import numpy as np
 
-DEFAULT_TOPIC = '/world/default/model/bench_vehicle/link/lidar_3d_link/sensor/lidar_3d_bench/scan'
+DEFAULT_TOPIC = '/world/default/model/bench_vehicle/link/lidar_link/sensor/lidar_multi_ring/scan'
 MODELS = Path(__file__).resolve().parent / 'models'
-# Mount R1 in the model frame of x500_lidar_3d_bench (ADR 0022): x, y, z and pitch of the sensor.
+# Mount R1 in the model frame of x500_lidar_multi_ring (ADR 0022): x, y, z and pitch of the sensor.
 MOUNT_X, MOUNT_Y, MOUNT_Z, MOUNT_PITCH = 0.12, 0.0, 0.38, 0.17453293
 EPS_LADDER_DEG = (0.0, 0.05, 0.1, 0.15, 0.2, 0.3, 0.5)
 
@@ -103,8 +103,8 @@ def main():
     parser.add_argument('--range-tolerance', type=float, default=0.02, help='range tolerance (m)')
     parser.add_argument('--max-angle-error-deg', type=float, default=0.3,
                         help='largest angular error a ray may need (bench value of the simulated sensor)')
-    parser.add_argument('--sdf', default=str(MODELS / 'lidar_3d_bench' / 'model.sdf'))
-    parser.add_argument('--layout-yaml', default=str(Path(__file__).resolve().parent / 'lidar_3d_bench_layout.yaml'),
+    parser.add_argument('--sdf', default=str(MODELS / 'lidar_multi_ring' / 'model.sdf'))
+    parser.add_argument('--layout-yaml', default=str(Path(__file__).resolve().parent / 'multi_ring_lidar_layout.yaml'),
                         help='ring layout of the obstacle_sector_node source, compared with the SDF')
     parser.add_argument('--timeout', type=float, default=15.0)
     args = parser.parse_args()

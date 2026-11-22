@@ -24,7 +24,7 @@ constexpr double kPi{3.14159265358979323846};
 constexpr double kInf = std::numeric_limits<double>::infinity();
 constexpr double kNaN = std::numeric_limits<double>::quiet_NaN();
 
-// The bench layout of the simulated multi-ring lidar (tools/scenarios/models/lidar_3d_bench/model.sdf),
+// The bench layout of the simulated multi-ring lidar (tools/scenarios/models/lidar_multi_ring/model.sdf),
 // with a small step count where the test does not need the real size.
 RingCloudLayout benchLayout()
 {
@@ -151,10 +151,10 @@ TEST(RingCloudToFrameTest, EveryRayTakesItsAnglesFromTheIndexAndItsRangeFromTheP
   const auto cloud = makeCloud(
     layout, [&](uint32_t r, uint32_t s) { return at(layout, r, s, 2.0 + 0.01 * r); });
   const auto result = ringCloudToFrame(cloud, layout, true);
-  ASSERT_TRUE(result.check.shape_ok);
+  ASSERT_TRUE(result.stats.shape_ok);
   ASSERT_EQ(result.frame.rays.size(), 43200U);
-  EXPECT_EQ(result.check.returns, 43200U);
-  EXPECT_EQ(result.check.index_mismatch, 0U);
+  EXPECT_EQ(result.stats.returns, 43200U);
+  EXPECT_EQ(result.stats.index_mismatch, 0U);
   EXPECT_TRUE(result.frame.packet_continuity_valid);
   for (uint32_t ring : {0U, 17U, 59U}) {
     for (uint32_t step : {0U, 1U, 360U, 540U, 719U}) {
@@ -195,10 +195,10 @@ TEST(RingCloudToFrameTest, AKnownWallGivesTheExpectedRangePerRing)
   const auto & rear = result.frame.rays[flat(layout, 17U, 0U)];
   EXPECT_EQ(rear.return_kind, RayReturnKind::kQualifiedNoReturn);
   EXPECT_TRUE(std::isinf(rear.range_m));
-  EXPECT_EQ(result.check.index_mismatch, 0U);
-  EXPECT_GT(result.check.no_returns, 0U);
+  EXPECT_EQ(result.stats.index_mismatch, 0U);
+  EXPECT_GT(result.stats.no_returns, 0U);
   EXPECT_EQ(
-    result.check.returns + result.check.no_returns + result.check.invalid, result.check.points);
+    result.stats.returns + result.stats.no_returns + result.stats.invalid, result.stats.points);
 }
 
 TEST(RingCloudToFrameTest, ANoHitIsAQualifiedNoReturnFromTheIndexNotFromTheCoordinates)
@@ -208,8 +208,8 @@ TEST(RingCloudToFrameTest, ANoHitIsAQualifiedNoReturnFromTheIndexNotFromTheCoord
   const auto layout = benchLayout();
   const auto cloud = makeCloud(layout, [&](uint32_t r, uint32_t s) { return noHit(layout, r, s); });
   const auto result = ringCloudToFrame(cloud, layout, true);
-  EXPECT_EQ(result.check.no_returns, 43200U);
-  EXPECT_EQ(result.check.invalid, 0U);
+  EXPECT_EQ(result.stats.no_returns, 43200U);
+  EXPECT_EQ(result.stats.invalid, 0U);
   const auto & ray = result.frame.rays[flat(layout, 30U, 540U)];
   EXPECT_EQ(ray.return_kind, RayReturnKind::kQualifiedNoReturn);
   EXPECT_NEAR(ray.azimuth_rad, static_cast<float>(kPi / 2.0), 1e-6);
@@ -226,8 +226,8 @@ TEST(RingCloudToFrameTest, ARangeBelowTheMinimumIsInvalidNeverFree)
     return std::array<double, 3>{-kInf * nonZero(d[0]), -kInf * nonZero(d[1]), -kInf * nonZero(d[2])};
   });
   const auto result = ringCloudToFrame(cloud, layout, true);
-  EXPECT_EQ(result.check.invalid, 43200U);
-  EXPECT_EQ(result.check.no_returns, 0U);
+  EXPECT_EQ(result.stats.invalid, 43200U);
+  EXPECT_EQ(result.stats.no_returns, 0U);
   EXPECT_EQ(result.frame.rays[flat(layout, 10U, 100U)].return_kind, RayReturnKind::kInvalid);
 }
 
@@ -248,8 +248,8 @@ TEST(RingCloudToFrameTest, NaNAndAFiniteRangeOutsideTheLimitsAreInvalidOrNoRetur
   EXPECT_EQ(result.frame.rays[flat(layout, 0U, 2U)].return_kind, RayReturnKind::kInvalid);
   EXPECT_EQ(result.frame.rays[flat(layout, 0U, 3U)].return_kind, RayReturnKind::kQualifiedNoReturn);
   EXPECT_EQ(result.frame.rays[flat(layout, 0U, 4U)].return_kind, RayReturnKind::kInvalid);
-  EXPECT_EQ(result.check.invalid, 4U);
-  EXPECT_EQ(result.check.index_mismatch, 0U);
+  EXPECT_EQ(result.stats.invalid, 4U);
+  EXPECT_EQ(result.stats.index_mismatch, 0U);
 }
 
 TEST(RingCloudToFrameTest, AScanThatReachesLessThanTheMapRangeNeverCertifiesFreeSpace)
@@ -258,8 +258,8 @@ TEST(RingCloudToFrameTest, AScanThatReachesLessThanTheMapRangeNeverCertifiesFree
   layout.range_max_m = 30.0F;  // below the 40 m qualified range of the map
   const auto cloud = makeCloud(layout, [&](uint32_t r, uint32_t s) { return noHit(layout, r, s); });
   const auto result = ringCloudToFrame(cloud, layout, true);
-  EXPECT_EQ(result.check.no_returns, 0U);
-  EXPECT_EQ(result.check.invalid, 43200U);
+  EXPECT_EQ(result.stats.no_returns, 0U);
+  EXPECT_EQ(result.stats.invalid, 43200U);
 }
 
 TEST(RingCloudToFrameTest, APointInTheWrongDirectionIsInvalidAndCounted)
@@ -271,9 +271,9 @@ TEST(RingCloudToFrameTest, APointInTheWrongDirectionIsInvalidAndCounted)
   });
   const auto result = ringCloudToFrame(cloud, layout, true);
   // 60 rings is an even count, so no ring maps to itself when the order is reversed.
-  EXPECT_EQ(result.check.index_mismatch, 43200U);
-  EXPECT_EQ(result.check.returns, 0U);
-  EXPECT_EQ(result.check.invalid, 43200U);
+  EXPECT_EQ(result.stats.index_mismatch, 43200U);
+  EXPECT_EQ(result.stats.returns, 0U);
+  EXPECT_EQ(result.stats.invalid, 43200U);
   // One point moved by 0.01 rad inside an otherwise correct cloud: only that ray is flagged.
   const auto good = makeCloud(layout, [&](uint32_t r, uint32_t s) {
     auto point = at(layout, r, s, 3.0);
@@ -283,7 +283,7 @@ TEST(RingCloudToFrameTest, APointInTheWrongDirectionIsInvalidAndCounted)
     return point;
   });
   const auto one = ringCloudToFrame(good, layout, true);
-  EXPECT_EQ(one.check.index_mismatch, 1U);
+  EXPECT_EQ(one.stats.index_mismatch, 1U);
   EXPECT_EQ(one.frame.rays[flat(layout, 5U, 100U)].return_kind, RayReturnKind::kInvalid);
   EXPECT_EQ(one.frame.rays[flat(layout, 5U, 101U)].return_kind, RayReturnKind::kReturn);
 }
@@ -313,11 +313,11 @@ TEST(RingCloudToFrameTest, ACloudThatDoesNotMatchTheLayoutHasNoRaysAndBreaksCont
   for (const auto * cloud : {&wrong_width, &wrong_height, &big_endian, &no_z, &double_x, &short_data,
                              &short_step, &short_row}) {
     const auto result = ringCloudToFrame(*cloud, layout, true);
-    EXPECT_FALSE(result.check.shape_ok);
+    EXPECT_FALSE(result.stats.shape_ok);
     EXPECT_TRUE(result.frame.rays.empty());
     EXPECT_FALSE(result.frame.packet_continuity_valid);
   }
-  EXPECT_TRUE(ringCloudToFrame(good, layout, true).check.shape_ok);
+  EXPECT_TRUE(ringCloudToFrame(good, layout, true).stats.shape_ok);
 }
 
 TEST(RingCloudToFrameTest, ARowStepWithPaddingIsRead)
@@ -334,8 +334,8 @@ TEST(RingCloudToFrameTest, ARowStepWithPaddingIsRead)
   cloud.data = padded;
   cloud.row_step = static_cast<uint32_t>(new_row);
   const auto result = ringCloudToFrame(cloud, layout, true);
-  ASSERT_TRUE(result.check.shape_ok);
-  EXPECT_EQ(result.check.returns, 43200U);
+  ASSERT_TRUE(result.stats.shape_ok);
+  EXPECT_EQ(result.stats.returns, 43200U);
 }
 
 TEST(RingCloudToFrameTest, AZeroHeaderTimeStaysZeroAndContinuityIsPassedThrough)

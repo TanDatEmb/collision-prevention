@@ -37,24 +37,24 @@ struct RingCloudLayout
   [[nodiscard]] bool valid() const;
 };
 
-/// What the adapter saw in one cloud; for logs and tests.
-struct RingCloudCheck
-{
-  /// False when the cloud does not match the layout (width, height, fields, byte order, data size).
-  /// The frame then has no rays, so nothing in it can be read as free space.
-  bool shape_ok{true};
-  std::size_t points{0U};
-  std::size_t returns{0U};
-  std::size_t no_returns{0U};
-  std::size_t invalid{0U};
-  /// Finite points whose direction does not match their index (counted in `invalid` too).
-  std::size_t index_mismatch{0U};
-};
-
+/// A frame and what the adapter saw in the cloud it came from; the counts are for logs and tests.
 struct RingCloudResult
 {
+  struct Stats
+  {
+    /// False when the cloud does not match the layout (width, height, fields, byte order, data size).
+    /// The frame then has no rays, so nothing in it can be read as free space.
+    bool shape_ok{true};
+    std::size_t points{0U};
+    std::size_t returns{0U};
+    std::size_t no_returns{0U};
+    std::size_t invalid{0U};
+    /// Finite points whose direction does not match their index (counted in `invalid` too).
+    std::size_t index_mismatch{0U};
+  };
+
   livox_ray_source::RayFrame frame;
-  RingCloudCheck check;
+  Stats stats;
 };
 
 /// One organised multi-ring `PointCloud2` as one ray frame.

@@ -70,7 +70,7 @@ The launch file bridges `/clock` and the lidar scan from Gazebo and runs the nod
 instance has another name.
 
 ### Multi-ring bench lidar (`source:=ring_cloud`)
-The planar scan has no height information. The bench model `x500_lidar_3d_bench`
+The planar scan has no height information. The bench model `x500_lidar_multi_ring`
 (`tools/scenarios/models`, issue #138, ADR 0022 decision 4) carries a multi-ring lidar over the
 Mid-360S field (-7 to +52 degrees from the boresight, 720 azimuth steps by 60 rings, 10 Hz, 50 m)
 at mount R1 (sensor 0.12 m ahead of and 0.14 m above `base_link`, 10 degrees nose down). It is a
@@ -79,7 +79,7 @@ simulation asset: the scan pattern and density of the real sensor are not claime
 `ros_gz_bridge` converts a `LaserScan` of this sensor to one ring only (720 ranges of 43200), so the
 source reads the organised `PointCloud2` (720 x 60). Azimuth and elevation of every ray come from the
 index (`index = ring * 720 + azimuth step`) and the required parameters `ring_layout.*`
-(`tools/scenarios/lidar_3d_bench_layout.yaml`, no defaults), never from x, y, z: a no-hit point has
+(`tools/scenarios/multi_ring_lidar_layout.yaml`, no defaults), never from x, y, z: a no-hit point has
 infinite coordinates and the `ring` field of the Gazebo cloud is always 0. The cloud gives the range
 and the no-hit state. A finite point that is not on its index direction is invalid and counted
 ("index mismatches" in the 5 s log line); a cloud whose size or fields do not match the layout gives
@@ -92,8 +92,8 @@ from this source is not leveled and is not valid evidence on the vehicle's pitch
 
 ```bash
 source /opt/ros/jazzy/setup.bash && source ros2_ws/install/setup.bash
-ros2 launch obstacle_sector_node sitl_gz_ring.launch.py \
+ros2 launch obstacle_sector_node sitl_gz_ring_cloud.launch.py \
   platform_config:=<platform yaml with approved values> \
-  layout_config:=tools/scenarios/lidar_3d_bench_layout.yaml
-python3 tools/scenarios/check_lidar_rings.py   # static vehicle, known wall and ground
+  layout_config:=tools/scenarios/multi_ring_lidar_layout.yaml
+python3 tools/scenarios/check_multi_ring_lidar.py   # static vehicle, known wall and ground
 ```

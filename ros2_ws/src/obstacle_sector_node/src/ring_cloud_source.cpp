@@ -81,7 +81,7 @@ RingCloudResult ringCloudToFrame(
     row_step >= static_cast<std::size_t>(cloud.width) * point_step &&
     cloud.data.size() >= static_cast<std::size_t>(cloud.height) * row_step;
   if (!shape_ok) {
-    result.check.shape_ok = false;
+    result.stats.shape_ok = false;
     result.frame.packet_continuity_valid = false;
     return result;
   }
@@ -138,7 +138,7 @@ RingCloudResult ringCloudToFrame(
           // a point at the origin has no direction
         }
         else if (angle_error > layout.max_index_angle_error_rad) {
-          ++result.check.index_mismatch;
+          ++result.stats.index_mismatch;
         }
         else if (range < static_cast<double>(layout.range_min_m)) {
           // nearer than the minimum range
@@ -174,16 +174,16 @@ RingCloudResult ringCloudToFrame(
 
       switch (ray.return_kind) {
         case RayReturnKind::kReturn:
-          ++result.check.returns;
+          ++result.stats.returns;
           break;
         case RayReturnKind::kQualifiedNoReturn:
-          ++result.check.no_returns;
+          ++result.stats.no_returns;
           break;
         default:
-          ++result.check.invalid;
+          ++result.stats.invalid;
           break;
       }
-      ++result.check.points;
+      ++result.stats.points;
       result.frame.rays.push_back(ray);
     }
   }

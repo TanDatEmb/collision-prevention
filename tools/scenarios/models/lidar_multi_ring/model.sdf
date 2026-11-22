@@ -8,12 +8,12 @@
 
      The grid is regular and closed on the azimuth side: the last azimuth is
      pi - 2*pi/720, so that no azimuth is sampled twice. Ranges in the gz message are ring-major,
-     index = ring * 720 + azimuth_step (checked by tools/scenarios/check_lidar_rings.py).
+     index = ring * 720 + azimuth_step (checked by tools/scenarios/check_multi_ring_lidar.py).
 
      The link frame is the sensor frame (x forward, y left, z up). The vehicle model sets the mount. -->
 <sdf version="1.9">
-  <model name="lidar_3d_bench">
-    <link name="lidar_3d_link">
+  <model name="lidar_multi_ring">
+    <link name="lidar_link">
       <pose>0 0 0 0 0 0</pose>
       <inertial>
         <mass>0.37</mass>
@@ -34,8 +34,8 @@
           </box>
         </geometry>
       </visual>
-      <sensor name="lidar_3d_bench" type="gpu_lidar">
-        <gz_frame_id>lidar_3d_link</gz_frame_id>
+      <sensor name="lidar_multi_ring" type="gpu_lidar">
+        <gz_frame_id>lidar_link</gz_frame_id>
         <pose>0 0 0 0 0 0</pose>
         <ray>
           <scan>
