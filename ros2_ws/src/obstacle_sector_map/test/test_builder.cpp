@@ -598,6 +598,29 @@ TEST(SectorMapBuilderTest, WrapBoundaryNeverIndexesOutsideSeventyTwoSectors)
   EXPECT_EQ(map.accepted_ray_count, 2U);
 }
 
+TEST(SectorMapBuilderTest, ResetClearsTheCoverageOfThePreviousFrame)
+{
+  // A reused builder (SectorMapPipeline::step) must describe the current frame only: coverage of both
+  // halves in frame 1 must not hide the lost lower half of frame 2 (review of #167).
+  const float three = 3.0F * kDegreesToRadians;
+  SectorMapBuilder builder{kConfig};
+  builder.reset(true);
+  builder.addRay(makeReturn(8.0F));  // horizon returns: both halves seen
+  builder.addRay(makeReturn(8.1F));
+  EXPECT_EQ(builder.finalize().sectors[0].state, SectorState::kOccupied);
+
+  builder.reset(true);
+  builder.addRay(makeReturn(8.0F, 0.0F, 1'000U, three));  // upper half only
+  builder.addRay(makeReturn(8.1F, 0.0F, 1'000U, three));
+  EXPECT_EQ(builder.finalize().sectors[0].state, SectorState::kUnknown);
+
+  SectorMapBuilder fresh{kConfig};
+  fresh.reset(true);
+  fresh.addRay(makeReturn(8.0F, 0.0F, 1'000U, three));
+  fresh.addRay(makeReturn(8.1F, 0.0F, 1'000U, three));
+  EXPECT_EQ(fresh.finalize().sectors[0].state, builder.finalize().sectors[0].state);
+}
+
 TEST(SectorMapBuilderTest, ResetClearsPreviousWindow)
 {
   SectorMapBuilder builder{kConfig};

@@ -101,6 +101,8 @@ void SectorMapBuilder::reset(bool packet_continuity_valid)
     accumulator.contributing_ray_count = 0U;
     accumulator.clear_ray_count = 0U;
     accumulator.too_close = false;
+    accumulator.up_ray_count = 0U;
+    accumulator.down_ray_count = 0U;
     accumulator.obstacle_ranges_m.clear();
     accumulator.free_up_m.clear();
     accumulator.free_down_m.clear();
