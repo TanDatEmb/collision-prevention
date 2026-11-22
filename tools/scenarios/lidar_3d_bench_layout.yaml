@@ -1,0 +1,25 @@
+# Layout of the simulated multi-ring lidar (tools/scenarios/models/lidar_3d_bench/model.sdf) for the
+# `ring_cloud` source of obstacle_sector_node. Bench values of a simulated sensor, NOT platform values:
+# the real Livox scan pattern and density are not claimed. check_lidar_rings.py compares these numbers
+# with the SDF.
+#
+# Sensor frame: azimuth counter-clockwise from the front, elevation positive up, before the mount
+# (10 degrees pitched down on the X500 bench model) and before the leveling.
+/**:
+  ros__parameters:
+    source: ring_cloud
+    ring_layout:
+      azimuth_count: 720
+      azimuth_min_rad: -3.141593
+      azimuth_step_rad: 0.008726647      # (max_angle - min_angle) / (samples - 1) of the SDF
+      ring_count: 60
+      elevation_min_rad: -0.122173
+      elevation_step_rad: 0.017453288    # (max_angle - min_angle) / (samples - 1) of the SDF
+      range_min_m: 0.1
+      range_max_m: 50.0
+      # Self-check of the index: the largest angle between a finite point and its index direction. In the
+      # live run every finite point (about 7 million in 345 clouds) was inside it, so the check catches a
+      # layout that does not match the model (a wrong ring order or count, a shifted grid). It is not a
+      # tolerance for the sensor error: the rendered ranges differ from an ideal ray cast by up to 0.3
+      # degrees of ray angle (check_lidar_rings.py), and that error stays in the range.
+      max_index_angle_error_rad: 0.002
