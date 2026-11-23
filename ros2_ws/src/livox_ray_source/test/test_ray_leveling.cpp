@@ -26,7 +26,6 @@ namespace
 constexpr double kPi = 3.14159265358979323846;
 constexpr double kDeg = kPi / 180.0;
 constexpr double kFixtureMountPitchDownRad = 10.0 * kDeg;  // the ADR 0020 example, as a fixture
-constexpr double kFixtureOriginThresholdM = 0.4;
 constexpr uint64_t kMs = 1'000'000U;
 constexpr float kAngleTol = 1.0e-5F;
 constexpr float kRangeTol = 1.0e-4F;
@@ -115,10 +114,17 @@ Mount mountOf(double roll, double pitch_down, double yaw_left)
   return Mount{roll, pitch_down, yaw_left};
 }
 
-LevelingConfig configOf(const Mount & mount, double origin_motion_threshold_m = kFixtureOriginThresholdM)
+LevelingConfig configOf(const Mount & mount, const Vec & lever_arm_flu_m = {0.0, 0.0, 0.0})
 {
   return LevelingConfig{
-    mount.roll_rad, mount.pitch_down_rad, mount.yaw_left_rad, origin_motion_threshold_m};
+    mount.roll_rad, mount.pitch_down_rad, mount.yaw_left_rad, lever_arm_flu_m};
+}
+
+// level() with the rise output ignored, for the tests that do not look at it.
+LevelingStatus levelRay(const RayLeveler & leveler, RaySample & ray)
+{
+  double rise_m = 0.0;
+  return leveler.level(ray, rise_m);
 }
 
 // Sensor FLU ray (azimuth, elevation, range) of a point given in the output frame convention:
@@ -193,7 +199,9 @@ TEST(LevelingConfigTest, DefaultHoldsTheSentinelsAndIsNotValid)
   EXPECT_TRUE(std::isnan(config.roll_rad));
   EXPECT_TRUE(std::isnan(config.pitch_down_rad));
   EXPECT_TRUE(std::isnan(config.yaw_left_rad));
-  EXPECT_TRUE(std::isnan(config.origin_motion_threshold_m));
+  EXPECT_TRUE(std::isnan(config.lever_arm_flu_m[0]));
+  EXPECT_TRUE(std::isnan(config.lever_arm_flu_m[1]));
+  EXPECT_TRUE(std::isnan(config.lever_arm_flu_m[2]));
   EXPECT_FALSE(config.isValid());
   const ConstantPoseHistory poses{poseOf(0, 0, 0)};
   EXPECT_THROW((RayLeveler{poses, config}), std::invalid_argument);
@@ -212,14 +220,14 @@ TEST(LevelingConfigTest, EachRequiredValueIsChecked)
   EXPECT_FALSE(configOf(mountOf(0.0, kPi + 0.1, 0.0)).isValid());
   EXPECT_FALSE(configOf(mountOf(0.0, 0.0, -kPi - 0.1)).isValid());
   LevelingConfig c = configOf(kZeroMount);
-  c.origin_motion_threshold_m = nan;
-  EXPECT_FALSE(c.isValid());
-  c.origin_motion_threshold_m = 0.0;
-  EXPECT_FALSE(c.isValid());
-  c.origin_motion_threshold_m = -1.0;
-  EXPECT_FALSE(c.isValid());
-  c.origin_motion_threshold_m = inf;
-  EXPECT_FALSE(c.isValid());
+  for (std::size_t i = 0U; i < 3U; ++i) {
+    c = configOf(kZeroMount);
+    c.lever_arm_flu_m[i] = nan;
+    EXPECT_FALSE(c.isValid()) << i;
+    c.lever_arm_flu_m[i] = inf;
+    EXPECT_FALSE(c.isValid()) << i;
+  }
+  EXPECT_TRUE(configOf(kZeroMount, {0.12, 0.0, 0.14}).isValid());
 }
 
 // --- Frame conventions -----------------------------------------------------------------------
@@ -232,7 +240,7 @@ TEST(RayLevelerTest, ZeroPoseAndZeroMountReproduceTheFluRayDirectly)
   for (const double az : {-2.5, -1.0, 0.0, 0.7, 3.0}) {
     for (const double el : {-0.4, 0.0, 0.3}) {
       RaySample ray = sensorReturn(7.5, az, el);
-      ASSERT_EQ(leveler.level(ray), LevelingStatus::kOk);
+      ASSERT_EQ(levelRay(leveler, ray), LevelingStatus::kOk);
       EXPECT_NEAR(ray.range_m, 7.5F, kRangeTol);
       EXPECT_NEAR(ray.azimuth_rad, static_cast<float>(az), kAngleTol);
       EXPECT_NEAR(ray.elevation_rad, static_cast<float>(el), kAngleTol);
@@ -248,7 +256,7 @@ TEST(RayLevelerTest, TheTimestampTheMaskAndTheKindAreKept)
   RaySample ray = sensorReturn(5.0, 0.2, 0.1);
   ray.timestamp_ns = 1'050U;
   ray.masked = true;
-  ASSERT_EQ(leveler.level(ray), LevelingStatus::kOk);
+  ASSERT_EQ(levelRay(leveler, ray), LevelingStatus::kOk);
   EXPECT_EQ(ray.timestamp_ns, 1'050U);
   EXPECT_TRUE(ray.masked);
   EXPECT_EQ(ray.return_kind, RayReturnKind::kReturn);
@@ -264,24 +272,24 @@ TEST(RayLevelerTest, MountPitchedDownPutsTheBoresightBelowTheHorizonWithALevelVe
   ASSERT_EQ(leveler.beginFrame(kRefNs), LevelingStatus::kOk);
 
   RaySample boresight = sensorReturn(10.0, 0.0, 0.0);
-  ASSERT_EQ(leveler.level(boresight), LevelingStatus::kOk);
+  ASSERT_EQ(levelRay(leveler, boresight), LevelingStatus::kOk);
   EXPECT_NEAR(boresight.elevation_rad, static_cast<float>(-kFixtureMountPitchDownRad), kAngleTol);
   EXPECT_NEAR(boresight.azimuth_rad, 0.0F, kAngleTol);
 
   RaySample horizon = sensorReturn(10.0, 0.0, kFixtureMountPitchDownRad);
-  ASSERT_EQ(leveler.level(horizon), LevelingStatus::kOk);
+  ASSERT_EQ(levelRay(leveler, horizon), LevelingStatus::kOk);
   EXPECT_NEAR(horizon.elevation_rad, 0.0F, kAngleTol);
   EXPECT_NEAR(horizon.azimuth_rad, 0.0F, kAngleTol);
 
   // Sideways the pitch of the mount does not change the elevation.
   RaySample left = sensorReturn(10.0, kPi / 2.0, 0.0);
-  ASSERT_EQ(leveler.level(left), LevelingStatus::kOk);
+  ASSERT_EQ(levelRay(leveler, left), LevelingStatus::kOk);
   EXPECT_NEAR(left.elevation_rad, 0.0F, kAngleTol);
   EXPECT_NEAR(left.azimuth_rad, static_cast<float>(kPi / 2.0), kAngleTol);
 
   // Behind the vehicle the boresight tilt is a rise: the sensor's rear ray points up.
   RaySample behind = sensorReturn(10.0, kPi, 0.0);
-  ASSERT_EQ(leveler.level(behind), LevelingStatus::kOk);
+  ASSERT_EQ(levelRay(leveler, behind), LevelingStatus::kOk);
   EXPECT_NEAR(behind.elevation_rad, static_cast<float>(kFixtureMountPitchDownRad), kAngleTol);
 }
 
@@ -293,7 +301,7 @@ TEST(RayLevelerTest, MountRollAndYawFollowTheirDocumentedSigns)
     RayLeveler leveler{poses, configOf(mountOf(0.1, 0.0, 0.0))};
     ASSERT_EQ(leveler.beginFrame(kRefNs), LevelingStatus::kOk);
     RaySample left = sensorReturn(10.0, kPi / 2.0, 0.0);
-    ASSERT_EQ(leveler.level(left), LevelingStatus::kOk);
+    ASSERT_EQ(levelRay(leveler, left), LevelingStatus::kOk);
     EXPECT_NEAR(left.elevation_rad, 0.1F, kAngleTol);
   }
   // Yaw about up, positive = boresight turned to the left.
@@ -302,7 +310,7 @@ TEST(RayLevelerTest, MountRollAndYawFollowTheirDocumentedSigns)
     RayLeveler leveler{poses, configOf(mountOf(0.0, 0.0, 0.2))};
     ASSERT_EQ(leveler.beginFrame(kRefNs), LevelingStatus::kOk);
     RaySample boresight = sensorReturn(10.0, 0.0, 0.0);
-    ASSERT_EQ(leveler.level(boresight), LevelingStatus::kOk);
+    ASSERT_EQ(levelRay(leveler, boresight), LevelingStatus::kOk);
     EXPECT_NEAR(boresight.azimuth_rad, 0.2F, kAngleTol);
   }
 }
@@ -319,10 +327,10 @@ TEST(RayLevelerTest, LateralAndVerticalSignsAreNotMirrored)
     RaySample right = sensorReturn(4.0, -kPi / 2.0, 0.0);
     RaySample up = sensorReturn(4.0, 0.0, 0.5);
     RaySample down = sensorReturn(4.0, 0.0, -0.5);
-    ASSERT_EQ(leveler.level(left), LevelingStatus::kOk);
-    ASSERT_EQ(leveler.level(right), LevelingStatus::kOk);
-    ASSERT_EQ(leveler.level(up), LevelingStatus::kOk);
-    ASSERT_EQ(leveler.level(down), LevelingStatus::kOk);
+    ASSERT_EQ(levelRay(leveler, left), LevelingStatus::kOk);
+    ASSERT_EQ(levelRay(leveler, right), LevelingStatus::kOk);
+    ASSERT_EQ(levelRay(leveler, up), LevelingStatus::kOk);
+    ASSERT_EQ(levelRay(leveler, down), LevelingStatus::kOk);
     EXPECT_NEAR(left.azimuth_rad, static_cast<float>(kPi / 2.0), kAngleTol) << yaw;
     EXPECT_NEAR(right.azimuth_rad, static_cast<float>(-kPi / 2.0), kAngleTol) << yaw;
     EXPECT_NEAR(up.elevation_rad, 0.5F, kAngleTol) << yaw;
@@ -341,7 +349,7 @@ TEST(RayLevelerTest, AnObstacleOnTheLeftOfARolledVehicleStaysOnTheLeft)
   RayLeveler leveler{poses, configOf(kZeroMount)};
   ASSERT_EQ(leveler.beginFrame(kRefNs), LevelingStatus::kOk);
   RaySample ray = rayToNedPoint(p_ned, roll, 0.0, 0.0, kZeroMount);
-  ASSERT_EQ(leveler.level(ray), LevelingStatus::kOk);
+  ASSERT_EQ(levelRay(leveler, ray), LevelingStatus::kOk);
   EXPECT_NEAR(ray.azimuth_rad, static_cast<float>(kPi / 2.0), kAngleTol);
   EXPECT_NEAR(ray.elevation_rad, 0.0F, kAngleTol);
   EXPECT_NEAR(ray.range_m, 3.0F, kRangeTol);
@@ -356,12 +364,12 @@ TEST(RayLevelerTest, HeadingChangeSinceTheReferenceRotatesTheRay)
   RayLeveler leveler{poses, configOf(kZeroMount)};
   ASSERT_EQ(leveler.beginFrame(kRefNs), LevelingStatus::kOk);
   RaySample ray = sensorReturn(6.0, 0.0, 0.0);
-  ASSERT_EQ(leveler.level(ray), LevelingStatus::kOk);
+  ASSERT_EQ(levelRay(leveler, ray), LevelingStatus::kOk);
   EXPECT_NEAR(ray.azimuth_rad, static_cast<float>(-kPi / 2.0), kAngleTol);
   EXPECT_NEAR(ray.range_m, 6.0F, kRangeTol);
   // A ray to the body's left points north, which is straight ahead at the reference heading.
   RaySample left = sensorReturn(6.0, kPi / 2.0, 0.0);
-  ASSERT_EQ(leveler.level(left), LevelingStatus::kOk);
+  ASSERT_EQ(levelRay(leveler, left), LevelingStatus::kOk);
   EXPECT_NEAR(left.azimuth_rad, 0.0F, kAngleTol);
 }
 
@@ -371,7 +379,7 @@ TEST(RayLevelerTest, ACommonHeadingOffsetOfBothPosesDoesNotMatter)
   RayLeveler leveler{poses, configOf(kZeroMount)};
   ASSERT_EQ(leveler.beginFrame(kRefNs), LevelingStatus::kOk);
   RaySample ray = sensorReturn(6.0, 0.3, 0.1);
-  ASSERT_EQ(leveler.level(ray), LevelingStatus::kOk);
+  ASSERT_EQ(levelRay(leveler, ray), LevelingStatus::kOk);
   EXPECT_NEAR(ray.azimuth_rad, 0.3F, kAngleTol);
   EXPECT_NEAR(ray.elevation_rad, 0.1F, kAngleTol);
 }
@@ -412,7 +420,7 @@ void expectWallEquivalentToLevelVehicle(
       wall_ahead_m * forward[0] + lateral_left_m * left[0],
       wall_ahead_m * forward[1] + lateral_left_m * left[1], -wall_height_m};
     RaySample ray = rayToNedPoint(p_ned, at_ray.roll, at_ray.pitch, at_ray.yaw, mount);
-    ASSERT_EQ(leveler.level(ray), LevelingStatus::kOk);
+    ASSERT_EQ(levelRay(leveler, ray), LevelingStatus::kOk);
     const double horizontal_m = std::hypot(wall_ahead_m, lateral_left_m);
     EXPECT_NEAR(ray.azimuth_rad, static_cast<float>(alpha), kAngleTol) << wall_azimuth_deg;
     EXPECT_NEAR(ray.range_m * std::cos(ray.elevation_rad), static_cast<float>(horizontal_m), kRangeTol)
@@ -460,53 +468,90 @@ TEST(RayLevelerTest, ReturnIsShiftedByTheOriginMotionSinceTheReference)
   // position is 4 m ahead of the vehicle at the ray time; seen from the reference origin it is
   // 5 m ahead again.
   const TwoPoseHistory poses{poseOf(0, 0, 0, {0.0, 0.0, 0.0}), poseOf(0, 0, 0, {1.0, 0.0, 0.0})};
-  RayLeveler leveler{poses, configOf(kZeroMount, 2.0)};
+  RayLeveler leveler{poses, configOf(kZeroMount)};
   ASSERT_EQ(leveler.beginFrame(kRefNs), LevelingStatus::kOk);
   RaySample ray = sensorReturn(4.0, 0.0, 0.0);
-  ASSERT_EQ(leveler.level(ray), LevelingStatus::kOk);
+  ASSERT_EQ(levelRay(leveler, ray), LevelingStatus::kOk);
   EXPECT_NEAR(ray.range_m, 5.0F, kRangeTol);
   EXPECT_NEAR(ray.azimuth_rad, 0.0F, kAngleTol);
   // Moving east by 0.3 m: a point 4 m ahead is, from the reference origin, 0.3 m to the right.
   const TwoPoseHistory east{poseOf(0, 0, 0, {0.0, 0.0, 0.0}), poseOf(0, 0, 0, {0.0, 0.3, 0.0})};
-  RayLeveler leveler_east{east, configOf(kZeroMount, 2.0)};
+  RayLeveler leveler_east{east, configOf(kZeroMount)};
   ASSERT_EQ(leveler_east.beginFrame(kRefNs), LevelingStatus::kOk);
   RaySample ahead = sensorReturn(4.0, 0.0, 0.0);
-  ASSERT_EQ(leveler_east.level(ahead), LevelingStatus::kOk);
+  ASSERT_EQ(levelRay(leveler_east, ahead), LevelingStatus::kOk);
   EXPECT_NEAR(ahead.azimuth_rad, static_cast<float>(-std::atan2(0.3, 4.0)), kAngleTol);
   // Climbing by 0.3 m (NED z is -0.3): the point is 0.3 m below the reference origin's level.
   const TwoPoseHistory up{poseOf(0, 0, 0, {0.0, 0.0, 0.0}), poseOf(0, 0, 0, {0.0, 0.0, -0.3})};
-  RayLeveler leveler_up{up, configOf(kZeroMount, 2.0)};
+  RayLeveler leveler_up{up, configOf(kZeroMount)};
   ASSERT_EQ(leveler_up.beginFrame(kRefNs), LevelingStatus::kOk);
   RaySample level_ray = sensorReturn(4.0, 0.0, 0.0);
-  ASSERT_EQ(leveler_up.level(level_ray), LevelingStatus::kOk);
+  ASSERT_EQ(levelRay(leveler_up, level_ray), LevelingStatus::kOk);
   EXPECT_NEAR(level_ray.elevation_rad, static_cast<float>(std::atan2(0.3, 4.0)), kAngleTol);
 }
 
-TEST(RayLevelerTest, OriginMotionAboveTheThresholdDropsTheRay)
+TEST(RayLevelerTest, NeitherReturnNorNoReturnIsDroppedForMotion)
 {
-  const TwoPoseHistory over{poseOf(0, 0, 0),
-    poseOf(0, 0, 0, {kFixtureOriginThresholdM + 0.01, 0.0, 0.0})};
-  RayLeveler leveler{over, configOf(kZeroMount)};
+  // 12 m/s over 100 ms is 1.2 m; here 4 m ahead and 4 m up: far above any threshold the old rule had.
+  const double far_m = 4.0;
+  const TwoPoseHistory poses{poseOf(0, 0, 0), poseOf(0, 0, 0, {far_m, 0.0, -far_m})};
+  RayLeveler leveler{poses, configOf(kZeroMount)};
   ASSERT_EQ(leveler.beginFrame(kRefNs), LevelingStatus::kOk);
-  RaySample ray = sensorReturn(4.0, 0.2, 0.1);
-  const RaySample before = ray;
-  EXPECT_EQ(leveler.level(ray), LevelingStatus::kOriginMotionExceeded);
-  EXPECT_EQ(ray.azimuth_rad, before.azimuth_rad);
-  EXPECT_EQ(ray.range_m, before.range_m);
-  EXPECT_TRUE(breaksFrameContinuity(LevelingStatus::kOriginMotionExceeded));
+  RaySample ray = sensorReturn(4.0, 0.0, 0.0);
+  double rise_m = 0.0;
+  ASSERT_EQ(leveler.level(ray, rise_m), LevelingStatus::kOk);
+  // The end point is 4 m ahead of the vehicle, which is far_m ahead of and far_m above the
+  // reference origin: from the reference origin it is (4 + far, 0, +far).
+  const double x = 4.0 + far_m;
+  EXPECT_NEAR(ray.range_m, static_cast<float>(std::hypot(x, far_m)), 1.0e-4F);
+  EXPECT_NEAR(ray.elevation_rad, static_cast<float>(std::atan2(far_m, x)), kAngleTol);
+  EXPECT_NEAR(rise_m, far_m, 1.0e-9);
 
-  // The distance is three-dimensional: a vertical move counts, and the compare is "above".
-  const TwoPoseHistory vertical{poseOf(0, 0, 0), poseOf(0, 0, 0, {0.0, 0.0, -(kFixtureOriginThresholdM + 0.01)})};
-  RayLeveler vertical_leveler{vertical, configOf(kZeroMount)};
-  ASSERT_EQ(vertical_leveler.beginFrame(kRefNs), LevelingStatus::kOk);
-  RaySample v = sensorReturn(4.0, 0.0, 0.0);
-  EXPECT_EQ(vertical_leveler.level(v), LevelingStatus::kOriginMotionExceeded);
+  RaySample no_return{
+    1'000U, std::numeric_limits<float>::quiet_NaN(), 0.2F, 0.1F, false,
+    RayReturnKind::kQualifiedNoReturn};
+  ASSERT_EQ(leveler.level(no_return, rise_m), LevelingStatus::kOk);
+  EXPECT_NEAR(no_return.azimuth_rad, 0.2F, kAngleTol);  // direction only, nothing to shift
+  EXPECT_NEAR(no_return.elevation_rad, 0.1F, kAngleTol);
+  EXPECT_NEAR(rise_m, far_m, 1.0e-9);
+}
 
-  const TwoPoseHistory at_limit{poseOf(0, 0, 0), poseOf(0, 0, 0, {kFixtureOriginThresholdM, 0.0, 0.0})};
-  RayLeveler limit_leveler{at_limit, configOf(kZeroMount)};
-  ASSERT_EQ(limit_leveler.beginFrame(kRefNs), LevelingStatus::kOk);
-  RaySample l = sensorReturn(4.0, 0.0, 0.0);
-  EXPECT_EQ(limit_leveler.level(l), LevelingStatus::kOk);
+TEST(RayLevelerTest, RiseIsPositiveWhenTheOriginIsHigherAndNegativeWhenLower)
+{
+  for (const double up_m : {0.3, -0.2, 0.0}) {
+    const TwoPoseHistory poses{poseOf(0, 0, 0), poseOf(0, 0, 0, {1.0, 2.0, -up_m})};
+    RayLeveler leveler{poses, configOf(kZeroMount)};
+    ASSERT_EQ(leveler.beginFrame(kRefNs), LevelingStatus::kOk);
+    RaySample ray = sensorReturn(4.0, 0.0, 0.0);
+    double rise_m = 99.0;
+    ASSERT_EQ(leveler.level(ray, rise_m), LevelingStatus::kOk);
+    EXPECT_NEAR(rise_m, up_m, 1.0e-9) << up_m;
+  }
+}
+
+TEST(RayLevelerTest, LeverArmMovesTheOriginWithTheAttitude)
+{
+  // Sensor 0.12 m ahead and 0.14 m above the body origin. The reference is level; at the ray time the
+  // vehicle is pitched nose up by 10 degrees at the same position: the sensor is then higher by
+  // 0.12 sin(10) + 0.14 cos(10) - 0.14 = 0.0187 m and 0.12 cos(10) - 0.14 sin(10) - 0.12 ahead.
+  const double pitch = 10.0 * kDeg;
+  const TwoPoseHistory poses{poseOf(0, 0, 0), poseOf(0, pitch, 0)};
+  const Vec lever{0.12, 0.0, 0.14};
+  RayLeveler leveler{poses, configOf(kZeroMount, lever)};
+  ASSERT_EQ(leveler.beginFrame(kRefNs), LevelingStatus::kOk);
+  RaySample ray = sensorReturn(4.0, 0.0, 0.0);
+  double rise_m = 0.0;
+  ASSERT_EQ(leveler.level(ray, rise_m), LevelingStatus::kOk);
+  const double expected_rise = 0.12 * std::sin(pitch) + 0.14 * std::cos(pitch) - 0.14;
+  EXPECT_NEAR(rise_m, expected_rise, 1.0e-9);
+
+  // A pure rotation about the sensor itself would keep the sensor in place: with no lever arm the
+  // origin is the body origin and nothing moves.
+  RayLeveler no_lever{poses, configOf(kZeroMount)};
+  ASSERT_EQ(no_lever.beginFrame(kRefNs), LevelingStatus::kOk);
+  RaySample r2 = sensorReturn(4.0, 0.0, 0.0);
+  ASSERT_EQ(no_lever.level(r2, rise_m), LevelingStatus::kOk);
+  EXPECT_NEAR(rise_m, 0.0, 1.0e-12);
 }
 
 TEST(RayLevelerTest, ReturnWhoseEndPointFallsOnTheReferenceOriginIsDroppedNotKept)
@@ -520,8 +565,8 @@ TEST(RayLevelerTest, ReturnWhoseEndPointFallsOnTheReferenceOriginIsDroppedNotKep
   ASSERT_EQ(leveler.beginFrame(kRefNs), LevelingStatus::kOk);
   RaySample ray = sensorReturn(0.25, 0.0, 0.0);
   const RaySample before = ray;
-  EXPECT_EQ(leveler.level(ray), LevelingStatus::kOriginMotionExceeded);
-  EXPECT_TRUE(breaksFrameContinuity(LevelingStatus::kOriginMotionExceeded));
+  EXPECT_EQ(levelRay(leveler, ray), LevelingStatus::kDegenerateReturn);
+  EXPECT_TRUE(breaksFrameContinuity(LevelingStatus::kDegenerateReturn));
   EXPECT_EQ(ray.range_m, before.range_m);
   EXPECT_EQ(ray.azimuth_rad, before.azimuth_rad);
   EXPECT_EQ(ray.elevation_rad, before.elevation_rad);
@@ -536,7 +581,7 @@ TEST(RayLevelerTest, ReturnTooCloseToTheReferenceOriginStaysAValidReturn)
     RayLeveler leveler{poses, configOf(kZeroMount)};
     ASSERT_EQ(leveler.beginFrame(kRefNs), LevelingStatus::kOk);
     RaySample ray = sensorReturn(0.25 + remaining_m, 0.0, 0.0);
-    ASSERT_EQ(leveler.level(ray), LevelingStatus::kOk) << remaining_m;
+    ASSERT_EQ(levelRay(leveler, ray), LevelingStatus::kOk) << remaining_m;
     EXPECT_NEAR(ray.range_m, static_cast<float>(remaining_m), 1.0e-6F);
     EXPECT_GT(ray.range_m, 0.0F);
     EXPECT_LT(ray.range_m, obstacle_sector_map::kMinDistanceM);
@@ -544,7 +589,7 @@ TEST(RayLevelerTest, ReturnTooCloseToTheReferenceOriginStaysAValidReturn)
   }
 }
 
-TEST(RayLevelerTest, NoReturnKeepsItsDirectionAndHasNoRangeButStillObeysTheOriginFilter)
+TEST(RayLevelerTest, NoReturnKeepsItsDirectionAndHasNoRange)
 {
   const TwoPoseHistory poses{poseOf(0, 0, 0), poseOf(0, 0, kPi / 2.0, {0.2, 0.0, 0.0})};
   RayLeveler leveler{poses, configOf(kZeroMount)};
@@ -552,19 +597,12 @@ TEST(RayLevelerTest, NoReturnKeepsItsDirectionAndHasNoRangeButStillObeysTheOrigi
   RaySample ray{
     1'000U, std::numeric_limits<float>::quiet_NaN(), 0.0F, 0.1F, false,
     RayReturnKind::kQualifiedNoReturn};
-  ASSERT_EQ(leveler.level(ray), LevelingStatus::kOk);
+  ASSERT_EQ(levelRay(leveler, ray), LevelingStatus::kOk);
   EXPECT_TRUE(std::isnan(ray.range_m));
   EXPECT_EQ(ray.return_kind, RayReturnKind::kQualifiedNoReturn);
   EXPECT_NEAR(ray.azimuth_rad, static_cast<float>(-kPi / 2.0), kAngleTol);  // the heading turn
   EXPECT_NEAR(ray.elevation_rad, 0.1F, kAngleTol);
 
-  const TwoPoseHistory far{poseOf(0, 0, 0), poseOf(0, 0, 0, {5.0, 0.0, 0.0})};
-  RayLeveler far_leveler{far, configOf(kZeroMount)};
-  ASSERT_EQ(far_leveler.beginFrame(kRefNs), LevelingStatus::kOk);
-  RaySample dropped{
-    1'000U, std::numeric_limits<float>::quiet_NaN(), 0.0F, 0.1F, false,
-    RayReturnKind::kQualifiedNoReturn};
-  EXPECT_EQ(far_leveler.level(dropped), LevelingStatus::kOriginMotionExceeded);
 }
 
 TEST(RayLevelerTest, DeskewsWithTheInterpolatedPoseOfTheHistory)
@@ -574,11 +612,11 @@ TEST(RayLevelerTest, DeskewsWithTheInterpolatedPoseOfTheHistory)
   PoseHistory history{PoseHistoryConfig{8U, 200U * kMs}};
   history.push(poseOf(0, 0, 0, {0.0, 0.0, 0.0}, 0U, 100U * kMs));
   history.push(poseOf(0, 0, kPi / 2.0, {2.0, 0.0, 0.0}, 0U, 200U * kMs));
-  RayLeveler leveler{history, configOf(kZeroMount, 1.5)};
+  RayLeveler leveler{history, configOf(kZeroMount)};
   ASSERT_EQ(leveler.beginFrame(100U * kMs), LevelingStatus::kOk);
   RaySample ray = sensorReturn(5.0, 0.0, 0.0);
   ray.timestamp_ns = 150U * kMs;
-  ASSERT_EQ(leveler.level(ray), LevelingStatus::kOk);
+  ASSERT_EQ(levelRay(leveler, ray), LevelingStatus::kOk);
   const double x = 5.0 * std::cos(kPi / 4.0) + 1.0;
   const double y_left = -5.0 * std::sin(kPi / 4.0);  // east of the reference heading is right
   EXPECT_NEAR(ray.azimuth_rad, static_cast<float>(std::atan2(y_left, x)), kAngleTol);
@@ -595,15 +633,15 @@ TEST(RayLevelerTest, RaysOnTheExactBracketEdgesAreTransformed)
   ASSERT_EQ(leveler.beginFrame(100U * kMs), LevelingStatus::kOk);  // reference on the first sample
   RaySample first = sensorReturn(5.0, 0.0, 0.0);
   first.timestamp_ns = 100U * kMs;
-  EXPECT_EQ(leveler.level(first), LevelingStatus::kOk);
+  EXPECT_EQ(levelRay(leveler, first), LevelingStatus::kOk);
   EXPECT_NEAR(first.range_m, 5.0F, kRangeTol);
   RaySample last = sensorReturn(5.0, 0.0, 0.0);
   last.timestamp_ns = 200U * kMs;  // on the last sample
-  EXPECT_EQ(leveler.level(last), LevelingStatus::kOk);
+  EXPECT_EQ(levelRay(leveler, last), LevelingStatus::kOk);
   EXPECT_NEAR(last.range_m, 5.3F, kRangeTol);
   RaySample after = sensorReturn(5.0, 0.0, 0.0);
   after.timestamp_ns = 200U * kMs + 1U;  // one nanosecond past the last sample
-  EXPECT_EQ(leveler.level(after), LevelingStatus::kNoPose);
+  EXPECT_EQ(levelRay(leveler, after), LevelingStatus::kNoPose);
 }
 
 // --- Missing, invalid and reset poses ---------------------------------------------------------
@@ -616,7 +654,7 @@ TEST(RayLevelerTest, RayWithoutPoseIsDroppedAndReported)
   ASSERT_EQ(leveler.beginFrame(kRefNs), LevelingStatus::kOk);
   RaySample ray = sensorReturn(4.0, 0.2, 0.1);
   const RaySample before = ray;
-  EXPECT_EQ(leveler.level(ray), LevelingStatus::kNoPose);
+  EXPECT_EQ(levelRay(leveler, ray), LevelingStatus::kNoPose);
   EXPECT_EQ(ray.azimuth_rad, before.azimuth_rad);
   EXPECT_EQ(ray.elevation_rad, before.elevation_rad);
   EXPECT_EQ(ray.range_m, before.range_m);
@@ -629,7 +667,7 @@ TEST(RayLevelerTest, NoPoseAtTheReferenceTimeFailsTheFrame)
   RayLeveler leveler{poses, configOf(kZeroMount)};
   EXPECT_EQ(leveler.beginFrame(kRefNs), LevelingStatus::kNoPose);
   RaySample ray = sensorReturn(4.0, 0.2, 0.1);
-  EXPECT_EQ(leveler.level(ray), LevelingStatus::kNoReference);
+  EXPECT_EQ(levelRay(leveler, ray), LevelingStatus::kNoReference);
   EXPECT_TRUE(breaksFrameContinuity(LevelingStatus::kNoReference));
 }
 
@@ -638,7 +676,7 @@ TEST(RayLevelerTest, LevelBeforeBeginFrameHasNoReference)
   const ConstantPoseHistory poses{poseOf(0, 0, 0)};
   RayLeveler leveler{poses, configOf(kZeroMount)};
   RaySample ray = sensorReturn(4.0, 0.2, 0.1);
-  EXPECT_EQ(leveler.level(ray), LevelingStatus::kNoReference);
+  EXPECT_EQ(levelRay(leveler, ray), LevelingStatus::kNoReference);
 }
 
 TEST(RayLevelerTest, AFailedBeginFrameForgetsTheEarlierReference)
@@ -649,7 +687,7 @@ TEST(RayLevelerTest, AFailedBeginFrameForgetsTheEarlierReference)
   ASSERT_EQ(leveler.beginFrame(kRefNs), LevelingStatus::kOk);
   EXPECT_EQ(leveler.beginFrame(kRefNs + 1U), LevelingStatus::kNoPose);
   RaySample ray = sensorReturn(4.0, 0.2, 0.1);
-  EXPECT_EQ(leveler.level(ray), LevelingStatus::kNoReference);
+  EXPECT_EQ(levelRay(leveler, ray), LevelingStatus::kNoReference);
 }
 
 TEST(RayLevelerTest, ResetCounterChangeBetweenReferenceAndRayDropsTheRay)
@@ -660,7 +698,7 @@ TEST(RayLevelerTest, ResetCounterChangeBetweenReferenceAndRayDropsTheRay)
   RayLeveler leveler{poses, configOf(kZeroMount)};
   ASSERT_EQ(leveler.beginFrame(kRefNs), LevelingStatus::kOk);
   RaySample ray = sensorReturn(4.0, 0.2, 0.1);
-  EXPECT_EQ(leveler.level(ray), LevelingStatus::kResetSinceReference);
+  EXPECT_EQ(levelRay(leveler, ray), LevelingStatus::kResetSinceReference);
   EXPECT_TRUE(breaksFrameContinuity(LevelingStatus::kResetSinceReference));
 }
 
@@ -674,10 +712,10 @@ TEST(RayLevelerTest, ResetCounterChangeInsideTheBracketOfTheHistoryDropsTheRay)
   ASSERT_EQ(leveler.beginFrame(100U * kMs), LevelingStatus::kOk);
   RaySample inside = sensorReturn(4.0, 0.0, 0.0);
   inside.timestamp_ns = 175U * kMs;  // bracket 150 ms (counter 0) and 200 ms (counter 1)
-  EXPECT_EQ(leveler.level(inside), LevelingStatus::kNoPose);
+  EXPECT_EQ(levelRay(leveler, inside), LevelingStatus::kNoPose);
   RaySample on_new = sensorReturn(4.0, 0.0, 0.0);
   on_new.timestamp_ns = 200U * kMs;  // on the first sample after the reset: counter differs
-  EXPECT_EQ(leveler.level(on_new), LevelingStatus::kResetSinceReference);
+  EXPECT_EQ(levelRay(leveler, on_new), LevelingStatus::kResetSinceReference);
 }
 
 TEST(RayLevelerTest, NaNQuaternionGivesNoPoseForTheRayAndForTheReference)
@@ -692,7 +730,7 @@ TEST(RayLevelerTest, NaNQuaternionGivesNoPoseForTheRayAndForTheReference)
   ASSERT_EQ(leveler.beginFrame(100U * kMs), LevelingStatus::kOk);
   RaySample ray = sensorReturn(4.0, 0.0, 0.0);
   ray.timestamp_ns = 125U * kMs;
-  EXPECT_EQ(leveler.level(ray), LevelingStatus::kNoPose);
+  EXPECT_EQ(levelRay(leveler, ray), LevelingStatus::kNoPose);
 
   // The same with a NaN quaternion on both sides of the ray time.
   PoseSample nan_pose = poseOf(0, 0, 0);
@@ -701,7 +739,7 @@ TEST(RayLevelerTest, NaNQuaternionGivesNoPoseForTheRayAndForTheReference)
   RayLeveler nan_ray_leveler{nan_ray_history, configOf(kZeroMount)};
   ASSERT_EQ(nan_ray_leveler.beginFrame(kRefNs), LevelingStatus::kOk);
   RaySample r = sensorReturn(4.0, 0.0, 0.0);
-  EXPECT_EQ(nan_ray_leveler.level(r), LevelingStatus::kNoPose);
+  EXPECT_EQ(levelRay(nan_ray_leveler, r), LevelingStatus::kNoPose);
   // And NaN at the reference time fails the frame.
   const ConstantPoseHistory nan_reference{nan_pose};
   RayLeveler nan_leveler{nan_reference, configOf(kZeroMount)};
@@ -723,20 +761,20 @@ TEST(RayLevelerTest, InvalidRaysAreLeftUnchangedAndDoNotBreakContinuity)
 
   RaySample no_time = sensorReturn(4.0, 0.2, 0.1);
   no_time.timestamp_ns = 0U;
-  EXPECT_EQ(leveler.level(no_time), LevelingStatus::kInvalidRay);
+  EXPECT_EQ(levelRay(leveler, no_time), LevelingStatus::kInvalidRay);
 
   RaySample nan_azimuth = sensorReturn(4.0, std::numeric_limits<double>::quiet_NaN(), 0.1);
-  EXPECT_EQ(leveler.level(nan_azimuth), LevelingStatus::kInvalidRay);
+  EXPECT_EQ(levelRay(leveler, nan_azimuth), LevelingStatus::kInvalidRay);
 
   RaySample nan_range = sensorReturn(std::numeric_limits<double>::quiet_NaN(), 0.2, 0.1);
-  EXPECT_EQ(leveler.level(nan_range), LevelingStatus::kInvalidRay);
+  EXPECT_EQ(levelRay(leveler, nan_range), LevelingStatus::kInvalidRay);
 
   // A zero or negative range is malformed (the sector map rejects it); the transform must not
   // turn it into a valid positive range.
   for (const double bad_range_m : {0.0, -50.0}) {
     RaySample bad_range = sensorReturn(bad_range_m, 0.2, 0.1);
     const RaySample bad_before = bad_range;
-    EXPECT_EQ(leveler.level(bad_range), LevelingStatus::kInvalidRay) << bad_range_m;
+    EXPECT_EQ(levelRay(leveler, bad_range), LevelingStatus::kInvalidRay) << bad_range_m;
     EXPECT_EQ(bad_range.range_m, bad_before.range_m);
     EXPECT_EQ(bad_range.azimuth_rad, bad_before.azimuth_rad);
   }
@@ -744,7 +782,7 @@ TEST(RayLevelerTest, InvalidRaysAreLeftUnchangedAndDoNotBreakContinuity)
   RaySample invalid_kind = sensorReturn(4.0, 0.2, 0.1);
   invalid_kind.return_kind = RayReturnKind::kInvalid;
   const RaySample before = invalid_kind;
-  EXPECT_EQ(leveler.level(invalid_kind), LevelingStatus::kInvalidRay);
+  EXPECT_EQ(levelRay(leveler, invalid_kind), LevelingStatus::kInvalidRay);
   EXPECT_EQ(invalid_kind.azimuth_rad, before.azimuth_rad);
 
   EXPECT_FALSE(breaksFrameContinuity(LevelingStatus::kInvalidRay));

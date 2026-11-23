@@ -95,12 +95,23 @@ SectorMapBuilder::SectorMapBuilder(const SectorMapConfig & config) : _config(con
     throw std::invalid_argument("invalid sector-map configuration");
   }
 
-  reset(false);
+  reset(false, 0.0F, 0.0F);
 }
 
-void SectorMapBuilder::reset(bool packet_continuity_valid)
+void SectorMapBuilder::reset(
+  bool packet_continuity_valid, float origin_rise_bound_m, float origin_fall_bound_m)
 {
   _packet_continuity_valid = packet_continuity_valid;
+  // NaN is "not provided": no correction. A negative or infinite bound is wrong and leaves no room.
+  const auto room_m = [](float height_m, float bound_m) {
+      if (std::isnan(bound_m)) {
+        return height_m;
+      }
+      return std::isfinite(bound_m) && bound_m >= 0.0F ? height_m - bound_m :
+             -std::numeric_limits<float>::infinity();
+    };
+  _room_up_m = room_m(_config.height_up_m, origin_rise_bound_m);
+  _room_down_m = room_m(_config.height_down_m, origin_fall_bound_m);
   _sample_timestamp_ns = 0U;
   _accepted_ray_count = 0U;
   _rejected_ray_count = 0U;
@@ -119,7 +130,7 @@ void SectorMapBuilder::reset(bool packet_continuity_valid)
 
 void SectorMapBuilder::rejectRay() { ++_rejected_ray_count; }
 
-void SectorMapBuilder::addRay(const RaySample & ray)
+bool SectorMapBuilder::accepts(const RaySample & ray)
 {
   const bool direction_valid = std::isfinite(ray.azimuth_rad) && std::isfinite(ray.elevation_rad) &&
                                std::fabs(ray.elevation_rad) < kHalfPiRad;
@@ -128,7 +139,12 @@ void SectorMapBuilder::addRay(const RaySample & ray)
     ray.return_kind == RayReturnKind::kQualifiedNoReturn ||
     (ray.return_kind == RayReturnKind::kReturn && std::isfinite(ray.range_m) && ray.range_m > 0.0F);
 
-  if (!direction_valid || !metadata_valid || !return_valid) {
+  return direction_valid && metadata_valid && return_valid;
+}
+
+void SectorMapBuilder::addRay(const RaySample & ray)
+{
+  if (!accepts(ray)) {
     rejectRay();
     return;
   }
@@ -193,22 +209,24 @@ void SectorMapBuilder::addFreeEvidence(std::size_t sector_index, const RaySample
   ++accumulator.clear_ray_count;
 
   // end: the return range, or the qualified range for a no-return; the distance is horizontal and
-  // never more than the qualified range. h / tan|elevation| is where the ray leaves the band.
+  // never more than the qualified range. room / tan|elevation| is where the ray leaves the band, room being
+  // the band height less the vertical origin motion of the frame (ADR 0022); no room (<= 0) certifies 0 and
+  // is tested before the division.
   const float end_m = ray.return_kind == RayReturnKind::kReturn ? ray.range_m : kMaxDistanceM;
   const float elevation_rad = ray.elevation_rad;
   const float horizontal_end_m = std::min(end_m * std::cos(elevation_rad), kMaxDistanceM);
   const float inf = std::numeric_limits<float>::infinity();
 
   if (elevation_rad >= 0.0F) {
-    const float leaves_band_m =
-      elevation_rad > 0.0F ? _config.height_up_m / std::tan(elevation_rad) : inf;
+    const float leaves_band_m = _room_up_m <= 0.0F ? 0.0F :
+      (elevation_rad > 0.0F ? _room_up_m / std::tan(elevation_rad) : inf);
     accumulator.free_up_m.push_back(std::min(horizontal_end_m, leaves_band_m));
     ++accumulator.up_ray_count;
   }
 
   if (elevation_rad <= 0.0F) {
-    const float leaves_band_m =
-      elevation_rad < 0.0F ? _config.height_down_m / std::tan(-elevation_rad) : inf;
+    const float leaves_band_m = _room_down_m <= 0.0F ? 0.0F :
+      (elevation_rad < 0.0F ? _room_down_m / std::tan(-elevation_rad) : inf);
     accumulator.free_down_m.push_back(std::min(horizontal_end_m, leaves_band_m));
     ++accumulator.down_ray_count;
   }

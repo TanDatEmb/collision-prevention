@@ -81,7 +81,7 @@ TEST(SectorMapBuilderTest, RejectsInvalidConfiguration)
 TEST(SectorMapBuilderTest, EmptyWindowIsUnknown)
 {
   SectorMapBuilder builder{kConfig};
-  builder.reset(true);
+  builder.reset(true, 0.0F, 0.0F);
 
   const auto map = builder.finalize();
 
@@ -96,7 +96,7 @@ TEST(SectorMapBuilderTest, EmptyWindowIsUnknown)
 TEST(SectorMapBuilderTest, OpenSkyHorizonRaysCertifyTheQualifiedRange)
 {
   SectorMapBuilder builder{kConfig};
-  builder.reset(true);
+  builder.reset(true, 0.0F, 0.0F);
   builder.addRay(makeNoReturn(0.0F, 2'000U));
   builder.addRay(makeNoReturn(0.0F, 1'000U));
 
@@ -112,7 +112,7 @@ TEST(SectorMapBuilderTest, OpenSkyHorizonRaysCertifyTheQualifiedRange)
 TEST(SectorMapBuilderTest, MissingPacketContinuityPreventsClear)
 {
   SectorMapBuilder builder{kConfig};
-  builder.reset(false);
+  builder.reset(false, 0.0F, 0.0F);
   addOpenSky(builder);
 
   const auto sector = builder.finalize().sectors[0];
@@ -123,7 +123,7 @@ TEST(SectorMapBuilderTest, MissingPacketContinuityPreventsClear)
 TEST(SectorMapBuilderTest, ConfirmedObstacleSurvivesMissingPacketContinuity)
 {
   SectorMapBuilder builder{kConfig};
-  builder.reset(false);
+  builder.reset(false, 0.0F, 0.0F);
   builder.addRay(makeReturn(5.0F));
   builder.addRay(makeReturn(5.2F));
 
@@ -135,7 +135,7 @@ TEST(SectorMapBuilderTest, ConfirmedObstacleSurvivesMissingPacketContinuity)
 TEST(SectorMapBuilderTest, LoneNoiseReturnDoesNotBrakeInOpenSky)
 {
   SectorMapBuilder builder{kConfig};
-  builder.reset(true);
+  builder.reset(true, 0.0F, 0.0F);
   builder.addRay(makeReturn(3.0F));
   addOpenSky(builder);
 
@@ -147,7 +147,7 @@ TEST(SectorMapBuilderTest, LoneNoiseReturnDoesNotBrakeInOpenSky)
 TEST(SectorMapBuilderTest, ObstacleDistanceIsTheNearEdgeOfTheWindow)
 {
   SectorMapBuilder builder{kConfig};
-  builder.reset(true);
+  builder.reset(true, 0.0F, 0.0F);
   builder.addRay(makeReturn(5.3F));
   builder.addRay(makeReturn(5.0F));
   addOpenSky(builder);
@@ -161,7 +161,7 @@ TEST(SectorMapBuilderTest, ObstacleDistanceIsTheNearEdgeOfTheWindow)
 TEST(SectorMapBuilderTest, ReturnsFartherApartThanTheWindowDoNotConfirm)
 {
   SectorMapBuilder builder{kConfig};
-  builder.reset(true);
+  builder.reset(true, 0.0F, 0.0F);
   builder.addRay(makeReturn(5.0F));
   builder.addRay(makeReturn(6.0F));
   addOpenSky(builder);
@@ -172,7 +172,7 @@ TEST(SectorMapBuilderTest, ReturnsFartherApartThanTheWindowDoNotConfirm)
 TEST(SectorMapBuilderTest, NearestConfirmedWindowWinsOverAnIsolatedNearerReturn)
 {
   SectorMapBuilder builder{kConfig};
-  builder.reset(true);
+  builder.reset(true, 0.0F, 0.0F);
   builder.addRay(makeReturn(4.0F));
   builder.addRay(makeReturn(9.2F));
   builder.addRay(makeReturn(9.0F));
@@ -186,7 +186,7 @@ TEST(SectorMapBuilderTest, NearestConfirmedWindowWinsOverAnIsolatedNearerReturn)
 TEST(SectorMapBuilderTest, ThinPoleIsConfirmedOnlyByEnoughReturns)
 {
   SectorMapBuilder builder{kConfig};
-  builder.reset(true);
+  builder.reset(true, 0.0F, 0.0F);
   builder.addRay(makeReturn(12.0F));
   builder.addRay(makeReturn(12.1F));
   addOpenSky(builder);
@@ -196,7 +196,7 @@ TEST(SectorMapBuilderTest, ThinPoleIsConfirmedOnlyByEnoughReturns)
   EXPECT_FLOAT_EQ(sector.distance_m, 12.0F);
 
   SectorMapBuilder lone{kConfig};
-  lone.reset(true);
+  lone.reset(true, 0.0F, 0.0F);
   lone.addRay(makeReturn(12.0F));
   addOpenSky(lone);
   EXPECT_EQ(lone.finalize().sectors[0].state, SectorState::kObservedClear);
@@ -205,7 +205,7 @@ TEST(SectorMapBuilderTest, ThinPoleIsConfirmedOnlyByEnoughReturns)
 TEST(SectorMapBuilderTest, ReturnBelowMinimumIsTooClose)
 {
   SectorMapBuilder builder{kConfig};
-  builder.reset(true);
+  builder.reset(true, 0.0F, 0.0F);
   builder.addRay(makeReturn(0.05F));
   addOpenSky(builder);
 
@@ -217,7 +217,7 @@ TEST(SectorMapBuilderTest, ReturnBelowMinimumIsTooClose)
 TEST(SectorMapBuilderTest, TooCloseOverridesAConfirmedObstacleInTheSameSector)
 {
   SectorMapBuilder builder{kConfig};
-  builder.reset(true);
+  builder.reset(true, 0.0F, 0.0F);
   builder.addRay(makeReturn(8.0F));
   builder.addRay(makeReturn(8.1F));
   builder.addRay(makeReturn(0.05F));
@@ -232,7 +232,7 @@ TEST(SectorMapBuilderTest, UsesHorizontalProjectedRangeForTheObstacleDistance)
   // 10 m at +5 degrees is 0.87 m high (inside the 1 m band) and 9.96 m away horizontally.
   const float elevation = 5.0F * kDegreesToRadians;
   SectorMapBuilder builder{kConfig};
-  builder.reset(true);
+  builder.reset(true, 0.0F, 0.0F);
   builder.addRay(makeReturn(10.0F, 0.0F, 1'000U, elevation));
   builder.addRay(makeReturn(10.0F, 0.0F, 1'000U, elevation));
   // The same wall seen in the lower half too (both halves are seen, issue #148).
@@ -249,7 +249,7 @@ TEST(SectorMapBuilderTest, ReturnAboveTheBandIsNotAnObstacle)
   // 10 m at +10 degrees is 1.74 m high: above h_up, so it is no obstacle evidence.
   const float elevation = 10.0F * kDegreesToRadians;
   SectorMapBuilder builder{kConfig};
-  builder.reset(true);
+  builder.reset(true, 0.0F, 0.0F);
   builder.addRay(makeReturn(10.0F, 0.0F, 1'000U, elevation));
   builder.addRay(makeReturn(10.0F, 0.0F, 1'000U, elevation));
   addOpenSky(builder);
@@ -265,7 +265,7 @@ TEST(SectorMapBuilderTest, GroundBelowTheBandCertifiesOnlyWhereItLeavesTheBand)
   // h_down / tan(30 degrees) = 1.73 m of the lower half; the upper half has two rays at +5 degrees.
   const float down = -30.0F * kDegreesToRadians;
   SectorMapBuilder builder{kConfig};
-  builder.reset(true);
+  builder.reset(true, 0.0F, 0.0F);
   builder.addRay(makeReturn(10.0F, 0.0F, 1'000U, down));
   builder.addRay(makeReturn(10.0F, 0.0F, 1'000U, down));
   builder.addRay(makeNoReturn(0.0F, 1'000U, 5.0F * kDegreesToRadians));
@@ -281,7 +281,7 @@ TEST(SectorMapBuilderTest, FreeDistanceIsLimitedByWhereTheRayLeavesTheBand)
   // No-returns at +-5 degrees: h / tan(5 degrees) = 11.43 m, shorter than 40 m * cos(5 degrees).
   const float five = 5.0F * kDegreesToRadians;
   SectorMapBuilder builder{kConfig};
-  builder.reset(true);
+  builder.reset(true, 0.0F, 0.0F);
   builder.addRay(makeNoReturn(0.0F, 1'000U, five));
   builder.addRay(makeNoReturn(0.0F, 1'000U, five));
   builder.addRay(makeNoReturn(0.0F, 1'000U, -five));
@@ -296,7 +296,7 @@ TEST(SectorMapBuilderTest, TheSmallerHalfDecides)
 {
   const float five = 5.0F * kDegreesToRadians;
   SectorMapBuilder builder{kConfig};
-  builder.reset(true);
+  builder.reset(true, 0.0F, 0.0F);
   builder.addRay(makeNoReturn(0.0F, 1'000U, five));
   builder.addRay(makeNoReturn(0.0F, 1'000U, five));
   builder.addRay(makeNoReturn(0.0F, 1'000U, -0.5F * kDegreesToRadians));
@@ -309,13 +309,13 @@ TEST(SectorMapBuilderTest, ThePartialSectorIsUnknownUntilBothHalvesHaveEnoughRay
 {
   const float up = 3.0F * kDegreesToRadians;
   SectorMapBuilder only_up{kConfig};
-  only_up.reset(true);
+  only_up.reset(true, 0.0F, 0.0F);
   only_up.addRay(makeNoReturn(0.0F, 1'000U, up));
   only_up.addRay(makeNoReturn(0.0F, 1'000U, up));
   EXPECT_EQ(only_up.finalize().sectors[0].state, SectorState::kUnknown);
 
   SectorMapBuilder one_horizon_ray{kConfig};
-  one_horizon_ray.reset(true);
+  one_horizon_ray.reset(true, 0.0F, 0.0F);
   one_horizon_ray.addRay(makeNoReturn());
   EXPECT_EQ(one_horizon_ray.finalize().sectors[0].state, SectorState::kUnknown);
 }
@@ -327,7 +327,7 @@ TEST(SectorMapBuilderTest, ConfirmedObstacleWithAHalfOutsideTheFieldOfViewIsUnkn
   // of view): the sector is unknown, cap 0, not occupied at 8 m, so the cap cannot rise on it.
   const float three = 3.0F * kDegreesToRadians;
   SectorMapBuilder builder{kConfig};
-  builder.reset(true);
+  builder.reset(true, 0.0F, 0.0F);
   builder.addRay(makeReturn(8.0F, 0.0F, 1'000U, three));  // in the band (0.42 m high), upper half
   builder.addRay(makeReturn(8.1F, 0.0F, 1'000U, three));
   builder.addRay(makeNoReturn(0.0F, 1'000U, three));
@@ -344,7 +344,7 @@ TEST(SectorMapBuilderTest, AHalfWithFewerThanNFreeRaysIsOutsideTheFieldOfView)
 {
   const float up = 3.0F * kDegreesToRadians;
   SectorMapBuilder builder{kConfig};
-  builder.reset(true);
+  builder.reset(true, 0.0F, 0.0F);
   builder.addRay(makeReturn(8.0F, 0.0F, 1'000U, up));
   builder.addRay(makeReturn(8.1F, 0.0F, 1'000U, up));
   builder.addRay(makeNoReturn(0.0F, 1'000U, up));
@@ -359,7 +359,7 @@ TEST(SectorMapBuilderTest, AWallThatFillsBothHalvesStaysOccupiedAtItsDistance)
   // Returns above and below the horizon, all inside the band: both halves are seen, filled by obstacle.
   const float two = 2.0F * kDegreesToRadians;
   SectorMapBuilder builder{kConfig};
-  builder.reset(true);
+  builder.reset(true, 0.0F, 0.0F);
   builder.addRay(makeReturn(8.0F, 0.0F, 1'000U, two));
   builder.addRay(makeReturn(8.1F, 0.0F, 1'000U, two));
   builder.addRay(makeReturn(8.0F, 0.0F, 1'000U, -two));
@@ -373,7 +373,7 @@ TEST(SectorMapBuilderTest, AWallThatFillsBothHalvesStaysOccupiedAtItsDistance)
 TEST(SectorMapBuilderTest, ObstacleReturnsAtTheHorizonCountForBothHalves)
 {
   SectorMapBuilder builder{kConfig};
-  builder.reset(true);
+  builder.reset(true, 0.0F, 0.0F);
   builder.addRay(makeReturn(8.0F));
   builder.addRay(makeReturn(8.1F));
 
@@ -385,7 +385,7 @@ TEST(SectorMapBuilderTest, WithoutPacketContinuityAConfirmedObstacleStaysOccupie
 {
   const float three = 3.0F * kDegreesToRadians;
   SectorMapBuilder builder{kConfig};
-  builder.reset(false);
+  builder.reset(false, 0.0F, 0.0F);
   builder.addRay(makeReturn(8.0F));
   builder.addRay(makeReturn(8.1F));
   builder.addRay(makeNoReturn(0.0F, 1'000U, three));
@@ -397,7 +397,7 @@ TEST(SectorMapBuilderTest, WithoutPacketContinuityAConfirmedObstacleStaysOccupie
 TEST(SectorMapBuilderTest, ReturnBeyondTheQualifiedRangeIsFreeEvidence)
 {
   SectorMapBuilder builder{kConfig};
-  builder.reset(true);
+  builder.reset(true, 0.0F, 0.0F);
   builder.addRay(makeReturn(47.0F));
   builder.addRay(makeReturn(55.0F));
 
@@ -410,7 +410,7 @@ TEST(SectorMapBuilderTest, AWallThatFillsTheSectorGivesItsDistanceNotZero)
 {
   // Every ray hits: no free ray exists, and that must not shorten the confirmed distance.
   SectorMapBuilder builder{kConfig};
-  builder.reset(true);
+  builder.reset(true, 0.0F, 0.0F);
   builder.addRay(makeReturn(30.0F));
   builder.addRay(makeReturn(30.0F));
   builder.addRay(makeReturn(30.1F));
@@ -425,7 +425,7 @@ TEST(SectorMapBuilderTest, FreeDistanceShorterThanTheObstacleWins)
   // Confirmed obstacle at 20 m, but the free rays leave the band at 11.43 m.
   const float five = 5.0F * kDegreesToRadians;
   SectorMapBuilder builder{kConfig};
-  builder.reset(true);
+  builder.reset(true, 0.0F, 0.0F);
   builder.addRay(makeReturn(20.0F));
   builder.addRay(makeReturn(20.1F));
   builder.addRay(makeNoReturn(0.0F, 1'000U, five));
@@ -441,7 +441,7 @@ TEST(SectorMapBuilderTest, SteepOutOfBandReturnsDoNotShortenTheFreeDistanceOfHor
   // The n_free largest values decide: two horizon rays (40 m) outvote two steep rays (0.58 m).
   const float sixty = 60.0F * kDegreesToRadians;
   SectorMapBuilder builder{kConfig};
-  builder.reset(true);
+  builder.reset(true, 0.0F, 0.0F);
   builder.addRay(makeReturn(41.0F, 0.0F, 1'000U, sixty));
   builder.addRay(makeReturn(41.0F, 0.0F, 1'000U, sixty));
   builder.addRay(makeNoReturn());
@@ -453,7 +453,7 @@ TEST(SectorMapBuilderTest, SteepOutOfBandReturnsDoNotShortenTheFreeDistanceOfHor
 TEST(SectorMapBuilderTest, RejectsNonFiniteInvalidMaskedAndVerticalOutliers)
 {
   SectorMapBuilder builder{kConfig};
-  builder.reset(true);
+  builder.reset(true, 0.0F, 0.0F);
 
   auto non_finite = makeNoReturn();
   non_finite.azimuth_rad = std::numeric_limits<float>::infinity();
@@ -480,7 +480,7 @@ TEST(SectorMapBuilderTest, RejectsNonFiniteInvalidMaskedAndVerticalOutliers)
 TEST(SectorMapBuilderTest, RejectsRayWithZeroTimestamp)
 {
   SectorMapBuilder builder{kConfig};
-  builder.reset(true);
+  builder.reset(true, 0.0F, 0.0F);
   builder.addRay(makeNoReturn(0.0F, 0U));
 
   const auto map = builder.finalize();
@@ -491,7 +491,7 @@ TEST(SectorMapBuilderTest, RejectsRayWithZeroTimestamp)
 TEST(SectorMapBuilderTest, RejectsReturnWithInvalidRange)
 {
   SectorMapBuilder builder{kConfig};
-  builder.reset(true);
+  builder.reset(true, 0.0F, 0.0F);
   builder.addRay(makeReturn(std::numeric_limits<float>::quiet_NaN()));
   builder.addRay(makeReturn(0.0F));
   builder.addRay(makeReturn(-1.0F));
@@ -504,7 +504,7 @@ TEST(SectorMapBuilderTest, RejectsReturnWithInvalidRange)
 TEST(SectorMapBuilderTest, UsesEarliestAcceptedRayTimestamp)
 {
   SectorMapBuilder builder{kConfig};
-  builder.reset(true);
+  builder.reset(true, 0.0F, 0.0F);
   builder.addRay(makeNoReturn(0.0F, 9'000U));
   builder.addRay(makeNoReturn(5.0F * kDegreesToRadians, 3'000U));
   builder.addRay(makeNoReturn(-5.0F * kDegreesToRadians, 6'000U));
@@ -515,7 +515,7 @@ TEST(SectorMapBuilderTest, UsesEarliestAcceptedRayTimestamp)
 TEST(SectorMapBuilderTest, ExactPositiveBoundaryUpdatesBothAdjacentSectors)
 {
   SectorMapBuilder builder{kSingle};
-  builder.reset(true);
+  builder.reset(true, 0.0F, 0.0F);
   builder.addRay(makeReturn(10.0F, 2.5F * kDegreesToRadians));
 
   const auto map = builder.finalize();
@@ -526,7 +526,7 @@ TEST(SectorMapBuilderTest, ExactPositiveBoundaryUpdatesBothAdjacentSectors)
 TEST(SectorMapBuilderTest, ExactNegativeBoundaryUpdatesBothAdjacentSectors)
 {
   SectorMapBuilder builder{kSingle};
-  builder.reset(true);
+  builder.reset(true, 0.0F, 0.0F);
   builder.addRay(makeReturn(10.0F, -2.5F * kDegreesToRadians));
 
   const auto map = builder.finalize();
@@ -539,7 +539,7 @@ TEST(SectorMapBuilderTest, AllFloatBoundariesUpdateBothAdjacentSectors)
   for (std::size_t lower_index = 0U; lower_index < kSectorCount; ++lower_index) {
     SCOPED_TRACE(lower_index);
     SectorMapBuilder builder{kSingle};
-    builder.reset(true);
+    builder.reset(true, 0.0F, 0.0F);
     const float boundary_rad =
       (static_cast<float>(lower_index) + 0.5F) * (360.0F / static_cast<float>(kSectorCount)) *
       kDegreesToRadians;
@@ -557,14 +557,14 @@ TEST(SectorMapBuilderTest, JustOffBoundaryDoesNotDuplicateObstacleEvidence)
   constexpr float kOutsideNumericalToleranceRad = 1.0e-4F;
 
   SectorMapBuilder lower_builder{kSingle};
-  lower_builder.reset(true);
+  lower_builder.reset(true, 0.0F, 0.0F);
   lower_builder.addRay(makeReturn(10.0F, kBoundaryRad - kOutsideNumericalToleranceRad));
   const auto lower_map = lower_builder.finalize();
   EXPECT_EQ(lower_map.sectors[5].state, SectorState::kOccupied);
   EXPECT_EQ(lower_map.sectors[6].state, SectorState::kUnknown);
 
   SectorMapBuilder upper_builder{kSingle};
-  upper_builder.reset(true);
+  upper_builder.reset(true, 0.0F, 0.0F);
   upper_builder.addRay(makeReturn(10.0F, kBoundaryRad + kOutsideNumericalToleranceRad));
   const auto upper_map = upper_builder.finalize();
   EXPECT_EQ(upper_map.sectors[5].state, SectorState::kUnknown);
@@ -574,7 +574,7 @@ TEST(SectorMapBuilderTest, JustOffBoundaryDoesNotDuplicateObstacleEvidence)
 TEST(SectorMapBuilderTest, BoundaryNoReturnDoesNotDuplicateFreeEvidence)
 {
   SectorMapBuilder builder{kConfig};
-  builder.reset(true);
+  builder.reset(true, 0.0F, 0.0F);
   builder.addRay(makeNoReturn(2.5F * kDegreesToRadians));
   builder.addRay(makeNoReturn(2.5F * kDegreesToRadians));
 
@@ -588,7 +588,7 @@ TEST(SectorMapBuilderTest, BoundaryNoReturnDoesNotDuplicateFreeEvidence)
 TEST(SectorMapBuilderTest, WrapBoundaryNeverIndexesOutsideSeventyTwoSectors)
 {
   SectorMapBuilder builder{kSingle};
-  builder.reset(true);
+  builder.reset(true, 0.0F, 0.0F);
   builder.addRay(makeReturn(11.0F, 3.14159265358979323846F));
   builder.addRay(makeReturn(9.0F, -3.14159265358979323846F));
 
@@ -625,7 +625,7 @@ TEST(SectorMapBuilderTest, ARearSectorCertifiesFromTheUpperHalfAlone)
   const float pi = 3.14159265358979F;
   const float three = 3.0F * kDegreesToRadians;
   SectorMapBuilder builder{rearConfig()};
-  builder.reset(true);
+  builder.reset(true, 0.0F, 0.0F);
   builder.addRay(makeNoReturn(pi, 1'000U, three));
   builder.addRay(makeNoReturn(pi, 1'000U, three));
 
@@ -638,7 +638,7 @@ TEST(SectorMapBuilderTest, TheSameRaysInTheFrontClassAreUnknownBecauseTheLowerHa
 {
   const float three = 3.0F * kDegreesToRadians;
   SectorMapBuilder builder{rearConfig()};
-  builder.reset(true);
+  builder.reset(true, 0.0F, 0.0F);
   builder.addRay(makeNoReturn(0.0F, 1'000U, three));
   builder.addRay(makeNoReturn(0.0F, 1'000U, three));
   EXPECT_EQ(builder.finalize().sectors[0].state, SectorState::kUnknown);
@@ -649,7 +649,7 @@ TEST(SectorMapBuilderTest, AConfirmedObstacleInTheUpperHalfBehindTheVehicleStill
   const float pi = 3.14159265358979F;
   const float three = 3.0F * kDegreesToRadians;
   SectorMapBuilder builder{rearConfig()};
-  builder.reset(true);
+  builder.reset(true, 0.0F, 0.0F);
   builder.addRay(makeReturn(8.0F, pi, 1'000U, three));  // 0.42 m above the lidar, inside the band
   builder.addRay(makeReturn(8.1F, pi, 1'000U, three));
 
@@ -662,7 +662,7 @@ TEST(SectorMapBuilderTest, ARearSectorStillNeedsNFreeRaysInTheUpperHalf)
 {
   const float pi = 3.14159265358979F;
   SectorMapBuilder builder{rearConfig()};
-  builder.reset(true);
+  builder.reset(true, 0.0F, 0.0F);
   builder.addRay(makeNoReturn(pi, 1'000U, 3.0F * kDegreesToRadians));  // one ray, n_free is 2
   EXPECT_EQ(builder.finalize().sectors[36].state, SectorState::kUnknown);
 }
@@ -671,7 +671,7 @@ TEST(SectorMapBuilderTest, TheRearClassStartsAtTheCentreBearingOfTheSector)
 {
   const float three = 3.0F * kDegreesToRadians;
   SectorMapBuilder builder{rearConfig()};
-  builder.reset(true);
+  builder.reset(true, 0.0F, 0.0F);
   // sector 27 is centred at 135 degrees (rear), sector 26 at 130 degrees (not rear); the mirror sectors 45 and 46
   for (const std::size_t index : {27U, 26U, 45U, 46U}) {
     const float azimuth = static_cast<float>(index) * 5.0F * kDegreesToRadians;
@@ -691,18 +691,18 @@ TEST(SectorMapBuilderTest, ResetClearsTheCoverageOfThePreviousFrame)
   // halves in frame 1 must not hide the lost lower half of frame 2 (review of #167).
   const float three = 3.0F * kDegreesToRadians;
   SectorMapBuilder builder{kConfig};
-  builder.reset(true);
+  builder.reset(true, 0.0F, 0.0F);
   builder.addRay(makeReturn(8.0F));  // horizon returns: both halves seen
   builder.addRay(makeReturn(8.1F));
   EXPECT_EQ(builder.finalize().sectors[0].state, SectorState::kOccupied);
 
-  builder.reset(true);
+  builder.reset(true, 0.0F, 0.0F);
   builder.addRay(makeReturn(8.0F, 0.0F, 1'000U, three));  // upper half only
   builder.addRay(makeReturn(8.1F, 0.0F, 1'000U, three));
   EXPECT_EQ(builder.finalize().sectors[0].state, SectorState::kUnknown);
 
   SectorMapBuilder fresh{kConfig};
-  fresh.reset(true);
+  fresh.reset(true, 0.0F, 0.0F);
   fresh.addRay(makeReturn(8.0F, 0.0F, 1'000U, three));
   fresh.addRay(makeReturn(8.1F, 0.0F, 1'000U, three));
   EXPECT_EQ(fresh.finalize().sectors[0].state, builder.finalize().sectors[0].state);
@@ -711,13 +711,13 @@ TEST(SectorMapBuilderTest, ResetClearsTheCoverageOfThePreviousFrame)
 TEST(SectorMapBuilderTest, ResetClearsPreviousWindow)
 {
   SectorMapBuilder builder{kConfig};
-  builder.reset(true);
+  builder.reset(true, 0.0F, 0.0F);
   builder.addRay(makeReturn(5.0F, 0.0F, 7'000U));
   builder.addRay(makeReturn(5.1F, 0.0F, 7'000U));
   builder.addRay(makeNoReturn(0.0F, 7'000U));
   builder.addRay(makeNoReturn(0.0F, 0U));
 
-  builder.reset(false);
+  builder.reset(false, 0.0F, 0.0F);
   const auto map = builder.finalize();
 
   EXPECT_FALSE(map.packet_continuity_valid);
@@ -729,4 +729,90 @@ TEST(SectorMapBuilderTest, ResetClearsPreviousWindow)
     EXPECT_EQ(sector.contributing_ray_count, 0U);
     EXPECT_TRUE(std::isnan(sector.obstacle_distance_m));
   }
+}
+
+// ADR 0022 decision 1: the band room that is left above and below a moved origin.
+namespace
+{
+
+// Two no-returns 3 degrees above and two 3 degrees below the horizon, in sector 0.
+obstacle_sector_map::SectorObservation sectorWithBounds(float rise_m, float fall_m)
+{
+  const float three = 3.0F * kDegreesToRadians;
+  SectorMapBuilder builder{kConfig};
+  builder.reset(true, rise_m, fall_m);
+  builder.addRay(makeNoReturn(0.0F, 1'000U, three));
+  builder.addRay(makeNoReturn(0.0F, 1'000U, three));
+  builder.addRay(makeNoReturn(0.0F, 1'000U, -three));
+  builder.addRay(makeNoReturn(0.0F, 1'000U, -three));
+  return builder.finalize().sectors[0];
+}
+
+float distanceWithBounds(float rise_m, float fall_m)
+{
+  return sectorWithBounds(rise_m, fall_m).distance_m;
+}
+
+}  // namespace
+
+TEST(SectorMapBuilderTest, OriginRiseShortensTheFreeDistanceOfTheUpperHalf)
+{
+  const float three = 3.0F * kDegreesToRadians;
+  EXPECT_NEAR(distanceWithBounds(0.0F, 0.0F), 1.0F / std::tan(three), 1.0e-3F);
+  EXPECT_NEAR(distanceWithBounds(0.3F, 0.0F), 0.7F / std::tan(three), 1.0e-3F);
+}
+
+TEST(SectorMapBuilderTest, OriginFallShortensTheFreeDistanceOfTheLowerHalf)
+{
+  const float three = 3.0F * kDegreesToRadians;
+  EXPECT_NEAR(distanceWithBounds(0.0F, 0.4F), 0.6F / std::tan(three), 1.0e-3F);
+  // The two halves are independent: the smaller room decides.
+  EXPECT_NEAR(distanceWithBounds(0.3F, 0.4F), 0.6F / std::tan(three), 1.0e-3F);
+}
+
+TEST(SectorMapBuilderTest, NoRoomInAHalfCertifiesNothingThereAndNeverGivesNaN)
+{
+  // The origin is at or beyond the boundary of the upper half: room 0, free distance 0 (tested before
+  // the division). Nothing is certified and no obstacle is confirmed: the sector is unknown, cap 0.
+  for (const float rise_m : {1.0F, 1.5F}) {
+    const auto sector = sectorWithBounds(rise_m, 0.0F);
+    EXPECT_EQ(sector.state, SectorState::kUnknown) << rise_m;
+    EXPECT_EQ(sector.free_distance_m, 0.0F) << rise_m;
+  }
+  // A horizon ray (elevation 0, both halves) has no 0 / 0 either.
+  SectorMapBuilder horizon{kConfig};
+  horizon.reset(true, 1.0F, 0.0F);
+  addOpenSky(horizon);
+  const auto sector = horizon.finalize().sectors[0];
+  EXPECT_EQ(sector.state, SectorState::kUnknown);
+  EXPECT_EQ(sector.free_distance_m, 0.0F);
+}
+
+TEST(SectorMapBuilderTest, HorizonRayKeepsTheCapWhileThereIsRoom)
+{
+  SectorMapBuilder builder{kConfig};
+  builder.reset(true, 0.3F, 0.3F);
+  addOpenSky(builder);
+  const auto sector = builder.finalize().sectors[0];
+  EXPECT_EQ(sector.state, SectorState::kObservedClear);
+  EXPECT_EQ(sector.free_distance_m, obstacle_sector_map::kMaxDistanceM);
+}
+
+TEST(SectorMapBuilderTest, NanBoundMeansNotProvidedAndZeroIsARealBound)
+{
+  const float nan = std::numeric_limits<float>::quiet_NaN();
+  const float three = 3.0F * kDegreesToRadians;
+  // Not provided: no correction, the full band; the same as a real 0.
+  EXPECT_NEAR(distanceWithBounds(nan, nan), 1.0F / std::tan(three), 1.0e-3F);
+  EXPECT_NEAR(distanceWithBounds(nan, 0.4F), 0.6F / std::tan(three), 1.0e-3F);  // the half that has a bound
+  // A real bound equal to the band height leaves no room: 0 is applied, not ignored.
+  EXPECT_EQ(sectorWithBounds(1.0F, nan).state, SectorState::kUnknown);
+}
+
+TEST(SectorMapBuilderTest, ABoundThatIsNegativeOrInfiniteLeavesNoRoom)
+{
+  const float inf = std::numeric_limits<float>::infinity();
+  EXPECT_EQ(sectorWithBounds(-0.1F, 0.0F).state, SectorState::kUnknown);
+  EXPECT_EQ(sectorWithBounds(0.0F, inf).state, SectorState::kUnknown);
+  EXPECT_EQ(sectorWithBounds(-inf, 0.0F).state, SectorState::kUnknown);
 }
