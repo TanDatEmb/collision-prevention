@@ -7,7 +7,8 @@ Cases: an EKF attitude that lags its stamp by 4 ms and has a 0.1 deg pitch bias 
 -4 ms slope and scan lag and the bias); a rigid correction of rotated and shifted plane points (it must undo
 the known rotation and shift); clouds ray-cast from an attitude 0.3 deg pitched and 0.2 deg rolled from the
 ground truth (the correction must be +0.3 and +0.2 deg, the end-to-end error must be -0.3 and -0.2 deg for an
-EKF that equals the truth); the arrival check on three hand-made clouds.
+EKF that equals the truth); the arrival check on three hand-made clouds, one of them the same cached clock with a later callback; the cloud
+attitude case uses a heading of 90 deg, where pitch and roll are not the world axes.
 """
 import math
 import os
@@ -76,7 +77,7 @@ def odo_rows(t_s, lag_s, pitch_bias_deg):
     for t in t_s:
         p, r = motion(np.array([t - lag_s]))
         q = quaternion(ENU_TO_NED @ body_flu_to_enu(p[0] + pitch_bias_deg, r[0]) @ FLU_TO_FRD)
-        rows.append((t * 1e9, t * 1e9 + 4e6, 0.0, 0.0, -2.5, *q))
+        rows.append((t * 1e9, t * 1e9 + 4e6, 0.0, 0.0, -2.5, *q, len(rows)))
     return np.array(rows)
 
 
@@ -144,23 +145,25 @@ def case_rigid_correction():
 def case_cloud_attitude():
     mount_xyz, mount_pitch = np.array([0.12, 0.0, 0.38]), math.radians(10)
     dirs = ray_directions()
+    heading = math.pi / 2                         # not aligned with world +x: pitch and roll are not world axes
     gt_p, gt_r = 5.0, -4.0                       # truth attitude of the vehicle at the cloud stamp
     render_p, render_r = gt_p + 0.3, gt_r + 0.2  # the cloud was rendered at this attitude
     pos = np.array([1.0, 0.0, 2.5])
     t_s = np.arange(0, 6, 0.02)
-    rows = np.array([(t * 1e9, *pos, *quaternion(body_flu_to_enu(gt_p, gt_r))) for t in t_s])
-    r_render = body_flu_to_enu(render_p, render_r)
+    rows = np.array([(t * 1e9, *pos, *quaternion(body_flu_to_enu(gt_p, gt_r, heading))) for t in t_s])
+    r_render = body_flu_to_enu(render_p, render_r, heading)
     sensor = r_render @ rot_y(mount_pitch)
     origin = pos + r_render @ mount_xyz
     rng = cast((sensor @ dirs.T).T, origin)
     with np.errstate(invalid='ignore'):
         pts = np.where(np.isfinite(rng)[:, None], dirs * rng[:, None], np.nan).astype(np.float32)
-    meta = np.array([[3e9, 3.012e9]])
+    meta = np.array([[3e9, 3.012e9, 1.0]])
     gt = an.GroundTruth(rows)
     got = an.cloud_corrections(gt, meta, pts[None], PLANES, mount_xyz, mount_pitch, stride=1)
     check('cloud correction pitch (deg)', got[0, 1], 0.3, 0.02)
     check('cloud correction roll (deg)', got[0, 2], 0.2, 0.02)
-    odo = np.array([(t * 1e9, t * 1e9 + 4e6, 0, 0, -2.5, *quaternion(ENU_TO_NED @ body_flu_to_enu(gt_p, gt_r) @ FLU_TO_FRD))
+    odo = np.array([(t * 1e9, t * 1e9 + 4e6, 0, 0, -2.5,
+                     *quaternion(ENU_TO_NED @ body_flu_to_enu(gt_p, gt_r, heading) @ FLU_TO_FRD), 0)
                     for t in np.arange(0, 6, 0.008)])
     e = an.end_to_end(got, odo)
     # an EKF equal to the truth is 0.3 / 0.2 deg away from the attitude the cloud was rendered at
@@ -169,9 +172,15 @@ def case_cloud_attitude():
 
 
 def case_arrival():
-    odo = np.array([[100, 110, 0, 0, 0, 1, 0, 0, 0], [108, 118, 0, 0, 0, 1, 0, 0, 0]], dtype=float)
-    meta = np.array([[100, 112], [105, 112], [105, 130]], dtype=float)   # 2nd: sample 108 not yet there; 3rd ok
-    check('clouds without a later sample', an.arrival_race(meta, odo)['missing'], 1, 0)
+    # columns used: stamp, arrival clock, ..., arrival sequence number (last of 10 for odometry, 3rd of 3 for clouds)
+    def sample(stamp, seq):
+        return [stamp, 110, 0, 0, 0, 1, 0, 0, 0, seq]
+    odo = np.array([sample(100, 1), sample(108, 4)], dtype=float)
+    # cloud 1: stamp 100, sample 100 arrived first (seq 1 < 2): covered. Cloud 2: stamp 105, needs a sample
+    # >= 105: sample 108 has seq 4, after the cloud (seq 3) although both saw the same cached clock: missing.
+    # Cloud 3: stamp 105 arrives after sample 108 (seq 5 > 4): covered.
+    meta = np.array([[100, 110, 2], [105, 110, 3], [105, 130, 5]], dtype=float)
+    check('clouds without a later sample (callback order)', an.arrival_race(meta, odo)['missing'], 1, 0)
 
 
 def main():

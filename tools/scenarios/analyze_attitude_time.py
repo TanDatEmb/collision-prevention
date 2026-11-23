@@ -4,7 +4,7 @@
 usage: analyze_attitude_time.py <run.npz> [--mount-xyz 0.12,0,0.38] [--mount-pitch-deg 10]
                                 [--plane nx,ny,nz,c ...] [--max-clouds N]
 
-<run.npz> is the output of record_attitude_run.py. The ground plane z = 0 is always used; --plane adds a
+<run.npz> is the output of record_attitude_run.py (its layout is described there). The ground plane z = 0 is always used; --plane adds a
 plane n . p = c in world ENU (default: the vertical wall of spawn_wall.sh 8, x = 8, and the leaning wall of
 spawn_lean_wall.sh 6 2.9 30). The mount is the sensor pose in the model frame (FLU, pitched down by the
 given angle). All attitude angles are pitch up and roll (left side up) of the body, in degrees.
@@ -141,6 +141,16 @@ def fit_correction(world, origin, planes, iterations=3):
     return omega, shift, float(np.sqrt((r[ok] ** 2).mean())), int(ok.sum())
 
 
+def rotation_vector(omega):
+    """Rotation matrix of the rotation vector omega (rad), Rodrigues' formula."""
+    angle = float(np.linalg.norm(omega))
+    if angle < 1e-12:
+        return np.eye(3)
+    k = omega / angle
+    cross = np.array([[0, -k[2], k[1]], [k[2], 0, -k[0]], [-k[1], k[0], 0]])
+    return np.eye(3) + math.sin(angle) * cross + (1 - math.cos(angle)) * cross @ cross
+
+
 def rotation_y(angle_rad):
     c, s = math.cos(angle_rad), math.sin(angle_rad)
     return np.array([[c, 0, s], [0, 1, 0], [-s, 0, c]])
@@ -161,9 +171,16 @@ def cloud_corrections(gt, meta, clouds, planes, mount_xyz, mount_pitch_rad, max_
         origin = pos + rot @ mount_xyz
         world = (rot @ mount @ pts.T).T + origin
         omega, _, rms, n = fit_correction(world, origin, planes)
-        rows.append((stamp, math.degrees(-omega[1]), math.degrees(omega[0]), math.degrees(omega[2]), rms, n,
-                     float(gt.interp(stamp, gt.pitch_rate)), float(gt.interp(stamp, gt.roll_rate)),
-                     float(gt.interp(stamp, gt.pitch)), float(gt.interp(stamp, gt.roll))))
+        # the correction moves the assumed world points onto the planes, so the attitude the cloud was
+        # rendered at is the correction applied to the ground-truth rotation; its pitch and roll are read
+        # with the same angle definitions, which holds for any heading
+        rendered = rotation_vector(omega) @ rot
+        pitch_r, roll_r = attitude_gt_deg(rendered[None])
+        pitch_t, roll_t = float(gt.interp(stamp, gt.pitch)), float(gt.interp(stamp, gt.roll))
+        pitch_g, roll_g = attitude_gt_deg(rot[None])
+        rows.append((stamp, float(pitch_r[0] - pitch_g[0]), float(roll_r[0] - roll_g[0]), math.degrees(omega[2]),
+                     rms, n, float(gt.interp(stamp, gt.pitch_rate)), float(gt.interp(stamp, gt.roll_rate)),
+                     pitch_t, roll_t))
         if max_clouds and len(rows) >= max_clouds:
             break
     return np.array(rows)
@@ -198,10 +215,12 @@ def end_to_end(rows, odo):
 
 def arrival_race(meta, odo):
     """Measurement 4 (timing part): clouds for which no odometry sample with stamp >= the cloud stamp had
-    arrived when the cloud did (a leveling lookup at the stamp then has no sample after it)."""
+    arrived when the cloud did (a leveling lookup at the stamp then has no sample after it). The order of
+    arrival is the callback sequence number (meta column 2, odo column 9), not the simulation clock, which
+    a callback only caches."""
     missing = 0
-    for stamp, arrival in meta:
-        missing += not np.any((odo[:, 0] >= stamp) & (odo[:, 1] <= arrival))
+    for stamp, _, seq in meta[:, :3]:
+        missing += not np.any((odo[:, 0] >= stamp) & (odo[:, 9] < seq))
     lag = (meta[:, 1] - meta[:, 0]) / 1e6
     latency = (odo[:, 1] - odo[:, 0]) / 1e6
     return {'clouds': int(len(meta)), 'missing': int(missing), 'missing_percent': 100.0 * missing / len(meta),
@@ -226,6 +245,7 @@ def main():
     args = ap.parse_args()
     data = np.load(args.run)
     gt, odo, meta, clouds = GroundTruth(data['gt']), data['odo'], data['meta'], data['clouds']
+    kept = meta[data['cloud_index']]
     planes = [(np.array([0.0, 0.0, 1.0]), 0.0)]
     planes += [parse_plane(p) for p in (args.plane or ['1,0,0,8', '0,-0.8660254,0.5,-3.746'])]
 
@@ -238,7 +258,7 @@ def main():
     print('2. time offset of the EKF attitude: slope pitch %.2f ms, roll %.2f ms, scan %.1f ms; '
           'largest dynamic pitch error %.3f deg' % (a['pitch_slope_ms'], a['roll_slope_ms'],
                                                     a['pitch_scan_lag_ms'], a['dynamic_pitch_max_abs']))
-    rows = cloud_corrections(gt, meta, clouds, planes, np.array([float(v) for v in args.mount_xyz.split(',')]),
+    rows = cloud_corrections(gt, kept, clouds, planes, np.array([float(v) for v in args.mount_xyz.split(',')]),
                              math.radians(args.mount_pitch_deg), args.max_clouds)
     b = end_to_end(rows, odo)
     print('3. cloud against ground truth at the header stamp (n=%d, plane rms %.3f m): time offset pitch %.2f ms, '

@@ -6,12 +6,15 @@ usage: record_attitude_run.py <seconds> <out.npz> [--model x500_lidar_multi_ring
 Records at the same time, all in the simulation clock:
   gt     (N, 8)  Gazebo model pose from /world/default/dynamic_pose/info: stamp_ns, x, y, z, qw, qx, qy, qz
                  (world ENU, body FLU, quaternion body -> world)
-  odo    (M, 9)  every /fmu/out/vehicle_odometry sample: timestamp_sample * 1000 [ns], /clock at arrival [ns],
-                 x, y, z, qw, qx, qy, qz (NED, body FRD, quaternion body -> world). The sample time is read as
-                 the node reads it (ADR 0003: one clock in the simulation).
-  meta   (K, 2)  header stamp [ns] and /clock at arrival [ns] of each recorded cloud
-  clouds (K, R, 3) float32 xyz in the sensor frame, one row per ray (non-finite for no return); every second
-                 cloud is kept to bound the file size.
+  odo    (M, 10) every /fmu/out/vehicle_odometry sample: timestamp_sample * 1000 [ns], /clock at arrival [ns],
+                 x, y, z, qw, qx, qy, qz (NED, body FRD, quaternion body -> world), arrival sequence number.
+                 The sample time is read as the node reads it (ADR 0003: one clock in the simulation).
+  meta   (K, 3)  every cloud: header stamp [ns], /clock at arrival [ns], arrival sequence number. The sequence
+                 number counts odometry samples and clouds in one series, so it gives the order of arrival
+                 (the cached clock does not: two callbacks can see the same value).
+  cloud_index (J,)  indices into meta of the clouds whose points are stored (every second one: the timing of
+                 every cloud is kept, because the phase against the odometry grid changes from cloud to cloud)
+  clouds (J, R, 3) float32 xyz in the sensor frame, one row per ray (non-finite for no return).
 Needs ROS 2 with the px4_msgs overlay sourced and the gz python bindings (gz.transport13, gz.msgs10).
 """
 import argparse
@@ -37,7 +40,7 @@ def main():
     ap.add_argument('--cloud-topic', default='points')
     args = ap.parse_args()
 
-    gt, odo, clouds, meta = [], [], [], []
+    gt, odo, clouds, meta, kept = [], [], [], [], []
 
     def on_pose(msg):
         for pose in msg.pose:
@@ -54,7 +57,7 @@ def main():
         def __init__(self):
             super().__init__('record_attitude_run')
             self.clock_ns = 0
-            self.clouds_seen = 0
+            self.sequence = 0
             self.create_subscription(Clock, '/clock', self.on_clock, 10)
             self.create_subscription(VehicleOdometry, '/fmu/out/vehicle_odometry', self.on_odo,
                                      qos_profile_sensor_data)
@@ -66,15 +69,17 @@ def main():
             self.clock_ns = msg.clock.sec * 10**9 + msg.clock.nanosec
 
         def on_odo(self, msg):
-            odo.append((msg.timestamp_sample * 1000, self.clock_ns, *msg.position, *msg.q))
+            self.sequence += 1
+            odo.append((msg.timestamp_sample * 1000, self.clock_ns, *msg.position, *msg.q, self.sequence))
 
         def on_cloud(self, msg):
-            self.clouds_seen += 1
-            if self.clouds_seen % 2:
+            self.sequence += 1
+            meta.append((msg.header.stamp.sec * 10**9 + msg.header.stamp.nanosec, self.clock_ns, self.sequence))
+            if len(meta) % 2:
                 return
             a = point_cloud2.read_points(msg, field_names=['x', 'y', 'z'], skip_nans=False)
             clouds.append(np.stack([a['x'], a['y'], a['z']], axis=-1).reshape(-1, 3).astype(np.float32))
-            meta.append((msg.header.stamp.sec * 10**9 + msg.header.stamp.nanosec, self.clock_ns))
+            kept.append(len(meta) - 1)
 
     rclpy.init()
     recorder = Recorder()
@@ -82,8 +87,8 @@ def main():
     while time.time() < end:
         rclpy.spin_once(recorder, timeout_sec=0.05)
     np.savez_compressed(args.out, gt=np.array(gt), odo=np.array(odo), meta=np.array(meta),
-                        clouds=np.array(clouds, dtype=np.float32))
-    print('gt %d, odo %d, clouds %d' % (len(gt), len(odo), len(clouds)))
+                        cloud_index=np.array(kept, dtype=np.int64), clouds=np.array(clouds, dtype=np.float32))
+    print('gt %d, odo %d, clouds %d (points stored for %d)' % (len(gt), len(odo), len(meta), len(clouds)))
 
 
 if __name__ == '__main__':

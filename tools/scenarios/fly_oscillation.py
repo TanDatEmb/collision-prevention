@@ -38,6 +38,7 @@ class Flight(Node):
         self.create_subscription(VehicleOdometry, '/fmu/out/vehicle_odometry',
                                  lambda m: setattr(self, 'odo', m), qos_profile_sensor_data)
         self.odo, self.phase, self.t0, self.t_phase = None, 'wait', time.time(), 0.0
+        self.t_stream = None
         self.arm_sent, self.index, self.log = 0, 0, []
         self.create_timer(0.05, self.tick)
 
@@ -54,7 +55,9 @@ class Flight(Node):
     def tick(self):
         if self.odo is None:
             return
-        t, p = time.time() - self.t0, self.odo.position
+        if self.t_stream is None:
+            self.t_stream = time.time()      # the Offboard warm-up counts from the first published setpoint
+        t, p = time.time() - self.t_stream, self.odo.position
         o = OffboardControlMode()
         sp = TrajectorySetpoint()
         sp.position, sp.velocity, sp.acceleration = [NAN] * 3, [NAN] * 3, [NAN] * 3
