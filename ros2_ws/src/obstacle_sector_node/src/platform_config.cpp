@@ -60,9 +60,15 @@ obstacle_sector_map::SectorMapConfig loadSectorMapConfig(const std::string & yam
     }
   }
 
-  const obstacle_sector_map::SectorMapConfig config{
+  obstacle_sector_map::SectorMapConfig config{
     static_cast<float>(height_up), static_cast<float>(height_down), static_cast<float>(window),
     static_cast<uint32_t>(obstacle_returns), static_cast<uint32_t>(free_rays)};
+
+  // Optional: the start of the rear class (issue #141). Absent or null keeps the default, no rear class.
+  const YAML::Node rear_start = child(map, "rear_start_rad");
+  if (rear_start && !rear_start.IsNull()) {
+    config.rear_start_rad = static_cast<float>(number(rear_start, "rear start"));
+  }
 
   if (!config.isValid()) {
     throw std::invalid_argument("platform config: sector map values are not valid");

@@ -29,6 +29,10 @@ limits (0.10 m and 40 m, ICD-CP-03) and the boundary tolerance are fixed constan
   the qualified range with no obstacle is `kObservedClear`. No obstacle and nothing certified is
   `kUnknown`. A sector that no free ray reached has no free distance, and that never shortens a
   confirmed obstacle distance (a wall that fills the sector has no free ray).
+- Rear class (ADR 0020 D3 option B, issue #141): a sector whose centre is more than `rear_start_rad` from the front
+  needs and certifies from the upper half only (the lidar never sees below its own height behind the vehicle);
+  obstacle evidence is unchanged and a confirmed rear obstacle still limits. Default pi: no rear class, the
+  conservative case. X500: 134.6 degrees. Obstacles below the lidar behind the vehicle are a stated non-claim.
 - Coverage (SYS-CP-029, issue #148): a half of the band that holds fewer than `free_min_rays` rays, free
   or obstacle (an in-band return counts in the half it lies in, a horizon return in both), is outside the
   field of view, not filled by a wall. With packet continuity the sector is then `kUnknown` (cap 0), even

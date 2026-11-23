@@ -598,6 +598,93 @@ TEST(SectorMapBuilderTest, WrapBoundaryNeverIndexesOutsideSeventyTwoSectors)
   EXPECT_EQ(map.accepted_ray_count, 2U);
 }
 
+// Issue #141, ADR 0020 D3 option B: behind the vehicle the lidar never sees below its own height.
+constexpr float kRearStart = 134.6F * kDegreesToRadians;
+
+SectorMapConfig rearConfig()
+{
+  SectorMapConfig config = kConfig;
+  config.rear_start_rad = kRearStart;
+  return config;
+}
+
+TEST(SectorMapConfigTest, TheRearStartMustBeAnAngleFromZeroToPi)
+{
+  SectorMapConfig config = kConfig;
+  EXPECT_TRUE(config.isValid());  // the default is pi: no rear class
+  for (const float bad : {0.0F, -1.0F, 3.2F, std::numeric_limits<float>::quiet_NaN()}) {
+    config.rear_start_rad = bad;
+    EXPECT_FALSE(config.isValid()) << bad;
+  }
+  config.rear_start_rad = kRearStart;
+  EXPECT_TRUE(config.isValid());
+}
+
+TEST(SectorMapBuilderTest, ARearSectorCertifiesFromTheUpperHalfAlone)
+{
+  const float pi = 3.14159265358979F;
+  const float three = 3.0F * kDegreesToRadians;
+  SectorMapBuilder builder{rearConfig()};
+  builder.reset(true);
+  builder.addRay(makeNoReturn(pi, 1'000U, three));
+  builder.addRay(makeNoReturn(pi, 1'000U, three));
+
+  const auto sector = builder.finalize().sectors[36];
+  EXPECT_EQ(sector.state, SectorState::kOccupied);
+  EXPECT_NEAR(sector.distance_m, 1.0F / std::tan(three), 1.0e-3F);  // where the ray leaves the band
+}
+
+TEST(SectorMapBuilderTest, TheSameRaysInTheFrontClassAreUnknownBecauseTheLowerHalfIsMissing)
+{
+  const float three = 3.0F * kDegreesToRadians;
+  SectorMapBuilder builder{rearConfig()};
+  builder.reset(true);
+  builder.addRay(makeNoReturn(0.0F, 1'000U, three));
+  builder.addRay(makeNoReturn(0.0F, 1'000U, three));
+  EXPECT_EQ(builder.finalize().sectors[0].state, SectorState::kUnknown);
+}
+
+TEST(SectorMapBuilderTest, AConfirmedObstacleInTheUpperHalfBehindTheVehicleStillLimits)
+{
+  const float pi = 3.14159265358979F;
+  const float three = 3.0F * kDegreesToRadians;
+  SectorMapBuilder builder{rearConfig()};
+  builder.reset(true);
+  builder.addRay(makeReturn(8.0F, pi, 1'000U, three));  // 0.42 m above the lidar, inside the band
+  builder.addRay(makeReturn(8.1F, pi, 1'000U, three));
+
+  const auto sector = builder.finalize().sectors[36];
+  EXPECT_EQ(sector.state, SectorState::kOccupied);
+  EXPECT_NEAR(sector.distance_m, 8.0F * std::cos(three), 1.0e-3F);
+}
+
+TEST(SectorMapBuilderTest, ARearSectorStillNeedsNFreeRaysInTheUpperHalf)
+{
+  const float pi = 3.14159265358979F;
+  SectorMapBuilder builder{rearConfig()};
+  builder.reset(true);
+  builder.addRay(makeNoReturn(pi, 1'000U, 3.0F * kDegreesToRadians));  // one ray, n_free is 2
+  EXPECT_EQ(builder.finalize().sectors[36].state, SectorState::kUnknown);
+}
+
+TEST(SectorMapBuilderTest, TheRearClassStartsAtTheCentreBearingOfTheSector)
+{
+  const float three = 3.0F * kDegreesToRadians;
+  SectorMapBuilder builder{rearConfig()};
+  builder.reset(true);
+  // sector 27 is centred at 135 degrees (rear), sector 26 at 130 degrees (not rear); the mirror sectors 45 and 46
+  for (const std::size_t index : {27U, 26U, 45U, 46U}) {
+    const float azimuth = static_cast<float>(index) * 5.0F * kDegreesToRadians;
+    builder.addRay(makeNoReturn(azimuth, 1'000U, three));
+    builder.addRay(makeNoReturn(azimuth, 1'000U, three));
+  }
+  const auto map = builder.finalize();
+  EXPECT_EQ(map.sectors[27].state, SectorState::kOccupied);
+  EXPECT_EQ(map.sectors[45].state, SectorState::kOccupied);
+  EXPECT_EQ(map.sectors[26].state, SectorState::kUnknown);
+  EXPECT_EQ(map.sectors[46].state, SectorState::kUnknown);
+}
+
 TEST(SectorMapBuilderTest, ResetClearsTheCoverageOfThePreviousFrame)
 {
   // A reused builder (SectorMapPipeline::step) must describe the current frame only: coverage of both

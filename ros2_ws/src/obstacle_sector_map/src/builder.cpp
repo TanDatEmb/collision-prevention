@@ -15,6 +15,14 @@ constexpr float kPi{3.14159265358979323846F};
 constexpr float kTwoPi{2.0F * kPi};
 constexpr float kSectorWidthRad{kTwoPi / static_cast<float>(kSectorCount)};
 
+// Whether a sector belongs to the rear class: its centre bearing from the front (0 to pi) is beyond `rear_start_rad`.
+bool sectorIsRear(std::size_t index, float rear_start_rad)
+{
+  const float centre = static_cast<float>(index) * kSectorWidthRad;
+  const float bearing = std::min(centre, kTwoPi - centre);
+  return bearing > rear_start_rad;
+}
+
 float wrapZeroToTwoPi(float angle_rad)
 {
   float wrapped = std::fmod(angle_rad, kTwoPi);
@@ -238,8 +246,11 @@ SectorMap SectorMapBuilder::finalize() const
     // filled by a wall. The sector is then unknown, cap 0, even when an obstacle is confirmed farther
     // away: with no evidence in a half the map must not let the cap rise on the data it still has.
     // A frame without packet continuity keeps the old rule (credible obstacle returns stay occupied).
+    // Rear class (issue #141): behind the vehicle the lidar never sees below its own height, so the upper half
+    // alone is required and certifies; obstacles below the lidar behind the vehicle are a stated non-claim.
+    const bool rear = sectorIsRear(index, _config.rear_start_rad);
     const bool both_halves_seen = accumulator.up_ray_count >= _config.free_min_rays &&
-                                  accumulator.down_ray_count >= _config.free_min_rays;
+                                  (rear || accumulator.down_ray_count >= _config.free_min_rays);
     if (_packet_continuity_valid && !both_halves_seen) {
       continue;
     }
@@ -249,9 +260,8 @@ SectorMap SectorMapBuilder::finalize() const
     float free_m = nan;
 
     if (_packet_continuity_valid) {
-      free_m = std::min(
-        nthLargestOrZero(accumulator.free_up_m, _config.free_min_rays),
-        nthLargestOrZero(accumulator.free_down_m, _config.free_min_rays));
+      const float up_m = nthLargestOrZero(accumulator.free_up_m, _config.free_min_rays);
+      free_m = rear ? up_m : std::min(up_m, nthLargestOrZero(accumulator.free_down_m, _config.free_min_rays));
       sector.free_distance_m = free_m;
     }
 
