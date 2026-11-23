@@ -127,7 +127,7 @@ void SectorMapBuilder::reset(
 
 void SectorMapBuilder::rejectRay() { ++_rejected_ray_count; }
 
-void SectorMapBuilder::addRay(const RaySample & ray)
+bool SectorMapBuilder::accepts(const RaySample & ray)
 {
   const bool direction_valid = std::isfinite(ray.azimuth_rad) && std::isfinite(ray.elevation_rad) &&
                                std::fabs(ray.elevation_rad) < kHalfPiRad;
@@ -136,7 +136,12 @@ void SectorMapBuilder::addRay(const RaySample & ray)
     ray.return_kind == RayReturnKind::kQualifiedNoReturn ||
     (ray.return_kind == RayReturnKind::kReturn && std::isfinite(ray.range_m) && ray.range_m > 0.0F);
 
-  if (!direction_valid || !metadata_valid || !return_valid) {
+  return direction_valid && metadata_valid && return_valid;
+}
+
+void SectorMapBuilder::addRay(const RaySample & ray)
+{
+  if (!accepts(ray)) {
     rejectRay();
     return;
   }

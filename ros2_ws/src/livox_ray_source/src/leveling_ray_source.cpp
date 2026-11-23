@@ -6,6 +6,8 @@
 #include <stdexcept>
 #include <utility>
 
+#include "obstacle_sector_map/builder.hpp"
+
 namespace livox_ray_source
 {
 
@@ -25,11 +27,13 @@ std::optional<RayFrame> LevelingRaySource::nextFrame()
     return frame;
   }
 
-  // The reference time is the earliest ray time; a ray without a time (0) cannot be a reference
-  // and the leveler reports it as invalid.
+  // The reference time is the map timestamp: the earliest time among the rays the sector map takes
+  // (ICD-CP-06). A masked or invalid ray is rejected there and must not set the reference.
   uint64_t reference_ns = 0U;
   for (const auto & ray : frame->rays) {
-    if (ray.timestamp_ns != 0U && (reference_ns == 0U || ray.timestamp_ns < reference_ns)) {
+    if (obstacle_sector_map::SectorMapBuilder::accepts(ray) &&
+      (reference_ns == 0U || ray.timestamp_ns < reference_ns))
+    {
       reference_ns = ray.timestamp_ns;
     }
   }

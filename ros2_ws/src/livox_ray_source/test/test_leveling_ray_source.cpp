@@ -234,3 +234,26 @@ TEST(LevelingRaySourceTest, FrameBoundsShortenTheFreeDistanceInTheSectorMap)
   const auto sector = builder.finalize().sectors[0];
   EXPECT_NEAR(sector.distance_m, 0.7F / std::tan(three), 1.0e-3F);
 }
+
+TEST(LevelingRaySourceTest, ReferenceIsTheEarliestRayThatTheSectorMapTakes)
+{
+  // The earliest ray (1000 ns) is masked and the sector map rejects it, so the map timestamp is 2000 ns
+  // and the reference must be 2000 ns: the ray at 2000 ns is not shifted, the one at 2500 ns (0.5 m ahead
+  // of it) is. The same holds for an invalid return and a ray that is not finite.
+  const History poses{poseAtX(500U, 0.0), poseAtX(1500U, 1.0), poseAtX(2500U, 2.0), poseAtX(3500U, 3.0)};
+  RaySample masked = returnRay(1000U, 4.0F);
+  masked.masked = true;
+  RaySample not_finite = returnRay(1200U, 4.0F);
+  not_finite.azimuth_rad = std::numeric_limits<float>::quiet_NaN();
+  RaySample invalid_return = returnRay(1300U, -1.0F);
+  RayFrame frame;
+  frame.rays = {masked, not_finite, invalid_return, returnRay(2000U, 4.0F), returnRay(2500U, 4.0F)};
+  LevelingRaySource source{oneFrame(frame), poses, zeroMountConfig()};
+
+  const auto out = source.nextFrame();
+  ASSERT_TRUE(out.has_value());
+  ASSERT_EQ(out->rays.size(), 5U);
+  EXPECT_NEAR(out->rays[3].range_m, 4.0F, kTol);  // the reference ray itself
+  EXPECT_NEAR(out->rays[4].range_m, 4.5F, kTol);  // moved 0.5 m since the reference
+  EXPECT_TRUE(out->packet_continuity_valid);
+}

@@ -21,6 +21,10 @@ public:
   /// origin: `h_up - rise` and `h_down - fall`. Both are metres, finite and not negative; a bound that is not
   /// (NaN, negative, infinite) leaves no room in that half, so that half certifies no free distance.
   void reset(bool packet_continuity_valid, float origin_rise_bound_m, float origin_fall_bound_m);
+  /// True when addRay() takes the ray (a time, not masked, a finite direction below the zenith, and a valid
+  /// return). The map timestamp is the earliest time among these rays, so a caller that must use the same
+  /// reference time (the leveling step, ICD-CP-06) selects it with this function.
+  [[nodiscard]] static bool accepts(const RaySample & ray);
   void addRay(const RaySample & ray);
   [[nodiscard]] SectorMap finalize() const;
 
