@@ -91,7 +91,7 @@ owner approves its pass criterion (SYS-CP-025, OPEN-043).
 | OS-25 | Mode change away from Position or Mission while enforcing (Hold, RTL, Land, Offboard, manual) | The hook is transparent and the vehicle is released (owner scope, 2026-11-19); the release is logged and stated as a non-claim | ADR 0007, HZ-CP-020, SYS-CP-023 | GZ | Partial: the consequence is not recorded (#113) |
 | OS-26 | Takeoff, landing, ground contact | Takeoff: CP is observer-only before `TAKEOFF_STATE_FLIGHT`. Landing: an intentional landing or descent needs the pilot's explicit, logged CP disable first; a landing without it is not covered | SYS-CP-014, HZ-CP-015, ADR 0009 | GZ | Specified (the disable procedure is OS-27) |
 | OS-27 | Pilot enables, disables or overrides CP in flight | Procedure not defined | HZ-CP-009, OPEN-020 | FLT | Not specified (accepted G1 exception) |
-| OS-28 | PX4 state becomes valid for the first time in flight (heading good) | A defined start-up: no latched SAFE_STOP without a stated reason and a way out | HZ-CP-021, SYS-CP-024 | GZ | Not specified (#112) |
+| OS-28 | PX4 state becomes valid for the first time in flight (heading good) | A defined start-up: no latched SAFE_STOP without a stated reason and a way out | HZ-CP-021, SYS-CP-024 | GZ | Specified: the heading that became good after the map was sampled is not qualified yet, never a latch (fork PR #10, #112); SITL 0 of 8 runs needed the `CPB_EN` toggle |
 | OS-29 | Estimator or heading invalid in flight | `UNQUALIFIED`, no CP action, PX4 failsafes act | SYS-CP-007, ADR 0007 | GZ | Specified |
 | OS-30 | Mission waypoint beyond an obstacle (persistent blockage) | Stays braking, the constraint is retained, the operator is told, no mode change; no timeout is defined | SYS-CP-008, HZ-CP-008 | GZ | Specified |
 | OS-31 | Another PX4 failsafe acts at the same time (RC loss, battery, geofence) | PX4 owns the failsafe; the interplay with the hook is not specified | ADR 0007 | GZ | Partial |
@@ -244,7 +244,7 @@ flowchart LR
 | FEAT-11 | Heading and travelled distance at the sample time | `cp_brake` | Exists: heading history (#94) and the distance moved since the sample, recomputed at every evaluation and only tightening (fork PR #9, #115); `CPB_DECEL_MAX` is a required parameter, bench 3.0 unapproved (OPEN-003); SITL effect +0.0 to +0.08 m | SYS-CP-016, 026 |
 | FEAT-12 | Cap law: stopping model per sector | `cp_brake` | Exists; `CPB_T_LAT` unmeasured | SYS-CP-001, 012, 027 |
 | FEAT-13 | Release policy: dwell and rise | `cp_brake` | Exists | SYS-CP-013 |
-| FEAT-14 | State machine and start-up | `cp_brake` | Exists; start-up open (#112) | SYS-CP-007, 014, 024 |
+| FEAT-14 | State machine and start-up | `cp_brake` | Exists; start-up: one lookup value `kNotYetGood` and one state input make a heading that became good after the map was sampled unqualified (NOT_READY, no latch), a stale map still stops at `CPB_AGE_STOP` (fork PR #10, #112; ADR 0020 D5 states the first rule, corrected by the next docs-sync PR) | SYS-CP-007, 014, 024 |
 | FEAT-15 | Setpoint limiting hook | `mc_pos_control` | Exists (fork PR #8, merged), SITL stopping proof at one world | SYS-CP-005, 006, 012 |
 | FEAT-16 | Mode scope and release | hook, `cp_brake` | Partial: Position and Mission only; release not recorded (#113) | SYS-CP-008, 023 |
 | FEAT-17 | Logging, status, diagnostics | `cp_brake`, hook, Orin node | Partial | SYS-CP-009, NFR-CP-003 |
@@ -719,7 +719,9 @@ commit `2646f97dce` it is 1,886,276 bytes (95.94%), 79,804 bytes free, 800 bytes
 adds 3,472 bytes: on `e539f947b0` the image is 1,889,748 bytes (96.12%), 76,332 bytes free
 (measured 2026-11-20). #115 (the travelled distance, fork PR `TanDatEmb/PX4-Autopilot#9`) adds 1,432 bytes on top
 of the hook: on `e1e9f5b3ed` (same tree as the reviewed head `2d8801ed1d`) the image is 1,893,860 bytes (96.33%), 72,220
-bytes free (measured 2026-11-21). #65 (the limiter hook, fork PR `TanDatEmb/PX4-Autopilot#8`) adds 2,680 bytes: on
+bytes free (measured 2026-11-21). #112 (the heading start-up, fork PR `TanDatEmb/PX4-Autopilot#10`) adds 136 bytes
+on top of that: on `5af0869ac4` (same tree as the reviewed head `5ca1fc2a35`) the image is 1,893,996 bytes (96.33%), 72,084
+bytes free (measured 2026-11-23). #65 (the limiter hook, fork PR `TanDatEmb/PX4-Autopilot#8`) adds 2,680 bytes: on
 `982a2d83ad` (same tree as the reviewed head `e0a2739b90`) the image is 1,892,428 bytes (96.25%), 73,652
 bytes free (measured 2026-11-21). Any flash margin and any size target stay TBD until approved by the
 owner.
