@@ -128,12 +128,23 @@ tilts the vehicle away from the motion, so the braking acceleration of the cap l
 direction to keep the horizon in view while braking: about 3.0 m/s^2 ahead (`g tan 17 deg`, which
 matches PERF-02), about 1.2 m/s^2 to the side (`g tan 7 deg`), screening values only. Three direction
 classes keep this simple: forward (bearing within 45 degrees), lateral, rear (beyond 135 degrees),
-each with its own braking acceleration and maximum speed. Behind the vehicle (beyond about 134
+each with its own braking acceleration and maximum speed (*amended 2026-11-23, owner: two classes, see the
+note below*). Behind the vehicle (beyond about 134
 degrees) the lidar never sees below its own height, so rear sectors use the upper half of the band
 only, the rear maximum speed is low, and obstacles lower than the lidar behind the vehicle are a
 stated non-claim (owner option B). New parameters (names for approval, TBD sentinels): braking
 acceleration and maximum speed for the lateral and rear classes; the present `CPB_A_BRK` and
 `CPB_MAX_V` become the forward class.
+
+*Amendment 2026-11-23 (owner, the simplest stable design; SYS-CP-028, 031).* Two classes, not three. Forward,
+within 45 degrees of the nose: the cap law as it is. Every other direction: the braking acceleration 1.2 m/s^2
+(`g tan 7 deg`) and a speed lock of 5 m/s, the PERF-01 Mission nominal tier, applied to the velocity vector by
+its own bearing (not as a cap on the sectors of the forward class); a rear sector with no usable evidence has the
+cap 5 m/s instead of 0 (the one exception to the no-evidence rule of SYS-CP-018, beyond 134.6 degrees, where the
+horizon is never in view at level). Protection behind the vehicle is only what is above the lowest rear ray (+3
+degrees): a stated non-claim at propeller level and below the lidar. The per-bearing tilt budget with a reserve
+and a wind term, proposed on 2026-11-22, is withdrawn: the vertical coverage rule of the builder (PR #167) makes
+a sector unknown when the tilt takes the horizon out of view.
 
 ### D4. Distance moved since the sample (FEAT-11; SYS-CP-026; #115)
 The travelled distance toward sector `i` is the present velocity toward it times the age of the map,
@@ -155,6 +166,16 @@ is bounded without a time value: maps sampled after the first history sample can
 map older than the age limit (`CPB_AGE_STOP`, 0.5 s) is stale, so a warm-up that cannot complete
 ends in `SAFE_STOP`. While in this `NOT_READY` the hook takes no action, as for any invalid PX4 state
 (ADR 0007), and the report says so.
+
+*Amendment 2026-11-23 (fork PR #10, issue #112).* The log of a latched run showed the real cause: the map is
+sampled about 0.1 s before it is evaluated, so when the heading becomes good for control (after take-off, or
+after a dropout) the first maps point at heading samples that were not good (`kNotGood`, with a full history),
+not at a time before the history start; the rule above, built as written, left 3 of 3 runs latched. The rule
+built: a lookup that answers `kNotYetGood` (the newest samples are good and the time lies before their unbroken
+run) makes the PX4 state not qualified yet, the existing UNQUALIFIED path (NOT_READY, no latch, the hook takes
+no action), and only while the map is not stale: a map that stopped reaches the stale safe stop at
+`CPB_AGE_STOP`. An evicted sample (`kBeforeFirst`), a gap, a reset and a dropout that is still on stay
+`NO_HEADING` and a safe stop. Measured: 0 of 8 runs needed the `CPB_EN` toggle (16 of 19 before).
 
 ### D6. Mode scope (FEAT-16; SYS-CP-023; #113; OPEN-042)
 Options: (A) keep Position and Mission only, log and notify the release, state the non-claim (the
