@@ -165,7 +165,7 @@ i. Measured vertical origin motion, 81 SITL runs, airborne with horizontal speed
 
 j. Availability. With a climb of 0 the correction changes nothing. At a 3 m/s climb over the 0.1 s window
    the origin rises 0.3 m, so the numerator of the up half falls to `h_up - 0.3`; whether `n_free` rays
-   remain in the up half cannot be answered without ray data (the multi-ring lidar, #138). The old drop
+   remain in the up half cannot be answered without ray data (the multi-ring lidar, built in PR #162). The old drop
    with a threshold below 1.2 m would make every frame that spans the window unusable at 12 m/s
    (12 m/s x 0.1 s = 1.2 m; `kOriginMotionExceeded` breaks continuity).
 
@@ -255,8 +255,9 @@ distance"). It belongs to issue #148.
 ## Consequences
 - ICD and requirement texts, including ICD-CP-06 (one frame-level field, decision 1 item e), are amended by
   the docs-sync PR after approval.
-- The multi-ring lidar (#138) is needed before any SITL result on leveling is valid evidence, and before
-  the availability question of decision 1 item j can be answered.
+- The multi-ring lidar (built in PR #162) is needed before any SITL result on leveling is valid evidence, and
+  before the availability question of decision 1 item j can be answered; the node does not level yet (#137), so
+  no such result exists.
 - The node wiring (#137) waits for this ADR, for the owner's approval of the ICD-CP-06 frame field, for
   the owner's values (below) and for the mount. There is no scalar origin-motion threshold any more; the
   values the owner still decides are `epsilon` and `dtheta_b` (after the measurement of issue #156),
@@ -264,7 +265,7 @@ distance"). It belongs to issue #148.
   mount was chosen by the owner in chat for the bench on 2026-11-21, with the approval recorded in a
   separate PR: the sensor at (0.12, 0, 0.14) m from `base_link`, rpy (0, +0.1745, 0) rad (boresight
   down), lever arm 0.184 m (numbers and frames in Context; for `lidar_2d_v2` at pitch 0 the include pose
-  z is 0.325 in the model frame). The SDF values above are unverified by a static run (issue #153).
+  z is 0.325 in the model frame). The SDF values above were confirmed by a static run in Gazebo (issue #153, 2026-11-21).
 - The attitude and mount error is not covered by the origin correction (decision 1 item h): until the
   owner sets `dtheta_b` and `epsilon` a certified free distance carries that over-claim, and a climb
   with horizontal motion carries no claim (item g).
@@ -274,7 +275,7 @@ The odometry rate and latency; the angular rate and acceleration in the step log
 rate; the gz cloud layout and no-hit encoding; the analyzer offset used in the earlier proofs (a constant
 `--lidar-offset` along the leg, before issue #152); the attitude and mount error against the ground truth
 (issue #156); the vertical origin motion per frame on a flight log (the 81 SITL runs of decision 1 item i
-are SITL only); how many rays per half remain at a climb (needs ray data, #138).
+are SITL only); how many rays per half remain at a climb (needs ray data, available since PR #162).
 
 ## Not decided yet
 The fraction threshold for dropping a whole frame, an extrapolation model, and Livox scan pattern
