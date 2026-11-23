@@ -217,6 +217,12 @@ Decision: `PoseHistory` already interpolates across gaps up to `max_bracket_gap_
 finalises a frame, the node waits for a pose newer than the last ray, for a bounded time (a required
 parameter, no default, TBD). If none comes, the rays are dropped and continuity is broken as today.
 
+Implementation state (issue #137): the node has no wait yet. It counts what the decorator drops
+(`LevelingStats`: frames without a reference pose, rays dropped) and what the odometry input rejects, and logs them every 5 s, so
+that the first leveled SITL run gives the measurement below. The wait is added only if that run shows the need. The pose time is
+`timestamp_sample` in microseconds scaled to nanoseconds, with no clock mapping, as ADR 0003 puts PX4 and the rays in one time
+base in both profiles; the first run checks it against the node clock.
+
 Measure first: how often `kNoSampleAfter` fires at frame end (without a wait it may fire on every
 frame), and the rate and p99 latency of `/fmu/out/vehicle_odometry` through DDS (`dds_topics.yaml`
 has no `rate_limit`; OPEN-030). The only data is the uORB topic in Gazebo SITL (OPEN-032: 125 Hz,
