@@ -187,8 +187,8 @@ Consequences:
   wiring #137 is its first user); this record changes none of them. Implemented in issue #177: the threshold
   and its drop are removed (the status `kOriginMotionExceeded` is renamed `kDegenerateReturn` because only the
   degenerate return of item a is left), `LevelingConfig::lever_arm_flu_m` and the origin offset of item d,
-  `RayFrame::origin_rise_bound_m` and `origin_fall_bound_m` (default 0 for a source that does not level, so a
-  bench source keeps its behaviour), `SectorMapBuilder::reset(continuity, rise, fall)`, and the decorator
+  `RayFrame::origin_rise_bound_m` and `origin_fall_bound_m` (default NaN, "not provided", for a source that does not
+  level, so a bench source keeps its behaviour; 0 is a real bound, as in PX4 setpoints), `SectorMapBuilder::reset(continuity, rise, fall)`, and the decorator
   `LevelingRaySource`. The real direction of a return stays the chord form (item c, never above the true exit).
 
 ### 2. Missing pose: wait for a bounded time, do not hold the last pose

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <limits>
 #include <optional>
 #include <vector>
 
@@ -17,10 +18,11 @@ struct RayFrame
   bool packet_continuity_valid{false};
   /// Bounds, metres, not negative, of how far the sensor origin was above and below its position at the
   /// reference time over the rays of the frame (ADR 0022 decision 1 item e, ICD-CP-06). The sector map builder
-  /// takes them as the loss of band room. 0 is for a source that does not level (the rays then have no
-  /// reference position to move from); LevelingRaySource sets both.
-  double origin_rise_bound_m{0.0};
-  double origin_fall_bound_m{0.0};
+  /// takes them as the loss of band room. As in PX4 setpoints, NaN means "not provided": the source does not
+  /// level, so there is no reference position to move from and no correction is made. 0 is a real value: the
+  /// origin did not move vertically and the full band room is used. LevelingRaySource sets both to finite values.
+  double origin_rise_bound_m{std::numeric_limits<double>::quiet_NaN()};
+  double origin_fall_bound_m{std::numeric_limits<double>::quiet_NaN()};
 };
 
 /// A ray as it arrives from a stream. `continuity_break` marks that packets were lost right

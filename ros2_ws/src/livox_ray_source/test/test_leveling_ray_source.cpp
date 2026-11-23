@@ -196,6 +196,8 @@ TEST(LevelingRaySourceTest, FrameWithoutAnyRayTimeIsPassedThroughAndInnerDiscont
   ASSERT_EQ(out->rays.size(), 1U);
   EXPECT_EQ(out->rays[0].range_m, 4.0F);
   EXPECT_FALSE(out->packet_continuity_valid);
+  EXPECT_TRUE(std::isnan(out->origin_rise_bound_m));  // not leveled, so not provided
+  EXPECT_TRUE(std::isnan(out->origin_fall_bound_m));
 
   RayFrame ok_frame;
   ok_frame.rays = {returnRay(1000U, 4.0F)};

@@ -102,8 +102,11 @@ void SectorMapBuilder::reset(
   bool packet_continuity_valid, float origin_rise_bound_m, float origin_fall_bound_m)
 {
   _packet_continuity_valid = packet_continuity_valid;
-  // A bound that is not finite and not negative gives no room (the room is then below 0).
+  // NaN is "not provided": no correction. A negative or infinite bound is wrong and leaves no room.
   const auto room_m = [](float height_m, float bound_m) {
+      if (std::isnan(bound_m)) {
+        return height_m;
+      }
       return std::isfinite(bound_m) && bound_m >= 0.0F ? height_m - bound_m :
              -std::numeric_limits<float>::infinity();
     };

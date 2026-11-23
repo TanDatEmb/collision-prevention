@@ -310,7 +310,7 @@ source: ADR 0004.
   counter-clockwise FLU, `elevation_rad`, `masked`, `return_kind`) plus one packet-continuity flag
   and two frame bounds, `origin_rise_bound_m` and `origin_fall_bound_m` (metres, not negative: the
   largest rise and fall of the sensor origin from its position at the reference time over the rays of
-  the frame, ADR 0022 decision 1 item e; 0 for a source that does not level). Sensor tags and
+  the frame, ADR 0022 decision 1 item e; NaN means not provided, for a source that does not level, and 0 is a real bound, as in PX4 setpoints). Sensor tags and
   confidence stay in `livox_ray_source`.
 - Frame: gravity-aligned, yaw only (roll and pitch removed), origin at the sensor position (body
   origin plus the lever arm) at the deskew reference time, which is the map timestamp (earliest
@@ -318,8 +318,8 @@ source: ADR 0004.
 - Framing: a window of `coverage_window_ms` by sensor timestamp; the whole frame is buffered, then
   `reset(continuity, rise bound, fall bound)`, `addRay` and `finalize` run. The builder certifies the
   free distance of a ray only inside the band room left above and below the moved origin
-  (`h_up` less the rise bound, `h_down` less the fall bound); a bound that is not finite and not
-  negative leaves no room. Returns are never dropped for origin motion; their end point is shifted
+  (`h_up` less the rise bound, `h_down` less the fall bound); a NaN bound means no correction and a
+  negative or infinite bound leaves no room. Returns are never dropped for origin motion; their end point is shifted
   exactly.
 - Distance limits: one pair `kMinDistanceM` and `kMaxDistanceM` (ICD-CP-03: 10 cm, 4000 cm), fixed
   constants in `obstacle_sector_map` and not platform configuration; the separate name

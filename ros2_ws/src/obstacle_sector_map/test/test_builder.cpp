@@ -798,12 +798,21 @@ TEST(SectorMapBuilderTest, HorizonRayKeepsTheCapWhileThereIsRoom)
   EXPECT_EQ(sector.free_distance_m, obstacle_sector_map::kMaxDistanceM);
 }
 
-TEST(SectorMapBuilderTest, ABoundThatIsNotFiniteAndNotNegativeLeavesNoRoom)
+TEST(SectorMapBuilderTest, NanBoundMeansNotProvidedAndZeroIsARealBound)
 {
   const float nan = std::numeric_limits<float>::quiet_NaN();
+  const float three = 3.0F * kDegreesToRadians;
+  // Not provided: no correction, the full band; the same as a real 0.
+  EXPECT_NEAR(distanceWithBounds(nan, nan), 1.0F / std::tan(three), 1.0e-3F);
+  EXPECT_NEAR(distanceWithBounds(nan, 0.4F), 0.6F / std::tan(three), 1.0e-3F);  // the half that has a bound
+  // A real bound equal to the band height leaves no room: 0 is applied, not ignored.
+  EXPECT_EQ(sectorWithBounds(1.0F, nan).state, SectorState::kUnknown);
+}
+
+TEST(SectorMapBuilderTest, ABoundThatIsNegativeOrInfiniteLeavesNoRoom)
+{
   const float inf = std::numeric_limits<float>::infinity();
-  EXPECT_EQ(sectorWithBounds(nan, 0.0F).state, SectorState::kUnknown);
-  EXPECT_EQ(sectorWithBounds(0.0F, nan).state, SectorState::kUnknown);
   EXPECT_EQ(sectorWithBounds(-0.1F, 0.0F).state, SectorState::kUnknown);
   EXPECT_EQ(sectorWithBounds(0.0F, inf).state, SectorState::kUnknown);
+  EXPECT_EQ(sectorWithBounds(-inf, 0.0F).state, SectorState::kUnknown);
 }
