@@ -184,7 +184,12 @@ Consequences:
   a threshold to `breaksFrameContinuity`: the drops that break continuity are then no reference, no pose,
   a reset since the reference and the degenerate return of item a.
 - The leveler, the builder and the ICD-CP-06 text change together in the implementation work (the node
-  wiring #137 is its first user); this record changes none of them.
+  wiring #137 is its first user); this record changes none of them. Implemented in issue #177: the threshold
+  and its drop are removed (the status `kOriginMotionExceeded` is renamed `kDegenerateReturn` because only the
+  degenerate return of item a is left), `LevelingConfig::lever_arm_flu_m` and the origin offset of item d,
+  `RayFrame::origin_rise_bound_m` and `origin_fall_bound_m` (default 0 for a source that does not level, so a
+  bench source keeps its behaviour), `SectorMapBuilder::reset(continuity, rise, fall)`, and the decorator
+  `LevelingRaySource`. The real direction of a return stays the chord form (item c, never above the true exit).
 
 ### 2. Missing pose: wait for a bounded time, do not hold the last pose
 The leveler returns `kNoPose` for a ray with no pose, and `breaksFrameContinuity` tells the caller to

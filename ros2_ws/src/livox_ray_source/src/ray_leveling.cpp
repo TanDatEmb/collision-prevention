@@ -79,7 +79,8 @@ bool angleIsValid(double a)
 bool LevelingConfig::isValid() const
 {
   return angleIsValid(roll_rad) && angleIsValid(pitch_down_rad) && angleIsValid(yaw_left_rad) &&
-         std::isfinite(origin_motion_threshold_m) && origin_motion_threshold_m > 0.0;
+         std::isfinite(lever_arm_flu_m[0]) && std::isfinite(lever_arm_flu_m[1]) &&
+         std::isfinite(lever_arm_flu_m[2]);
 }
 
 RayLeveler::RayLeveler(const PoseHistory & poses, const LevelingConfig & config)
@@ -87,13 +88,22 @@ RayLeveler::RayLeveler(const PoseHistory & poses, const LevelingConfig & config)
 {
   if (!config.isValid()) {
     throw std::invalid_argument(
-            "LevelingConfig: the mount angles must be finite within [-pi, pi] and "
-            "origin_motion_threshold_m finite and above 0");
+            "LevelingConfig: the mount angles must be finite within [-pi, pi] and the lever arm finite");
   }
   // Sensor FLU to body FLU: Rz(yaw) * Ry(pitch) * Rx(roll).
   _mount_rotation = multiply(
     rotationZ(config.yaw_left_rad),
     multiply(rotationY(config.pitch_down_rad), rotationX(config.roll_rad)));
+}
+
+std::array<double, 3> RayLeveler::sensorPositionNed(const PoseSample & pose) const
+{
+  // Lever arm FLU -> FRD, then the attitude body FRD -> NED.
+  const Vec3 l_frd{_config.lever_arm_flu_m[0], -_config.lever_arm_flu_m[1], -_config.lever_arm_flu_m[2]};
+  const Vec3 l_ned = multiply(rotationOf(pose.q_wxyz), l_frd);
+  return {
+    pose.position_ned_m[0] + l_ned[0], pose.position_ned_m[1] + l_ned[1],
+    pose.position_ned_m[2] + l_ned[2]};
 }
 
 LevelingStatus RayLeveler::beginFrame(uint64_t reference_time_ns)
@@ -112,13 +122,13 @@ LevelingStatus RayLeveler::beginFrame(uint64_t reference_time_ns)
     return LevelingStatus::kNoPose;
   }
   _reference_heading_rad = std::atan2(east, north);
-  _reference_position_ned_m = lookup.pose.position_ned_m;
+  _reference_sensor_position_ned_m = sensorPositionNed(lookup.pose);
   _reference_reset_counter = lookup.pose.reset_counter;
   _has_reference = true;
   return LevelingStatus::kOk;
 }
 
-LevelingStatus RayLeveler::level(obstacle_sector_map::RaySample & ray) const
+LevelingStatus RayLeveler::level(obstacle_sector_map::RaySample & ray, double & origin_rise_m) const
 {
   using obstacle_sector_map::RayReturnKind;
 
@@ -141,17 +151,13 @@ LevelingStatus RayLeveler::level(obstacle_sector_map::RaySample & ray) const
   if (lookup.pose.reset_counter != _reference_reset_counter) {
     return LevelingStatus::kResetSinceReference;
   }
-  // Origin motion x(t_i) - x(t_ref), NED.
+  // Origin motion of the sensor, d_i = x_i + R_i L - x_ref - R_ref L, NED. A return is shifted exactly below,
+  // whatever the motion; it is never dropped for it (ADR 0022 decision 1 item a).
+  const Vec3 sensor_ned_m = sensorPositionNed(lookup.pose);
   const Vec3 motion_ned_m{
-    lookup.pose.position_ned_m[0] - _reference_position_ned_m[0],
-    lookup.pose.position_ned_m[1] - _reference_position_ned_m[1],
-    lookup.pose.position_ned_m[2] - _reference_position_ned_m[2]};
-  const double motion_m =
-    std::sqrt(motion_ned_m[0] * motion_ned_m[0] + motion_ned_m[1] * motion_ned_m[1] +
-      motion_ned_m[2] * motion_ned_m[2]);
-  if (motion_m > _config.origin_motion_threshold_m) {
-    return LevelingStatus::kOriginMotionExceeded;
-  }
+    sensor_ned_m[0] - _reference_sensor_position_ned_m[0],
+    sensor_ned_m[1] - _reference_sensor_position_ned_m[1],
+    sensor_ned_m[2] - _reference_sensor_position_ned_m[2]};
 
   // 1. Sensor point (FLU); a no-return has a direction only (unit length).
   const double range_m = is_return ? static_cast<double>(ray.range_m) : 1.0;
@@ -184,15 +190,16 @@ LevelingStatus RayLeveler::level(obstacle_sector_map::RaySample & ray) const
       std::sqrt(p_flu[0] * p_flu[0] + p_flu[1] * p_flu[1] + p_flu[2] * p_flu[2]));
     // The origin motion can move the end point onto the reference origin. A range that is not
     // strictly positive has no direction and the sector map rejects it, so the evidence would be
-    // lost silently: drop the ray as an origin-motion drop, which breaks frame continuity. A tiny
-    // positive range stays a valid return (the map reports it as too close).
+    // lost silently: drop the ray, which breaks frame continuity. A tiny positive range stays a
+    // valid return (the map reports it as too close).
     if (!(std::isfinite(range_m) && range_m > 0.0F)) {
-      return LevelingStatus::kOriginMotionExceeded;
+      return LevelingStatus::kDegenerateReturn;
     }
     ray.range_m = range_m;
   }
   ray.azimuth_rad = static_cast<float>(std::atan2(p_flu[1], p_flu[0]));
   ray.elevation_rad = static_cast<float>(std::atan2(p_flu[2], std::hypot(p_flu[0], p_flu[1])));
+  origin_rise_m = -motion_ned_m[2];  // NED z points down
   return LevelingStatus::kOk;
 }
 

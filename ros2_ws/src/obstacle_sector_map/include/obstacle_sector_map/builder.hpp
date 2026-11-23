@@ -15,7 +15,12 @@ class SectorMapBuilder
 public:
   explicit SectorMapBuilder(const SectorMapConfig & config);
 
-  void reset(bool packet_continuity_valid);
+  /// Starts a frame. `origin_rise_bound_m` and `origin_fall_bound_m` bound, over the rays of the frame, how far the
+  /// ray origin was above and below its position at the reference time (ADR 0022 decision 1 item e, ICD-CP-06). The
+  /// free distance of a ray is then certified only inside the part of the band that is still above (below) the
+  /// origin: `h_up - rise` and `h_down - fall`. Both are metres, finite and not negative; a bound that is not
+  /// (NaN, negative, infinite) leaves no room in that half, so that half certifies no free distance.
+  void reset(bool packet_continuity_valid, float origin_rise_bound_m, float origin_fall_bound_m);
   void addRay(const RaySample & ray);
   [[nodiscard]] SectorMap finalize() const;
 
@@ -38,6 +43,8 @@ private:
 
   SectorMapConfig _config;
   bool _packet_continuity_valid{false};
+  float _room_up_m{0.0F};    // h_up - rise bound of the frame: band room above the lowest-high origin
+  float _room_down_m{0.0F};  // h_down - fall bound of the frame
   uint64_t _sample_timestamp_ns{0U};
   uint32_t _accepted_ray_count{0U};
   uint32_t _rejected_ray_count{0U};

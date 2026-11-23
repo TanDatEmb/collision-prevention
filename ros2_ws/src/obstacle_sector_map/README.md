@@ -43,7 +43,7 @@ limits (0.10 m and 40 m, ICD-CP-03) and the boundary tolerance are fixed constan
 ## Usage
 ```cpp
 obstacle_sector_map::SectorMapBuilder builder(config);
-builder.reset(packet_continuity_valid);
+builder.reset(packet_continuity_valid, origin_rise_bound_m, origin_fall_bound_m);
 for (const auto & ray : rays) { builder.addRay(ray); }
 const obstacle_sector_map::SectorMap map = builder.finalize();
 ```

@@ -154,7 +154,9 @@ TEST(ReplayRaySourceTest, FrameDrivesSectorMapBuilderPerContract)
     ASSERT_TRUE(frame.has_value());
 
     SectorMapBuilder builder{kConfig};
-    builder.reset(frame->packet_continuity_valid);
+    builder.reset(
+      frame->packet_continuity_valid, static_cast<float>(frame->origin_rise_bound_m),
+      static_cast<float>(frame->origin_fall_bound_m));
     for (const auto & ray : frame->rays) {
       builder.addRay(ray);
     }
