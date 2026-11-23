@@ -98,7 +98,7 @@ shows 0.41 m less at 0.5 s. Two effects are missing from it, each with its measu
   wire range minus the truth gap averages +0.058 m at 5 to 8 deg, +0.122 m at 8 to 11 deg and +0.157 m at
   11 to 14 deg (2679 samples), and equals the slant geometry within 0.007 m rms. At the instant the cap
   reaches 0 the pitch is 7.4 and 9.0 deg with 0.5 s and the range bias is 0.058 and 0.075 m (5 and 12 m/s);
-  with 0.95 s the pitch is 2.7 and 2.1 deg and the bias 0.017 and 0.013 m. Leveling (#137, #138) removes this
+  with 0.95 s the pitch is 2.7 and 2.1 deg and the bias 0.017 and 0.013 m. Leveling (#137; the multi-ring lidar of #138 is built) removes this
   effect. No range latency beyond the slant geometry was found (best fit -0.002 s); the median sample age
   in the ramp is 0.084 s (p5 0.036, p95 0.136), which the model carries.
 
