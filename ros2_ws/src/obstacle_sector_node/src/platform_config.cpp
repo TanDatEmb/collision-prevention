@@ -2,6 +2,7 @@
 
 #include <yaml-cpp/yaml.h>
 
+#include <array>
 #include <cmath>
 #include <stdexcept>
 
@@ -33,6 +34,14 @@ double number(const YAML::Node & node, const std::string & what)
     throw std::invalid_argument("platform config: " + what + " is not finite");
   }
   return value;
+}
+
+std::array<double, 3> vector3(const YAML::Node & node, const std::string & what)
+{
+  if (!node || !node.IsSequence() || node.size() != 3U) {
+    throw std::invalid_argument("platform config: " + what + " is missing or not three numbers");
+  }
+  return {number(node[0], what), number(node[1], what), number(node[2], what)};
 }
 
 }  // namespace
@@ -74,6 +83,40 @@ obstacle_sector_map::SectorMapConfig loadSectorMapConfig(const std::string & yam
     throw std::invalid_argument("platform config: sector map values are not valid");
   }
   return config;
+}
+
+LevelingSettings loadLevelingSettings(const std::string & yaml_path)
+{
+  YAML::Node root;
+  try {
+    root = YAML::LoadFile(yaml_path);
+  }
+  catch (const YAML::Exception & error) {
+    throw std::invalid_argument(std::string("platform config: cannot read file: ") + error.what());
+  }
+
+  const YAML::Node mount = child(child(root, "sensor"), "mount_pose_in_base_link");
+  const auto lever_arm = vector3(child(mount, "xyz_m"), "mount xyz");
+  const auto rpy = vector3(child(mount, "rpy_rad"), "mount rpy");
+  const YAML::Node history = child(root, "pose_history");
+  const double depth = number(child(history, "depth"), "pose history depth");
+  const double gap_ms = number(child(history, "max_bracket_gap_ms"), "pose history gap");
+  if (depth < 2.0 || depth != std::floor(depth) || depth > 1.0e6 || gap_ms <= 0.0 || gap_ms > 1.0e6) {
+    throw std::invalid_argument(
+      "platform config: pose history depth must be an integer of at least 2 and the gap positive");
+  }
+
+  LevelingSettings settings;
+  settings.leveling.roll_rad = rpy[0];
+  settings.leveling.pitch_down_rad = rpy[1];
+  settings.leveling.yaw_left_rad = rpy[2];
+  settings.leveling.lever_arm_flu_m = lever_arm;
+  settings.history.depth = static_cast<std::size_t>(depth);
+  settings.history.max_bracket_gap_ns = static_cast<uint64_t>(gap_ms * 1.0e6);
+  if (!settings.leveling.isValid() || !settings.history.isValid()) {
+    throw std::invalid_argument("platform config: mount or pose history values are not valid");
+  }
+  return settings;
 }
 
 }  // namespace obstacle_sector_node

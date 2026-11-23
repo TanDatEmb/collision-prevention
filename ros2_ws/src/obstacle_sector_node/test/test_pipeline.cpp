@@ -6,6 +6,10 @@
 #include <utility>
 #include <vector>
 
+#include <cmath>
+
+#include "livox_ray_source/leveling_ray_source.hpp"
+#include "livox_ray_source/pose_history.hpp"
 #include "livox_ray_source/replay_ray_source.hpp"
 #include "obstacle_sector_node/pipeline.hpp"
 
@@ -115,4 +119,51 @@ TEST(SectorMapPipelineTest, ReportsTheEndOfTheSourceAndKeepsTheCounters)
   EXPECT_EQ(pipeline.step().status, StepStatus::kSourceEnded);
   EXPECT_EQ(pipeline.stats().frames, 2U);
   EXPECT_EQ(pipeline.stats().messages, 2U);
+}
+
+// Leveling through the whole pipeline (issue #137): the sensor is mounted 10 degrees down. A wall return straight
+// ahead of the sensor is 5 m away horizontally when the vehicle is pitched 10 degrees nose up (the boresight is
+// then level, the rays lie in both halves of the band). With the vehicle level the same rays all point 10 degrees
+// down: no ray lies in the upper half, so the sector is unknown (coverage rule, SYS-CP-029) instead of showing a
+// wall at 4.92 m. A pitch applied with the wrong sign would also leave the sector unknown, not at 5 m.
+namespace
+{
+
+class PitchedPoses : public livox_ray_source::PoseHistory
+{
+public:
+  explicit PitchedPoses(double pitch_up_rad)
+  : PoseHistory(livox_ray_source::PoseHistoryConfig{8U, 1'000'000'000U})
+  {
+    for (const uint64_t time_ns : {6'000'000U, 7'000'000U}) {
+      livox_ray_source::PoseSample sample;
+      sample.timestamp_sample_ns = time_ns;
+      sample.q_wxyz = {std::cos(0.5 * pitch_up_rad), 0.0, std::sin(0.5 * pitch_up_rad), 0.0};
+      sample.position_ned_m = {0.0, 0.0, 0.0};
+      push(sample);
+    }
+  }
+};
+
+uint16_t wallDistanceCm(double vehicle_pitch_up_rad)
+{
+  const double mount_pitch_down_rad = 10.0 * 3.14159265358979323846 / 180.0;
+  const PitchedPoses poses{vehicle_pitch_up_rad};
+  livox_ray_source::LevelingConfig leveling{0.0, mount_pitch_down_rad, 0.0, {0.0, 0.0, 0.0}};
+  SectorMapPipeline pipeline{
+    std::make_unique<livox_ray_source::LevelingRaySource>(
+      replay({makeReturn(6'500'000U, 5.0F), makeReturn(6'600'000U, 5.0F)}), poses, leveling),
+    kConfig};
+  const auto result = pipeline.step();
+  EXPECT_EQ(result.status, StepStatus::kMessage);
+  return result.message.has_value() ? result.message->distances[0] : 0U;
+}
+
+}  // namespace
+
+TEST(SectorMapPipelineTest, LevelingPutsTheBoresightLevelWhenTheVehiclePitchesUpByTheMountAngle)
+{
+  const double ten_deg = 10.0 * 3.14159265358979323846 / 180.0;
+  EXPECT_EQ(wallDistanceCm(ten_deg), 500U);
+  EXPECT_EQ(wallDistanceCm(0.0), kUnknown);
 }

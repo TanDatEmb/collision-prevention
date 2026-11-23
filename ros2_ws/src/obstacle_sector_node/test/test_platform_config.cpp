@@ -7,6 +7,7 @@
 
 #include "obstacle_sector_node/platform_config.hpp"
 
+using obstacle_sector_node::loadLevelingSettings;
 using obstacle_sector_node::loadSectorMapConfig;
 
 namespace
@@ -105,4 +106,67 @@ TEST(PlatformConfigTest, TheRearStartIsOptionalAndMustBeAnAngleFromZeroToPi)
 TEST(PlatformConfigTest, RepositoryPlatformConfigIsRefusedWhileValuesAreTbd)
 {
   EXPECT_TRUE(rejects(X500_YAML_PATH));
+}
+
+namespace
+{
+
+std::string levelingYaml(const std::string & mount_xyz, const std::string & mount_rpy,
+  const std::string & depth, const std::string & gap_ms)
+{
+  return "sensor:\n  mount_pose_in_base_link:\n    xyz_m: " + mount_xyz + "\n    rpy_rad: " + mount_rpy +
+         "\npose_history:\n  depth: " + depth + "\n  max_bracket_gap_ms: " + gap_ms + "\n";
+}
+
+bool levelingRejects(const std::string & path)
+{
+  try {
+    static_cast<void>(loadLevelingSettings(path));
+  }
+  catch (const std::invalid_argument &) {
+    return true;
+  }
+  return false;
+}
+
+}  // namespace
+
+TEST(LevelingSettingsTest, LoadsTheMountAndThePoseHistory)
+{
+  // Fixture values, not platform values.
+  const auto settings = loadLevelingSettings(writeYaml(
+    "leveling_valid", levelingYaml("[0.1, -0.2, 0.3]", "[0.01, 0.2, -0.03]", "16", "50")));
+  EXPECT_DOUBLE_EQ(settings.leveling.lever_arm_flu_m[0], 0.1);
+  EXPECT_DOUBLE_EQ(settings.leveling.lever_arm_flu_m[1], -0.2);
+  EXPECT_DOUBLE_EQ(settings.leveling.lever_arm_flu_m[2], 0.3);
+  EXPECT_DOUBLE_EQ(settings.leveling.roll_rad, 0.01);
+  EXPECT_DOUBLE_EQ(settings.leveling.pitch_down_rad, 0.2);
+  EXPECT_DOUBLE_EQ(settings.leveling.yaw_left_rad, -0.03);
+  EXPECT_EQ(settings.history.depth, 16U);
+  EXPECT_EQ(settings.history.max_bracket_gap_ns, 50'000'000U);
+}
+
+TEST(LevelingSettingsTest, RejectsNullMissingAndInvalidValues)
+{
+  const std::string xyz = "[0.1, 0.0, 0.1]";
+  const std::string rpy = "[0.0, 0.2, 0.0]";
+  EXPECT_FALSE(levelingRejects(writeYaml("lv_ok", levelingYaml(xyz, rpy, "16", "50"))));
+  EXPECT_TRUE(levelingRejects(writeYaml("lv_xyz_null", levelingYaml("null", rpy, "16", "50"))));
+  EXPECT_TRUE(levelingRejects(writeYaml("lv_xyz_short", levelingYaml("[0.1, 0.0]", rpy, "16", "50"))));
+  EXPECT_TRUE(levelingRejects(writeYaml("lv_xyz_null_item", levelingYaml("[0.1, null, 0.1]", rpy, "16", "50"))));
+  EXPECT_TRUE(levelingRejects(writeYaml("lv_rpy_null", levelingYaml(xyz, "null", "16", "50"))));
+  EXPECT_TRUE(levelingRejects(writeYaml("lv_rpy_big", levelingYaml(xyz, "[0.0, 4.0, 0.0]", "16", "50"))));
+  EXPECT_TRUE(levelingRejects(writeYaml("lv_depth_null", levelingYaml(xyz, rpy, "null", "50"))));
+  EXPECT_TRUE(levelingRejects(writeYaml("lv_depth_one", levelingYaml(xyz, rpy, "1", "50"))));
+  EXPECT_TRUE(levelingRejects(writeYaml("lv_depth_frac", levelingYaml(xyz, rpy, "2.5", "50"))));
+  EXPECT_TRUE(levelingRejects(writeYaml("lv_gap_null", levelingYaml(xyz, rpy, "16", "null"))));
+  EXPECT_TRUE(levelingRejects(writeYaml("lv_gap_zero", levelingYaml(xyz, rpy, "16", "0"))));
+  EXPECT_TRUE(levelingRejects(writeYaml("lv_gap_neg", levelingYaml(xyz, rpy, "16", "-5"))));
+  EXPECT_TRUE(levelingRejects("/nonexistent/platform.yaml"));
+}
+
+TEST(LevelingSettingsTest, RepositoryPlatformConfigHasTheMountButNoPoseHistoryYet)
+{
+  // The mount is filled (owner, 2026-11-21); the pose history values are TBD, so the file is refused.
+  EXPECT_TRUE(levelingRejects(X500_YAML_PATH));
 }

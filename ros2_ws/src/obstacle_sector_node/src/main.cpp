@@ -22,6 +22,12 @@
 //   source_wait_s    how long the node waits for a frame before it reports "source ended",
 //                    default 1.0.
 //   sector_map_rate_hz  see ObstacleSectorNode (default 10).
+//
+// Leveling (ADR 0020 D1, ADR 0022, issue #137): the sources ring_cloud and livox are leveled with the
+// calibrated mount and the pose chain of the FMU, `/fmu/out/vehicle_odometry` (best-effort, as PX4
+// publishes it). The platform YAML must then also hold `sensor.mount_pose_in_base_link` and
+// `pose_history.*` (no defaults). A pose with no time or ahead of the node clock is not stored. The source
+// laser_scan, a planar bench scan, is not leveled: a plane makes no leveling claim (ADR 0022 decision 4).
 #include <algorithm>
 #include <atomic>
 #include <chrono>
@@ -36,13 +42,17 @@
 #include <utility>
 
 #include "livox_ray_source/frame_segmenter.hpp"
+#include "livox_ray_source/leveling_ray_source.hpp"
 #include "livox_ray_source/livox_sdk_sample_source.hpp"
+#include "livox_ray_source/pose_history.hpp"
 #include "obstacle_sector_node/laser_scan_source.hpp"
 #include "obstacle_sector_node/node.hpp"
+#include "obstacle_sector_node/odometry_pose.hpp"
 #include "obstacle_sector_node/platform_config.hpp"
 #include "obstacle_sector_node/ring_cloud_source.hpp"
 #include "rclcpp/rclcpp.hpp"
 #include "sensor_msgs/msg/laser_scan.hpp"
+#include "px4_msgs/msg/vehicle_odometry.hpp"
 #include "sensor_msgs/msg/point_cloud2.hpp"
 
 namespace
@@ -127,6 +137,33 @@ rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr subscribeToRingCl
     });
 }
 
+/// Counters of the pose input, written by the odometry thread and read by the log timer.
+struct PoseCounters
+{
+  std::atomic<uint64_t> received{0U};
+  std::atomic<uint64_t> rejected{0U};    // no time, or ahead of the node clock: not stored
+  std::atomic<uint64_t> not_stored{0U};  // not later than the newest sample (duplicate or out of order)
+};
+
+rclcpp::Subscription<px4_msgs::msg::VehicleOdometry>::SharedPtr subscribeToOdometry(
+  rclcpp::Node & feeder, const rclcpp::Clock::SharedPtr & clock,
+  const std::shared_ptr<livox_ray_source::PoseHistory> & poses,
+  const std::shared_ptr<PoseCounters> & counters)
+{
+  return feeder.create_subscription<px4_msgs::msg::VehicleOdometry>(
+    "/fmu/out/vehicle_odometry", rclcpp::SensorDataQoS(),
+    [clock, poses, counters](const px4_msgs::msg::VehicleOdometry::SharedPtr odometry) {
+      counters->received.fetch_add(1U);
+      const auto pose = obstacle_sector_node::poseFromOdometry(*odometry, clock->now().nanoseconds());
+      if (!pose.has_value()) {
+        counters->rejected.fetch_add(1U);
+      }
+      else if (!poses->push(*pose)) {
+        counters->not_stored.fetch_add(1U);
+      }
+    });
+}
+
 }  // namespace
 
 int main(int argc, char ** argv)
@@ -165,8 +202,23 @@ int main(int argc, char ** argv)
 
     const auto config = obstacle_sector_node::loadSectorMapConfig(platform_config);
     auto queue = std::make_shared<obstacle_sector_node::LatestFrameQueue>();
-    auto source = std::make_unique<obstacle_sector_node::QueuedRaySource>(
+    std::unique_ptr<livox_ray_source::RaySource> source =
+      std::make_unique<obstacle_sector_node::QueuedRaySource>(
       queue, std::chrono::milliseconds(static_cast<int64_t>(source_wait_s * 1000.0)));
+
+    // Leveling for the 3-D sources: the decorator reads the pose history that the odometry thread fills. The
+    // history must outlive the node, so it is declared here.
+    const bool leveled = source_kind != "laser_scan";
+    std::shared_ptr<livox_ray_source::PoseHistory> poses;
+    livox_ray_source::LevelingRaySource * leveling_source = nullptr;
+    if (leveled) {
+      const auto settings = obstacle_sector_node::loadLevelingSettings(platform_config);
+      poses = std::make_shared<livox_ray_source::PoseHistory>(settings.history);
+      auto leveling = std::make_unique<livox_ray_source::LevelingRaySource>(
+        std::move(source), *poses, settings.leveling);
+      leveling_source = leveling.get();
+      source = std::move(leveling);
+    }
     auto node =
       std::make_shared<obstacle_sector_node::ObstacleSectorNode>(std::move(source), config);
 
@@ -243,6 +295,31 @@ int main(int argc, char ** argv)
       if (!livox->start()) {
         throw std::runtime_error("the Livox SDK did not start");
       }
+    }
+
+    // Odometry and the leveling log. The subscription goes on the feeder of the source (ring_cloud) or on a new
+    // feeder for livox: the node thread blocks in nextFrame() and would starve the callback. A feeder thread that
+    // is not running yet starts here, last, so that a failure above (the Livox SDK) leaves no thread behind.
+    auto pose_counters = std::make_shared<PoseCounters>();
+    rclcpp::Subscription<px4_msgs::msg::VehicleOdometry>::SharedPtr odometry_subscription;
+    rclcpp::TimerBase::SharedPtr leveling_stats_timer;
+    if (leveled) {
+      if (!feeder) {
+        feeder = std::make_shared<rclcpp::Node>("odometry_feeder");
+        feeder_executor.add_node(feeder);
+      }
+      odometry_subscription = subscribeToOdometry(*feeder, node->get_clock(), poses, pose_counters);
+      if (!feeder_thread.joinable()) {
+        feeder_thread = std::thread([&feeder_executor]() { feeder_executor.spin(); });
+      }
+      // Runs on the node thread, the one that calls nextFrame(), so it may read the decorator's count.
+      leveling_stats_timer = node->create_wall_timer(
+        std::chrono::seconds(5), [node, leveling_source, pose_counters]() {
+          RCLCPP_INFO(
+            node->get_logger(), "poses: received %lu, rejected %lu, not stored %lu; leveling: rays dropped %lu",
+            asUnsigned(pose_counters->received.load()), asUnsigned(pose_counters->rejected.load()),
+            asUnsigned(pose_counters->not_stored.load()), asUnsigned(leveling_source->raysDropped()));
+        });
     }
 
     RCLCPP_INFO(

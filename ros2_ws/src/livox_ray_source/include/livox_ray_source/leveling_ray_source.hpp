@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstdint>
 #include <memory>
 #include <optional>
 
@@ -25,7 +26,13 @@ public:
 
   [[nodiscard]] std::optional<RayFrame> nextFrame() override;
 
+  /// Rays removed so far because the leveler dropped them (no pose, reset, ...); a frame with no reference pose
+  /// counts all its rays. It is what ADR 0022 decision 2 asks to measure before a wait for a newer pose is added.
+  /// Not thread safe: read it from the thread that calls nextFrame().
+  [[nodiscard]] uint64_t raysDropped() const {return _rays_dropped;}
+
 private:
+  uint64_t _rays_dropped{0U};
   std::unique_ptr<RaySource> _inner;
   RayLeveler _leveler;
 };

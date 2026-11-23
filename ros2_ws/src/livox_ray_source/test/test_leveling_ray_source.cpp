@@ -141,6 +141,7 @@ TEST(LevelingRaySourceTest, RayWithoutPoseIsRemovedAndTheFrameIsDiscontinuous)
   EXPECT_NEAR(out->rays[0].range_m, 4.0F, kTol);
   EXPECT_NEAR(out->rays[1].range_m, 4.0F, kTol);  // 3 m ahead of x = 1.5 is 4 m from x = 0.5
   EXPECT_FALSE(out->packet_continuity_valid);
+  EXPECT_EQ(source.raysDropped(), 1U);
 }
 
 TEST(LevelingRaySourceTest, NoReferencePoseRemovesEveryRay)
@@ -154,6 +155,26 @@ TEST(LevelingRaySourceTest, NoReferencePoseRemovesEveryRay)
   ASSERT_TRUE(out.has_value());
   EXPECT_TRUE(out->rays.empty());
   EXPECT_FALSE(out->packet_continuity_valid);
+  EXPECT_EQ(source.raysDropped(), 2U);
+}
+
+TEST(LevelingRaySourceTest, ARayAfterAPoseResetIsRemovedAndTheFrameIsDiscontinuous)
+{
+  // The reference ray (1000 ns) is in a bracket with reset counter 0; the ray at 3000 ns is in a bracket with
+  // counter 1: its pose is a different frame, so it is dropped and the reference ray is kept.
+  PoseSample p1 = poseAtX(2500U, 0.0);
+  p1.reset_counter = 1U;
+  PoseSample p2 = poseAtX(3500U, 0.0);
+  p2.reset_counter = 1U;
+  const History poses{poseAtX(500U, 0.0), poseAtX(1500U, 0.0), p1, p2};
+  RayFrame frame;
+  frame.rays = {returnRay(1000U, 4.0F), returnRay(3000U, 4.0F)};
+  LevelingRaySource source{oneFrame(frame), poses, zeroMountConfig()};
+  const auto out = source.nextFrame();
+  ASSERT_TRUE(out.has_value());
+  EXPECT_EQ(out->rays.size(), 1U);
+  EXPECT_FALSE(out->packet_continuity_valid);
+  EXPECT_EQ(source.raysDropped(), 1U);
 }
 
 TEST(LevelingRaySourceTest, FrameBoundsAreTheLargestRiseAndFallOverTheKeptRays)
