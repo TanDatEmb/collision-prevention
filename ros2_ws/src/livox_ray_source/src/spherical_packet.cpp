@@ -2,6 +2,7 @@
 
 #include <cmath>
 #include <cstring>
+#include <limits>
 
 namespace livox_ray_source
 {
@@ -77,8 +78,19 @@ DecodedPacket decodeSphericalPacket(const uint8_t * data, std::size_t size)
     ray.range_m = static_cast<float>(static_cast<double>(depth_mm) / 1000.0);
     ray.masked = false;
     const bool angles_valid = theta <= kMaxTheta && phi <= kMaxPhi;
-    ray.return_kind =
-      (depth_mm > 0U && angles_valid) ? RayReturnKind::kReturn : RayReturnKind::kInvalid;
+    // Depth 0 with a valid direction is a shot with no return (issue #172): no object in range. No vendor
+    // document defines it, but the vendor convention is (0, theta, phi) in spherical data for "no detected
+    // object ahead or the detected object exceeds the range", the vendor driver forwards it unfiltered, and a
+    // real Mid-360S sends them (48.7 % of the points of a room scene) at a fixed 200,000 points/s. The frame
+    // gates of ADR 0004 (packet continuity, PTP time, the ray count) still decide whether a sector is clear.
+    if (!angles_valid) {
+      ray.return_kind = RayReturnKind::kInvalid;
+    } else if (depth_mm == 0U) {
+      ray.return_kind = RayReturnKind::kQualifiedNoReturn;
+      ray.range_m = std::numeric_limits<float>::quiet_NaN();
+    } else {
+      ray.return_kind = RayReturnKind::kReturn;
+    }
     ray.timestamp_ns =
       time_usable ? packet_time_ns + (dot_num > 1U ? (index * interval_ns) / (dot_num - 1U) : 0U)
                   : 0U;
