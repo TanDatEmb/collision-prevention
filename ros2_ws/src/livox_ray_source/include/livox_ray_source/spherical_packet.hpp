@@ -37,8 +37,11 @@ struct DecodedPacket
 ///   y, z: theta and phi are in 0.01 degree; theta is the polar angle from +z and phi increases
 ///   from +x towards +y. So the ray azimuth is phi (counter-clockwise, FLU) and the elevation is
 ///   90 degrees minus theta. Values outside theta [0, 18000] and phi [0, 36000] are invalid.
-/// - A depth of 0 is invalid, never a return and never free: the protocol does not say what it
-///   means and the rule for a qualified no-return is open (OPEN-022, ADR 0004). Tags are not used.
+/// - A depth of 0 with a valid direction is a qualified no-return (issue #172): the vendor convention
+///   is (0, theta, phi) for no object in range, the vendor driver forwards such points unfiltered, and
+///   a real Mid-360S sends them. No vendor document defines it beyond that, so a blocked or dirty
+///   window may read the same (open, bench test). The range of a no-return is NaN. A point with a
+///   direction outside the range is invalid. Tags are not used.
 /// - Time: only PTP time (`time_type` 1) is used. The packet time is the time of the first point and
 ///   the points are equally spaced over `time_interval` (0.1 us), first to last (a real packet has
 ///   96 points, 475 us from first to last and 480 us between packets: 5.0 us per point). Any other

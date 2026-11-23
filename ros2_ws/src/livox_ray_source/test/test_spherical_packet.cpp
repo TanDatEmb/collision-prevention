@@ -123,14 +123,25 @@ TEST(DecodeSphericalPacketTest, ElevationIsNinetyDegreesMinusThetaAndTheEndsAreC
   EXPECT_NEAR(packet.rays[2].azimuth_rad, 270.0F * kPi / 180.0F, 1e-5F);
 }
 
-TEST(DecodeSphericalPacketTest, ADepthOfZeroIsInvalidAndNeverAReturnOrClear)
+TEST(DecodeSphericalPacketTest, ADepthOfZeroWithAValidDirectionIsAQualifiedNoReturn)
 {
   const auto bytes = makePacket({{0U, 9000U, 0U}, {50U, 9000U, 0U}});
   const auto packet = decodeSphericalPacket(bytes.data(), bytes.size());
   ASSERT_EQ(packet.rays.size(), 2U);
-  EXPECT_EQ(packet.rays[0].return_kind, RayReturnKind::kInvalid);
+  EXPECT_EQ(packet.rays[0].return_kind, RayReturnKind::kQualifiedNoReturn);
+  EXPECT_TRUE(std::isnan(packet.rays[0].range_m));
+  EXPECT_NEAR(packet.rays[0].elevation_rad, 0.0F, 1e-6F);  // the direction is kept
   // 5 cm is a real, very close return; the map decides what too close means.
   EXPECT_EQ(packet.rays[1].return_kind, RayReturnKind::kReturn);
+}
+
+TEST(DecodeSphericalPacketTest, ADepthOfZeroWithADirectionOutsideTheRangeIsInvalidNotAClearRay)
+{
+  const auto bytes = makePacket({{0U, 18001U, 0U}, {0U, 9000U, 36001U}});
+  const auto packet = decodeSphericalPacket(bytes.data(), bytes.size());
+  ASSERT_EQ(packet.rays.size(), 2U);
+  EXPECT_EQ(packet.rays[0].return_kind, RayReturnKind::kInvalid);
+  EXPECT_EQ(packet.rays[1].return_kind, RayReturnKind::kInvalid);
 }
 
 TEST(DecodeSphericalPacketTest, AnglesOutsideTheDocumentedRangeAreInvalid)
@@ -249,13 +260,16 @@ TEST(DecodeSphericalPacketTest, ARealMid360sPacketDecodesAsTheIndependentScriptD
   EXPECT_NEAR(packet.rays[0].elevation_rad, (90.0F - 70.05F) * kPi / 180.0F, 1e-5F);
 
   std::size_t invalid = 0U;
+  std::size_t no_returns = 0U;
   std::size_t returns = 0U;
   for (const auto & ray : packet.rays) {
     EXPECT_EQ(ray.timestamp_ns, 0U);  // not synchronized: the time is not used
     invalid += ray.return_kind == RayReturnKind::kInvalid ? 1U : 0U;
+    no_returns += ray.return_kind == RayReturnKind::kQualifiedNoReturn ? 1U : 0U;
     returns += ray.return_kind == RayReturnKind::kReturn ? 1U : 0U;
   }
-  EXPECT_EQ(invalid, 21U);
+  EXPECT_EQ(invalid, 0U);
+  EXPECT_EQ(no_returns, 21U);  // the 21 points of depth 0 of this real packet
   EXPECT_EQ(returns, 75U);
 }
 
