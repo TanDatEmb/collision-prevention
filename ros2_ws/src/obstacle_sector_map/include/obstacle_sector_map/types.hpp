@@ -80,12 +80,17 @@ struct SectorMapConfig
   float obstacle_window_m;          // dr: width of the range window that confirms an obstacle
   uint32_t obstacle_min_returns;    // n_obstacle: returns a window must hold to be an obstacle
   uint32_t free_min_rays;           // n_free: the n_free-th largest free distance of each half is certified
+  // Rear class (ADR 0020 D3 option B, issue #141): a sector whose centre is more than this angle from the front
+  // uses the upper half of the band only. Default pi: no sector is rear, every sector needs both halves, which is
+  // the conservative case. The X500 value is 134.6 degrees, where the horizon leaves the field of view at level.
+  float rear_start_rad{3.14159265358979323846F};
 
   [[nodiscard]] bool isValid() const
   {
     return std::isfinite(height_up_m) && height_up_m > 0.0F && std::isfinite(height_down_m) &&
            height_down_m > 0.0F && std::isfinite(obstacle_window_m) && obstacle_window_m > 0.0F &&
-           obstacle_min_returns > 0U && free_min_rays > 0U;
+           obstacle_min_returns > 0U && free_min_rays > 0U && std::isfinite(rear_start_rad) &&
+           rear_start_rad > 0.0F && rear_start_rad <= 3.14159265358979323846F;
   }
 };
 

@@ -85,6 +85,23 @@ TEST(PlatformConfigTest, RejectsABadCountOrBand)
     "  obstacle_min_returns: 2\n  free_min_rays: 2\n")));
 }
 
+TEST(PlatformConfigTest, TheRearStartIsOptionalAndMustBeAnAngleFromZeroToPi)
+{
+  const std::string base =
+    "sector_map:\n  height_up_m: 1.0\n  height_down_m: 1.0\n  obstacle_window_m: 0.5\n"
+    "  obstacle_min_returns: 2\n  free_min_rays: 2\n";
+  EXPECT_NEAR(loadSectorMapConfig(writeYaml("rear_absent", base)).rear_start_rad, 3.14159265F, 1e-6F);
+  EXPECT_NEAR(
+    loadSectorMapConfig(writeYaml("rear_null", base + "  rear_start_rad: null\n")).rear_start_rad,
+    3.14159265F, 1e-6F);
+  EXPECT_NEAR(
+    loadSectorMapConfig(writeYaml("rear_set", base + "  rear_start_rad: 2.3492\n")).rear_start_rad, 2.3492F,
+    1e-5F);
+  for (const std::string value : {"0", "-1", "3.5", ".nan"}) {
+    EXPECT_TRUE(rejects(writeYaml("rear" + value, base + "  rear_start_rad: " + value + "\n")));
+  }
+}
+
 TEST(PlatformConfigTest, RepositoryPlatformConfigIsRefusedWhileValuesAreTbd)
 {
   EXPECT_TRUE(rejects(X500_YAML_PATH));

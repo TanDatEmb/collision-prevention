@@ -13,6 +13,7 @@ sensor:
 sector_map:
   height_up_m: 0.25  # OPEN-036, bench, delegated 2026-11-22: from the lidar, level frame (ADR 0022)
   height_down_m: 0.60  # OPEN-036, bench, delegated 2026-11-22: from the lidar, level frame
+  rear_start_rad: 2.3492  # ADR 0020 D3 option B (issue #141): 134.6 degrees, where the horizon leaves the field of view at level (closed form)
   obstacle_window_m: null  # TBD: OPEN-041 (dr)
   obstacle_min_returns: null  # TBD: OPEN-041 (n_obstacle)
   free_min_rays: null  # TBD: OPEN-023 (n_free)
