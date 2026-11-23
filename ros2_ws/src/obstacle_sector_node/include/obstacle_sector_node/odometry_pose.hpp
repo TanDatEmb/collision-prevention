@@ -15,10 +15,10 @@ namespace obstacle_sector_node
 /// scaled to nanoseconds and not mapped.
 ///
 /// Returns std::nullopt, so that the sample is not stored at all, when `timestamp_sample` is 0 (unknown) or is
-/// ahead of `now_ns` (the node's own clock): a pose from the future cannot be a real sample. A sample whose pose
-/// frame is unknown is returned with a NaN quaternion, which PoseHistory stores as an invalid sample, so that a
-/// query across it gets no pose. The quaternion and position of a valid sample are copied unchanged; NaN values
-/// from PX4 make the sample invalid in the same way.
+/// ahead of `now_ns` (the node's own clock): a pose from the future cannot be a real sample. The quaternion and
+/// position are copied unchanged. A NaN from PX4 makes the sample invalid, and PoseHistory stores it as an invalid
+/// sample, so that a query across it gets no pose. The pose frame (NED or FRD) is not read: the leveling step only
+/// uses heading and position differences, which a constant heading offset does not change (PoseSample).
 [[nodiscard]] std::optional<livox_ray_source::PoseSample> poseFromOdometry(
   const px4_msgs::msg::VehicleOdometry & odometry, int64_t now_ns);
 

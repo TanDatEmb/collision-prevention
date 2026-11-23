@@ -42,8 +42,7 @@ std::optional<RayFrame> LevelingRaySource::nextFrame()
   }
 
   if (_leveler.beginFrame(reference_ns) != LevelingStatus::kOk) {
-    ++_stats.frames_without_reference;
-    _stats.rays_dropped += frame->rays.size();
+    _rays_dropped += frame->rays.size();
     frame->rays.clear();
     frame->packet_continuity_valid = false;
     return frame;
@@ -57,7 +56,7 @@ std::optional<RayFrame> LevelingRaySource::nextFrame()
     const LevelingStatus status = _leveler.level(ray, origin_rise_m);
     if (breaksFrameContinuity(status)) {
       frame->packet_continuity_valid = false;
-      ++_stats.rays_dropped;
+      ++_rays_dropped;
       continue;
     }
     if (status == LevelingStatus::kOk) {

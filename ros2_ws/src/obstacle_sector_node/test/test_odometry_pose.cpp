@@ -19,7 +19,6 @@ VehicleOdometry odometryAt(uint64_t sample_us)
   VehicleOdometry odometry;
   odometry.timestamp = sample_us + 1'000U;
   odometry.timestamp_sample = sample_us;
-  odometry.pose_frame = VehicleOdometry::POSE_FRAME_NED;
   odometry.position = {1.0F, 2.0F, -3.0F};
   odometry.q = {0.5F, 0.5F, 0.5F, 0.5F};
   odometry.reset_counter = 7U;
@@ -41,15 +40,6 @@ TEST(OdometryPoseTest, ScalesMicrosecondsToNanosecondsAndCopiesThePose)
   EXPECT_TRUE(pose->isValid());
 }
 
-TEST(OdometryPoseTest, FrdFrameIsAccepted)
-{
-  auto odometry = odometryAt(4'000'000U);
-  odometry.pose_frame = VehicleOdometry::POSE_FRAME_FRD;
-  const auto pose = poseFromOdometry(odometry, kNowNs);
-  ASSERT_TRUE(pose.has_value());
-  EXPECT_TRUE(pose->isValid());
-}
-
 TEST(OdometryPoseTest, UnknownTimeIsNotASample)
 {
   EXPECT_FALSE(poseFromOdometry(odometryAt(0U), kNowNs).has_value());
@@ -64,20 +54,15 @@ TEST(OdometryPoseTest, PoseAheadOfTheNodeClockIsRejected)
   EXPECT_FALSE(poseFromOdometry(odometryAt(4'000'000U), -1).has_value());      // clock not running
 }
 
-TEST(OdometryPoseTest, UnknownFrameAndNanQuaternionGiveAnInvalidSample)
+TEST(OdometryPoseTest, NanQuaternionOrPositionGivesAnInvalidSample)
 {
-  auto unknown = odometryAt(4'000'000U);
-  unknown.pose_frame = VehicleOdometry::POSE_FRAME_UNKNOWN;
-  auto sample = poseFromOdometry(unknown, kNowNs);
-  ASSERT_TRUE(sample.has_value());  // stored, so that a query across it gets no pose
-  EXPECT_FALSE(sample->isValid());
-  EXPECT_EQ(sample->timestamp_sample_ns, 4'000'000'000U);
-
+  // Stored as an invalid sample, so that a query across it gets no pose.
   auto invalid_q = odometryAt(4'000'000U);
   invalid_q.q = {std::numeric_limits<float>::quiet_NaN(), 0.0F, 0.0F, 0.0F};
-  sample = poseFromOdometry(invalid_q, kNowNs);
+  auto sample = poseFromOdometry(invalid_q, kNowNs);
   ASSERT_TRUE(sample.has_value());
   EXPECT_FALSE(sample->isValid());
+  EXPECT_EQ(sample->timestamp_sample_ns, 4'000'000'000U);
 
   auto invalid_position = odometryAt(4'000'000U);
   invalid_position.position = {std::numeric_limits<float>::quiet_NaN(), 0.0F, 0.0F};

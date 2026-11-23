@@ -222,32 +222,6 @@ int main(int argc, char ** argv)
     auto node =
       std::make_shared<obstacle_sector_node::ObstacleSectorNode>(std::move(source), config);
 
-    // Odometry: its own thread, because the node thread blocks in nextFrame() while it waits for a frame.
-    std::shared_ptr<rclcpp::Node> odometry_feeder;
-    rclcpp::executors::SingleThreadedExecutor odometry_executor;
-    std::thread odometry_thread;
-    rclcpp::Subscription<px4_msgs::msg::VehicleOdometry>::SharedPtr odometry_subscription;
-    auto pose_counters = std::make_shared<PoseCounters>();
-    rclcpp::TimerBase::SharedPtr leveling_stats_timer;
-    if (leveled) {
-      odometry_feeder = std::make_shared<rclcpp::Node>("odometry_feeder");
-      odometry_subscription =
-        subscribeToOdometry(*odometry_feeder, node->get_clock(), poses, pose_counters);
-      odometry_executor.add_node(odometry_feeder);
-      // Runs on the node thread, the one that calls nextFrame(), so it may read the decorator's counts.
-      leveling_stats_timer = node->create_wall_timer(
-        std::chrono::seconds(5), [node, leveling_source, pose_counters]() {
-          RCLCPP_INFO(
-            node->get_logger(),
-            "poses: received %lu, rejected %lu, not stored %lu; leveling: frames without reference %lu, "
-            "rays dropped %lu",
-            asUnsigned(pose_counters->received.load()), asUnsigned(pose_counters->rejected.load()),
-            asUnsigned(pose_counters->not_stored.load()),
-            asUnsigned(leveling_source->stats().frames_without_reference),
-            asUnsigned(leveling_source->stats().rays_dropped));
-        });
-    }
-
     // Planar scan: the scan callback runs on its own thread; the node thread waits for frames
     // inside nextFrame().
     std::shared_ptr<rclcpp::Node> feeder;
@@ -323,9 +297,29 @@ int main(int argc, char ** argv)
       }
     }
 
-    // Started last, so that a failure above (the Livox SDK) cannot leave a running thread behind.
+    // Odometry and the leveling log. The subscription goes on the feeder of the source (ring_cloud) or on a new
+    // feeder for livox: the node thread blocks in nextFrame() and would starve the callback. A feeder thread that
+    // is not running yet starts here, last, so that a failure above (the Livox SDK) leaves no thread behind.
+    auto pose_counters = std::make_shared<PoseCounters>();
+    rclcpp::Subscription<px4_msgs::msg::VehicleOdometry>::SharedPtr odometry_subscription;
+    rclcpp::TimerBase::SharedPtr leveling_stats_timer;
     if (leveled) {
-      odometry_thread = std::thread([&odometry_executor]() { odometry_executor.spin(); });
+      if (!feeder) {
+        feeder = std::make_shared<rclcpp::Node>("odometry_feeder");
+        feeder_executor.add_node(feeder);
+      }
+      odometry_subscription = subscribeToOdometry(*feeder, node->get_clock(), poses, pose_counters);
+      if (!feeder_thread.joinable()) {
+        feeder_thread = std::thread([&feeder_executor]() { feeder_executor.spin(); });
+      }
+      // Runs on the node thread, the one that calls nextFrame(), so it may read the decorator's count.
+      leveling_stats_timer = node->create_wall_timer(
+        std::chrono::seconds(5), [node, leveling_source, pose_counters]() {
+          RCLCPP_INFO(
+            node->get_logger(), "poses: received %lu, rejected %lu, not stored %lu; leveling: rays dropped %lu",
+            asUnsigned(pose_counters->received.load()), asUnsigned(pose_counters->rejected.load()),
+            asUnsigned(pose_counters->not_stored.load()), asUnsigned(leveling_source->raysDropped()));
+        });
     }
 
     RCLCPP_INFO(
@@ -343,10 +337,6 @@ int main(int argc, char ** argv)
     if (feeder_thread.joinable()) {
       feeder_executor.cancel();
       feeder_thread.join();
-    }
-    if (odometry_thread.joinable()) {
-      odometry_executor.cancel();
-      odometry_thread.join();
     }
     RCLCPP_INFO(
       node->get_logger(),

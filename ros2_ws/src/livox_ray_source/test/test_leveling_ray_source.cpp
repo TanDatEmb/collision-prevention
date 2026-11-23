@@ -141,8 +141,7 @@ TEST(LevelingRaySourceTest, RayWithoutPoseIsRemovedAndTheFrameIsDiscontinuous)
   EXPECT_NEAR(out->rays[0].range_m, 4.0F, kTol);
   EXPECT_NEAR(out->rays[1].range_m, 4.0F, kTol);  // 3 m ahead of x = 1.5 is 4 m from x = 0.5
   EXPECT_FALSE(out->packet_continuity_valid);
-  EXPECT_EQ(source.stats().rays_dropped, 1U);
-  EXPECT_EQ(source.stats().frames_without_reference, 0U);
+  EXPECT_EQ(source.raysDropped(), 1U);
 }
 
 TEST(LevelingRaySourceTest, NoReferencePoseRemovesEveryRay)
@@ -156,8 +155,7 @@ TEST(LevelingRaySourceTest, NoReferencePoseRemovesEveryRay)
   ASSERT_TRUE(out.has_value());
   EXPECT_TRUE(out->rays.empty());
   EXPECT_FALSE(out->packet_continuity_valid);
-  EXPECT_EQ(source.stats().frames_without_reference, 1U);
-  EXPECT_EQ(source.stats().rays_dropped, 2U);
+  EXPECT_EQ(source.raysDropped(), 2U);
 }
 
 TEST(LevelingRaySourceTest, ARayAfterAPoseResetIsRemovedAndTheFrameIsDiscontinuous)
@@ -176,7 +174,7 @@ TEST(LevelingRaySourceTest, ARayAfterAPoseResetIsRemovedAndTheFrameIsDiscontinuo
   ASSERT_TRUE(out.has_value());
   EXPECT_EQ(out->rays.size(), 1U);
   EXPECT_FALSE(out->packet_continuity_valid);
-  EXPECT_EQ(source.stats().rays_dropped, 1U);
+  EXPECT_EQ(source.raysDropped(), 1U);
 }
 
 TEST(LevelingRaySourceTest, FrameBoundsAreTheLargestRiseAndFallOverTheKeptRays)

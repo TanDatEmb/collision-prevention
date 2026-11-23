@@ -27,13 +27,8 @@ std::optional<livox_ray_source::PoseSample> poseFromOdometry(
   for (std::size_t i = 0U; i < 3U; ++i) {
     sample.position_ned_m[i] = static_cast<double>(odometry.position[i]);
   }
-  const bool known_frame = odometry.pose_frame == px4_msgs::msg::VehicleOdometry::POSE_FRAME_NED ||
-                           odometry.pose_frame == px4_msgs::msg::VehicleOdometry::POSE_FRAME_FRD;
-  // The default of `q_wxyz` is NaN, which marks the sample invalid; an unknown frame keeps it.
-  if (known_frame) {
-    for (std::size_t i = 0U; i < 4U; ++i) {
-      sample.q_wxyz[i] = static_cast<double>(odometry.q[i]);
-    }
+  for (std::size_t i = 0U; i < 4U; ++i) {
+    sample.q_wxyz[i] = static_cast<double>(odometry.q[i]);
   }
   return sample;
 }
