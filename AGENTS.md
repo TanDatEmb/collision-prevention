@@ -36,6 +36,11 @@ Use the `commit` and `pr` skills.
 - [IMPORTANT] Big or hard task: do not start from guesses. Propose to the owner an interview with
   AskUserQuestion (short questions, each option with its consequence) to settle the spec, then write
   the plan from the answers.
+- [IMPORTANT] Simplest stable design (owner priority: good, compact, stable). When asked to design or critique,
+  look for the smallest change that fixes the confirmed cause. Never add a mechanism (class, state, reason,
+  parameter, timer) to patch a mechanism you added: if a fix needs a patch, go back to the simpler design.
+  Reuse an existing state or reason before adding one; add machinery only for a measured need. Every PR states
+  how many new names it adds and why each is needed.
 - [IMPORTANT] Keep this file short. A new rule carries a label: [CRITICAL] is never skipped,
   [IMPORTANT] is followed unless the owner says otherwise. Delete a rule that is stale.
 
