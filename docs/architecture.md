@@ -298,7 +298,11 @@ ICD-CP-06 is approved by the owner (2026-11-19) with its open items (OPEN-030, 0
 ADR 0019 (one pose chain from the FMU for heading and deskew) is approved by the owner (2026-11-20).
 Orin parameters (versioned, logged): `sector_map_rate_hz` 10, `coverage_window_ms` 100,
 `height_up_m`, `height_down_m`, `obstacle_window_m`, `obstacle_min_returns` and `free_min_rays` (the sector evidence
-values of ADR 0020 D2, no defaults until OPEN-005, 023, 036, 041, never tuned after an acceptance run).
+values of ADR 0020 D2, no defaults until OPEN-005, 023, 036, 041, never tuned after an acceptance run),
+`certified_range_m` and `attitude_allowance_rad` (ADR 0024, TBD). Trade-off of the last two: the certified range
+sets the top speed and is only as long as the sampling resolves the smallest claimed obstacle, so a longer range
+costs a larger smallest obstacle, a smaller attitude allowance (which must still cover the measured attitude
+error) or a denser sensor; examples and the derivation are in ADR 0024 and `tools/scenarios/certified_range.py`.
 The range limits (10 cm and 40 m, ICD-CP-03) are fixed constants, not parameters. The
 sector-boundary tolerance is a fixed constant of 2.0e-6 rad in `obstacle_sector_map`, approved by
 the owner (2026-11-19); it is a numerical tolerance, not a safety threshold. Raw point cloud

@@ -64,6 +64,29 @@ Bench examples of the derivation (`g_v` 1.07, `g_h` 1.0, `dtheta_b` 0.9 deg, `H`
 an object 0.52 m tall or 0.26 m wide is resolved; at 30 m 1.03 m tall or 1.57 m wide. The speed then follows from
 the cap law: about 10 m/s for 29 m with `CPB_T_LAT` 0.95 s, `CPB_A_BRK` 3 m/s^2 and the 2 m margin.
 
+Trade-offs of the parameters (`tools/scenarios/certified_range.py --table` prints them for any inputs; Livox-like
+gaps 1.07 x 1.0 deg, `dz` 0.07 m, band 0.85 m, `n_obstacle` 3, the bench stopping model):
+
+| Allowance | `h_obj` | `w_obj` | Certified range | Top speed |
+| --- | --- | --- | --- | --- |
+| 0.9 deg | 0.5 m | 1.5 m | 12.5 m | 4.9 m/s |
+| 0.9 deg | 1.0 m | 1.5 m | 27.0 m | 8.9 m/s |
+| 0.5 deg | 1.0 m | 2.5 m | 33.9 m | 10.4 m/s |
+| 0.3 deg | 1.0 m | 2.5 m | 38.9 m | 11.4 m/s |
+| 0.2 deg or 0.9 deg with `h_obj` 1.5 m | 1.0 / 1.5 m | 2.5 m | 40 m (cap) | 11.6 m/s |
+
+- Range against the smallest obstacle: each metre of certified range needs a larger smallest obstacle, a smaller
+  allowance or smaller gaps. Objects below `h_obj` / `w_obj` are a non-claim per frame (decision 5).
+- Allowance against false stops: a larger allowance counts more band-edge returns as obstacles and shortens the
+  range; a smaller one needs a measured attitude error below it (SITL EKF: p99 0.68, max 0.85 deg; target #156).
+- `n_obstacle` and the band against thin poles: at long range the band crosses one ring, so a pole needs
+  `n_obstacle` columns; fewer confirming returns or a taller band resolve thinner poles at the cost of noise
+  rejection or of overhangs that stop the vehicle.
+- The wire cap: the qualified range is 40 m (ICD-CP-03, checked by the cp_brake input check). It allows 11.6 m/s
+  with the bench stopping model; 12 m/s needs 41.9 m. A longer qualified range needs ICD-CP-03 and the cp_brake
+  input check to change (fork PR and pointer PR), and a sensor that returns from the darkest claimed object at
+  that range (the Mid-360S range depends on reflectivity; not measured here).
+
 Alternatives not chosen: `H_min` (above); more rays (not possible on the Mid-360S; a denser simulated sensor would
 hide the problem); carrying free evidence over frames (a new mechanism; not needed for the cases above).
 
