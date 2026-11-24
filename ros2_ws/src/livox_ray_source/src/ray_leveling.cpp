@@ -139,7 +139,7 @@ LevelingStatus RayLeveler::beginFrame(uint64_t reference_time_ns)
   return LevelingStatus::kOk;
 }
 
-LevelingStatus RayLeveler::level(obstacle_sector_map::RaySample & ray, double & origin_rise_m) const
+LevelingStatus RayLeveler::level(obstacle_sector_map::RaySample & ray) const
 {
   using obstacle_sector_map::RayReturnKind;
 
@@ -236,7 +236,6 @@ LevelingStatus RayLeveler::level(obstacle_sector_map::RaySample & ray, double & 
   }
   ray.azimuth_rad = static_cast<float>(std::atan2(p_flu[1], p_flu[0]));
   ray.elevation_rad = static_cast<float>(std::atan2(p_flu[2], std::hypot(p_flu[0], p_flu[1])));
-  origin_rise_m = -motion_ned_m[2];  // NED z points down
   return LevelingStatus::kOk;
 }
 

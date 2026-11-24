@@ -23,6 +23,8 @@ sector_map:
   obstacle_window_m: null  # TBD: OPEN-041 (dr)
   obstacle_min_returns: null  # TBD: OPEN-041 (n_obstacle)
   free_min_rays: null  # TBD: OPEN-023 (n_free)
+  certified_range_m: null  # TBD (ADR 0024): from h_obj, w_obj, the measured angular gaps (OPEN-023) and the allowance
+  attitude_allowance_rad: null  # TBD (ADR 0024 decision 3, ADR 0022 dtheta_b, #156)
 self_mask:  # decided 2026-11-22 (OPEN-046): four propeller cylinders in the BODY frame, filled with the body-frame mask code (FEAT-23, #137)
   cylinders:
     - center_m: [null, null]  # TBD: OPEN-005 (x, y of the axis)

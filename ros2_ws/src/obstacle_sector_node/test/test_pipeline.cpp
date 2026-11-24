@@ -25,7 +25,7 @@ namespace
 {
 
 // Test fixture values, not approved platform values.
-constexpr SectorMapConfig kConfig{1.0F, 1.0F, 0.5F, 2U, 2U};
+constexpr SectorMapConfig kConfig{1.0F, 1.0F, 0.5F, 2U, 2U, 40.0F, 0.0F};
 constexpr uint64_t kWindowNs = 1'000'000U;
 constexpr uint16_t kUnknown = std::numeric_limits<uint16_t>::max();
 
@@ -55,7 +55,7 @@ TEST(SectorMapPipelineTest, RejectsNullSourceAndInvalidConfig)
 {
   EXPECT_THROW(SectorMapPipeline(nullptr, kConfig), std::invalid_argument);
   EXPECT_THROW(
-    SectorMapPipeline(replay({}), SectorMapConfig{1.0F, 1.0F, 0.5F, 0U, 2U}), std::invalid_argument);
+    SectorMapPipeline(replay({}), SectorMapConfig{1.0F, 1.0F, 0.5F, 0U, 2U, 40.0F, 0.0F}), std::invalid_argument);
 }
 
 TEST(SectorMapPipelineTest, ContinuousNoReturnsEncodeObservedClearWithTheEarliestTimestamp)

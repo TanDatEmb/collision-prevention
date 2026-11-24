@@ -54,10 +54,10 @@ struct SectorObservation
 {
   SectorState state{SectorState::kUnknown};
   // The distance sent for the sector: the smaller of the confirmed obstacle distance and the certified
-  // free distance (ADR 0020 D2). NaN for unknown and clear.
+  // free distance (ADR 0020 D2, ADR 0024). NaN for unknown and clear.
   float distance_m{std::numeric_limits<float>::quiet_NaN()};
   uint32_t contributing_ray_count{0U};
-  uint32_t clear_ray_count{0U};  // rays that certify free distance: no-returns and returns outside the band
+  uint32_t clear_ray_count{0U};  // rays that are not obstacle evidence: no-returns and returns outside the band
   // Diagnostics of the two parts of distance_m; NaN when the part does not exist.
   float obstacle_distance_m{std::numeric_limits<float>::quiet_NaN()};
   float free_distance_m{std::numeric_limits<float>::quiet_NaN()};
@@ -79,7 +79,12 @@ struct SectorMapConfig
   float height_down_m;              // h_down: and this far below it
   float obstacle_window_m;          // dr: width of the range window that confirms an obstacle
   uint32_t obstacle_min_returns;    // n_obstacle: returns a window must hold to be an obstacle
-  uint32_t free_min_rays;           // n_free: the n_free-th largest free distance of each half is certified
+  uint32_t free_min_rays;           // n_free: rays each half of the band must hold to be covered (SYS-CP-029)
+  // ADR 0024: a covered sector is certified free to this range (m, at most the 40 m cap), derived from the smallest
+  // obstacle that must be seen, the sensor's angular gaps and the attitude allowance.
+  float certified_range_m;
+  // ADR 0024 decision 3: the band test is widened by distance * tan(allowance) for the attitude error (rad, >= 0).
+  float attitude_allowance_rad;
   // Rear class (ADR 0020 D3 option B, issue #141): a sector whose centre is more than this angle from the front
   // uses the upper half of the band only. Default pi: no sector is rear, every sector needs both halves, which is
   // the conservative case. The X500 value is 134.6 degrees, where the horizon leaves the field of view at level.
@@ -89,7 +94,10 @@ struct SectorMapConfig
   {
     return std::isfinite(height_up_m) && height_up_m > 0.0F && std::isfinite(height_down_m) &&
            height_down_m > 0.0F && std::isfinite(obstacle_window_m) && obstacle_window_m > 0.0F &&
-           obstacle_min_returns > 0U && free_min_rays > 0U && std::isfinite(rear_start_rad) &&
+           obstacle_min_returns > 0U && free_min_rays > 0U && std::isfinite(certified_range_m) &&
+           certified_range_m >= kMinDistanceM && certified_range_m <= kMaxDistanceM &&
+           std::isfinite(attitude_allowance_rad) && attitude_allowance_rad >= 0.0F &&
+           attitude_allowance_rad < kHalfPiRad && std::isfinite(rear_start_rad) &&
            rear_start_rad > 0.0F && rear_start_rad <= 3.14159265358979323846F;
   }
 };

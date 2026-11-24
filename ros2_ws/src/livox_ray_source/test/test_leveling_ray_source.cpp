@@ -91,13 +91,6 @@ RaySample returnRay(uint64_t time_ns, float range_m, float azimuth_rad = 0.0F)
   return RaySample{time_ns, range_m, azimuth_rad, 0.0F, false, RayReturnKind::kReturn};
 }
 
-RaySample noReturnRay(uint64_t time_ns)
-{
-  return RaySample{
-    time_ns, std::numeric_limits<float>::quiet_NaN(), 0.0F, 0.1F, false,
-    RayReturnKind::kQualifiedNoReturn};
-}
-
 LevelingConfig zeroMountConfig()
 {
   return LevelingConfig{0.0, 0.0, 0.0, {0.0, 0.0, 0.0}};
@@ -212,38 +205,6 @@ TEST(LevelingRaySourceTest, ARayAfterAGyroRestartIsRemovedAndTheFrameIsDiscontin
   EXPECT_EQ(source.raysDropped(), 1U);
 }
 
-TEST(LevelingRaySourceTest, FrameBoundsAreTheLargestRiseAndFallOverTheKeptRays)
-{
-  // The FMU velocity at the reference (1000 ns) carries the sensor: climbing 0.2 m per microsecond, the rays at
-  // 1500 and 2500 ns are 0.1 and 0.3 m higher; sinking at the same rate they are lower by as much.
-  const StillGyro gyro;
-  for (const double vz : {-2.0e5, 2.0e5}) {  // NED: negative is up
-    const History poses{poseAtX(500U, 0.0, 0.0, 0.0, vz), poseAtX(1500U, 0.0, 0.0, 0.0, vz)};
-    RayFrame frame;
-    frame.rays = {noReturnRay(1000U), noReturnRay(1500U), noReturnRay(2500U)};
-    LevelingRaySource source{oneFrame(frame), poses, zeroMountConfig(), &gyro};
-    const auto out = source.nextFrame();
-    ASSERT_TRUE(out.has_value());
-    EXPECT_EQ(out->rays.size(), 3U);  // no ray is dropped for motion
-    EXPECT_TRUE(out->packet_continuity_valid);
-    EXPECT_NEAR(out->origin_rise_bound_m, vz < 0.0 ? 0.3 : 0.0, 1.0e-9) << vz;
-    EXPECT_NEAR(out->origin_fall_bound_m, vz < 0.0 ? 0.0 : 0.3, 1.0e-9) << vz;
-  }
-}
-
-TEST(LevelingRaySourceTest, BoundsAreZeroForAFrameThatDoesNotMove)
-{
-  const History poses{poseAtX(500U, 0.0, 0.0, 0.0), poseAtX(2500U, 0.0, 0.0, 0.0)};
-  const StillGyro gyro;
-  RayFrame frame;
-  frame.rays = {returnRay(1000U, 4.0F), noReturnRay(2000U)};
-  LevelingRaySource source{oneFrame(frame), poses, zeroMountConfig(), &gyro};
-  const auto out = source.nextFrame();
-  ASSERT_TRUE(out.has_value());
-  EXPECT_EQ(out->origin_rise_bound_m, 0.0);
-  EXPECT_EQ(out->origin_fall_bound_m, 0.0);
-}
-
 TEST(LevelingRaySourceTest, FrameWithoutAnyRayTimeIsPassedThroughAndInnerDiscontinuityIsKept)
 {
   const History poses{poseAtX(500U, 0.0), poseAtX(1500U, 1.0), poseAtX(2500U, 2.0)};
@@ -256,8 +217,6 @@ TEST(LevelingRaySourceTest, FrameWithoutAnyRayTimeIsPassedThroughAndInnerDiscont
   ASSERT_EQ(out->rays.size(), 1U);
   EXPECT_EQ(out->rays[0].range_m, 4.0F);
   EXPECT_FALSE(out->packet_continuity_valid);
-  EXPECT_TRUE(std::isnan(out->origin_rise_bound_m));  // not leveled, so not provided
-  EXPECT_TRUE(std::isnan(out->origin_fall_bound_m));
 
   RayFrame ok_frame;
   ok_frame.rays = {returnRay(1000U, 4.0F)};
@@ -265,38 +224,6 @@ TEST(LevelingRaySourceTest, FrameWithoutAnyRayTimeIsPassedThroughAndInnerDiscont
   const auto out2 = kept.nextFrame();
   ASSERT_TRUE(out2.has_value());
   EXPECT_FALSE(out2->packet_continuity_valid);  // a discontinuity of the inner source is never cleared
-}
-
-TEST(LevelingRaySourceTest, FrameBoundsShortenTheFreeDistanceInTheSectorMap)
-{
-  // The sensor climbs 0.3 m between the reference ray (1000 ns) and the later rays (2000 ns). With a
-  // band 1 m above the origin, a no-return 3 degrees up now certifies 0.7 m of room, not 1 m.
-  const History poses{
-    poseAtX(500U, 0.0, 0.0, 0.0, -3.0e5), poseAtX(1500U, 0.0, -0.3, 0.0, -3.0e5),
-    poseAtX(2500U, 0.0, -0.6, 0.0, -3.0e5)};
-  const StillGyro gyro;
-  const float three = 3.0F * 3.14159265358979323846F / 180.0F;
-  const auto no_return_at = [three](uint64_t time_ns, float elevation_sign) {
-      RaySample r = noReturnRay(time_ns);
-      r.elevation_rad = elevation_sign * three;
-      return r;
-    };
-  RayFrame frame;
-  frame.rays = {no_return_at(1000U, 1.0F), no_return_at(1000U, -1.0F), no_return_at(2000U, 1.0F),
-    no_return_at(2000U, -1.0F)};
-  LevelingRaySource source{oneFrame(frame), poses, zeroMountConfig(), &gyro};
-  const auto out = source.nextFrame();
-  ASSERT_TRUE(out.has_value());
-
-  obstacle_sector_map::SectorMapBuilder builder{obstacle_sector_map::SectorMapConfig{1.0F, 1.0F, 0.5F, 2U, 2U}};
-  builder.reset(
-    out->packet_continuity_valid, static_cast<float>(out->origin_rise_bound_m),
-    static_cast<float>(out->origin_fall_bound_m));
-  for (const auto & ray : out->rays) {
-    builder.addRay(ray);
-  }
-  const auto sector = builder.finalize().sectors[0];
-  EXPECT_NEAR(sector.distance_m, 0.7F / std::tan(three), 1.0e-3F);
 }
 
 TEST(LevelingRaySourceTest, ReferenceIsTheEarliestRayThatTheSectorMapTakes)

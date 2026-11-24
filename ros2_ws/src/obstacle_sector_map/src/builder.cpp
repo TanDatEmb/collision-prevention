@@ -2,7 +2,6 @@
 
 #include <algorithm>
 #include <cmath>
-#include <functional>
 #include <limits>
 #include <stdexcept>
 
@@ -55,18 +54,6 @@ float horizontalProjectedRange(const RaySample & ray)
   return ray.range_m * std::cos(ray.elevation_rad);
 }
 
-// The n-th largest value; 0 when fewer than n values exist (no certification).
-float nthLargestOrZero(std::vector<float> values, uint32_t n)
-{
-  if (values.size() < n) {
-    return 0.0F;
-  }
-
-  const auto nth = values.begin() + static_cast<std::ptrdiff_t>(n - 1U);
-  std::nth_element(values.begin(), nth, values.end(), std::greater<float>());
-  return *nth;
-}
-
 // Near edge of the nearest window of width `window_m` that holds at least `min_returns` ranges;
 // NaN when there is none. A few isolated returns never fill a window.
 float confirmedObstacleDistance(std::vector<float> ranges, float window_m, uint32_t min_returns)
@@ -95,23 +82,12 @@ SectorMapBuilder::SectorMapBuilder(const SectorMapConfig & config) : _config(con
     throw std::invalid_argument("invalid sector-map configuration");
   }
 
-  reset(false, 0.0F, 0.0F);
+  reset(false);
 }
 
-void SectorMapBuilder::reset(
-  bool packet_continuity_valid, float origin_rise_bound_m, float origin_fall_bound_m)
+void SectorMapBuilder::reset(bool packet_continuity_valid)
 {
   _packet_continuity_valid = packet_continuity_valid;
-  // NaN is "not provided": no correction. A negative or infinite bound is wrong and leaves no room.
-  const auto room_m = [](float height_m, float bound_m) {
-      if (std::isnan(bound_m)) {
-        return height_m;
-      }
-      return std::isfinite(bound_m) && bound_m >= 0.0F ? height_m - bound_m :
-             -std::numeric_limits<float>::infinity();
-    };
-  _room_up_m = room_m(_config.height_up_m, origin_rise_bound_m);
-  _room_down_m = room_m(_config.height_down_m, origin_fall_bound_m);
   _sample_timestamp_ns = 0U;
   _accepted_ray_count = 0U;
   _rejected_ray_count = 0U;
@@ -123,8 +99,6 @@ void SectorMapBuilder::reset(
     accumulator.up_ray_count = 0U;
     accumulator.down_ray_count = 0U;
     accumulator.obstacle_ranges_m.clear();
-    accumulator.free_up_m.clear();
-    accumulator.free_down_m.clear();
   }
 }
 
@@ -160,7 +134,11 @@ void SectorMapBuilder::addRay(const RaySample & ray)
   if (ray.return_kind == RayReturnKind::kReturn) {
     const float horizontal_range_m = horizontalProjectedRange(ray);
     const float height_m = ray.range_m * std::sin(ray.elevation_rad);
-    const bool in_band = height_m <= _config.height_up_m && height_m >= -_config.height_down_m;
+    // ADR 0024 decision 3: with an attitude error up to the allowance the return may lie anywhere in
+    // [height - slack, height + slack]; it is obstacle evidence when that interval meets the band.
+    const float slack_m = horizontal_range_m * std::tan(_config.attitude_allowance_rad);
+    const bool in_band =
+      height_m - slack_m <= _config.height_up_m && height_m + slack_m >= -_config.height_down_m;
 
     if (in_band && horizontal_range_m <= kMaxDistanceM) {
       // Obstacle evidence: a return inside the band within the qualified range. On a sector boundary it
@@ -204,30 +182,15 @@ void SectorMapBuilder::addObstacleReturn(
 
 void SectorMapBuilder::addFreeEvidence(std::size_t sector_index, const RaySample & ray)
 {
+  // Not obstacle evidence. Under ADR 0024 a ray certifies no distance of its own: it counts for the coverage
+  // of the half it points into (a horizon ray counts in both).
   auto & accumulator = _accumulators.at(sector_index);
   ++accumulator.contributing_ray_count;
   ++accumulator.clear_ray_count;
-
-  // end: the return range, or the qualified range for a no-return; the distance is horizontal and
-  // never more than the qualified range. room / tan|elevation| is where the ray leaves the band, room being
-  // the band height less the vertical origin motion of the frame (ADR 0022); no room (<= 0) certifies 0 and
-  // is tested before the division.
-  const float end_m = ray.return_kind == RayReturnKind::kReturn ? ray.range_m : kMaxDistanceM;
-  const float elevation_rad = ray.elevation_rad;
-  const float horizontal_end_m = std::min(end_m * std::cos(elevation_rad), kMaxDistanceM);
-  const float inf = std::numeric_limits<float>::infinity();
-
-  if (elevation_rad >= 0.0F) {
-    const float leaves_band_m = _room_up_m <= 0.0F ? 0.0F :
-      (elevation_rad > 0.0F ? _room_up_m / std::tan(elevation_rad) : inf);
-    accumulator.free_up_m.push_back(std::min(horizontal_end_m, leaves_band_m));
+  if (ray.elevation_rad >= 0.0F) {
     ++accumulator.up_ray_count;
   }
-
-  if (elevation_rad <= 0.0F) {
-    const float leaves_band_m = _room_down_m <= 0.0F ? 0.0F :
-      (elevation_rad < 0.0F ? _room_down_m / std::tan(-elevation_rad) : inf);
-    accumulator.free_down_m.push_back(std::min(horizontal_end_m, leaves_band_m));
+  if (ray.elevation_rad <= 0.0F) {
     ++accumulator.down_ray_count;
   }
 }
@@ -273,18 +236,15 @@ SectorMap SectorMapBuilder::finalize() const
       continue;
     }
 
-    // Free distance: the smaller of the two halves of the band; a half with fewer than n_free rays
-    // certifies nothing. It needs packet continuity, like the old clear rule.
+    // Free distance (ADR 0024 decision 1): a covered sector is certified free to the range the sampling
+    // resolves, the platform value certified_range_m. It needs packet continuity, like the old clear rule.
     float free_m = nan;
 
     if (_packet_continuity_valid) {
-      const float up_m = nthLargestOrZero(accumulator.free_up_m, _config.free_min_rays);
-      free_m = rear ? up_m : std::min(up_m, nthLargestOrZero(accumulator.free_down_m, _config.free_min_rays));
+      free_m = _config.certified_range_m;
       sector.free_distance_m = free_m;
     }
 
-    // A half with fewer than n_free rays certifies nothing: that is no evidence, and no evidence never
-    // shortens a confirmed obstacle distance (a wall that fills the sector leaves no free ray at all).
     const bool free_certified = std::isfinite(free_m) && free_m > 0.0F;
 
     if (!has_obstacle && !free_certified) {

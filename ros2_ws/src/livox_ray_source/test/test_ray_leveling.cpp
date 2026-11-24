@@ -126,11 +126,10 @@ LevelingConfig configOf(const Mount & mount, const Vec & lever_arm_flu_m = {0.0,
     mount.roll_rad, mount.pitch_down_rad, mount.yaw_left_rad, lever_arm_flu_m};
 }
 
-// level() with the rise output ignored, for the tests that do not look at it.
+// level() through the leveler under test.
 LevelingStatus levelRay(const RayLeveler & leveler, RaySample & ray)
 {
-  double rise_m = 0.0;
-  return leveler.level(ray, rise_m);
+  return leveler.level(ray);
 }
 
 // Sensor FLU ray (azimuth, elevation, range) of a point given in the output frame convention:
@@ -554,60 +553,52 @@ TEST(RayLevelerTest, NeitherReturnNorNoReturnIsDroppedForMotion)
   RayLeveler leveler{poses, configOf(kZeroMount), poses.gyro()};
   ASSERT_EQ(leveler.beginFrame(kRefNs), LevelingStatus::kOk);
   RaySample ray = sensorReturn(4.0, 0.0, 0.0);
-  double rise_m = 0.0;
-  ASSERT_EQ(leveler.level(ray, rise_m), LevelingStatus::kOk);
+  ASSERT_EQ(leveler.level(ray), LevelingStatus::kOk);
   // The end point is 4 m ahead of the vehicle, which is far_m ahead of and far_m above the
   // reference origin: from the reference origin it is (4 + far, 0, +far).
   const double x = 4.0 + far_m;
   EXPECT_NEAR(ray.range_m, static_cast<float>(std::hypot(x, far_m)), 1.0e-4F);
   EXPECT_NEAR(ray.elevation_rad, static_cast<float>(std::atan2(far_m, x)), kAngleTol);
-  EXPECT_NEAR(rise_m, far_m, 1.0e-9);
 
   RaySample no_return{
     kRayNs, std::numeric_limits<float>::quiet_NaN(), 0.2F, 0.1F, false,
     RayReturnKind::kQualifiedNoReturn};
-  ASSERT_EQ(leveler.level(no_return, rise_m), LevelingStatus::kOk);
+  ASSERT_EQ(leveler.level(no_return), LevelingStatus::kOk);
   EXPECT_NEAR(no_return.azimuth_rad, 0.2F, kAngleTol);  // direction only, nothing to shift
   EXPECT_NEAR(no_return.elevation_rad, 0.1F, kAngleTol);
-  EXPECT_NEAR(rise_m, far_m, 1.0e-9);
-}
-
-TEST(RayLevelerTest, RiseIsPositiveWhenTheOriginIsHigherAndNegativeWhenLower)
-{
-  for (const double up_m : {0.3, -0.2, 0.0}) {
-    const Motion poses{poseOf(0, 0, 0), poseOf(0, 0, 0, {1.0, 2.0, -up_m})};
-    RayLeveler leveler{poses, configOf(kZeroMount), poses.gyro()};
-    ASSERT_EQ(leveler.beginFrame(kRefNs), LevelingStatus::kOk);
-    RaySample ray = sensorReturn(4.0, 0.0, 0.0);
-    double rise_m = 99.0;
-    ASSERT_EQ(leveler.level(ray, rise_m), LevelingStatus::kOk);
-    EXPECT_NEAR(rise_m, up_m, 1.0e-9) << up_m;
-  }
 }
 
 TEST(RayLevelerTest, LeverArmMovesTheOriginWithTheAttitude)
 {
-  // Sensor 0.12 m ahead and 0.14 m above the body origin. The reference is level; at the ray time the
-  // vehicle is pitched nose up by 10 degrees at the same position: the sensor is then higher by
-  // 0.12 sin(10) + 0.14 cos(10) - 0.14 = 0.0187 m and 0.12 cos(10) - 0.14 sin(10) - 0.12 ahead.
+  // Sensor 0.12 m ahead and 0.14 m above the body origin. The reference is level; at the ray time the vehicle is
+  // pitched nose up by 10 degrees at the same position, so the sensor has moved by R_i L - L. A return 4 m along the
+  // boresight is then seen from the reference sensor position at that offset plus the rotated ray (written
+  // independently below, in NED with the lever arm in FRD).
   const double pitch = 10.0 * kDeg;
   const Motion poses{poseOf(0, 0, 0), poseOf(0, pitch, 0)};
   const Vec lever{0.12, 0.0, 0.14};
   RayLeveler leveler{poses, configOf(kZeroMount, lever), poses.gyro()};
   ASSERT_EQ(leveler.beginFrame(kRefNs), LevelingStatus::kOk);
   RaySample ray = sensorReturn(4.0, 0.0, 0.0);
-  double rise_m = 0.0;
-  ASSERT_EQ(leveler.level(ray, rise_m), LevelingStatus::kOk);
-  const double expected_rise = 0.12 * std::sin(pitch) + 0.14 * std::cos(pitch) - 0.14;
-  EXPECT_NEAR(rise_m, expected_rise, 1.0e-9);
+  ASSERT_EQ(levelRay(leveler, ray), LevelingStatus::kOk);
+  const Mat r_i = bodyFrdToNed(0.0, pitch, 0.0);
+  const Vec l_frd{0.12, 0.0, -0.14};
+  const Vec moved = matVec(r_i, l_frd);
+  const Vec seen = matVec(r_i, Vec{4.0, 0.0, 0.0});
+  const Vec p_ned{moved[0] - l_frd[0] + seen[0], moved[1] - l_frd[1] + seen[1], moved[2] - l_frd[2] + seen[2]};
+  const double up = -p_ned[2];
+  EXPECT_NEAR(ray.range_m, static_cast<float>(std::sqrt(p_ned[0] * p_ned[0] + up * up)), kRangeTol);
+  EXPECT_NEAR(ray.elevation_rad, static_cast<float>(std::atan2(up, p_ned[0])), kAngleTol);
+  // The rise of the sensor alone is 0.12 sin(10) + 0.14 cos(10) - 0.14 = 0.0187 m.
+  EXPECT_NEAR(-(moved[2] - l_frd[2]), 0.12 * std::sin(pitch) + 0.14 * std::cos(pitch) - 0.14, 1.0e-12);
 
-  // A pure rotation about the sensor itself would keep the sensor in place: with no lever arm the
-  // origin is the body origin and nothing moves.
+  // With no lever arm the origin is the body origin, which does not move: only the rotation remains.
   RayLeveler no_lever{poses, configOf(kZeroMount), poses.gyro()};
   ASSERT_EQ(no_lever.beginFrame(kRefNs), LevelingStatus::kOk);
   RaySample r2 = sensorReturn(4.0, 0.0, 0.0);
-  ASSERT_EQ(no_lever.level(r2, rise_m), LevelingStatus::kOk);
-  EXPECT_NEAR(rise_m, 0.0, 1.0e-12);
+  ASSERT_EQ(levelRay(no_lever, r2), LevelingStatus::kOk);
+  EXPECT_NEAR(r2.range_m, 4.0F, kRangeTol);
+  EXPECT_NEAR(r2.elevation_rad, static_cast<float>(pitch), kAngleTol);
 }
 
 TEST(RayLevelerTest, ReturnWhoseEndPointFallsOnTheReferenceOriginIsDroppedNotKept)

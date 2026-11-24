@@ -23,7 +23,7 @@ namespace
 {
 
 constexpr uint64_t kWindowNs = 1'000U;
-constexpr SectorMapConfig kConfig{1.0F, 1.0F, 0.5F, 2U, 2U};
+constexpr SectorMapConfig kConfig{1.0F, 1.0F, 0.5F, 2U, 2U, 40.0F, 0.0F};
 
 StreamSample makeNoReturn(uint64_t timestamp_ns, float azimuth_rad = 0.0F, bool brk = false)
 {
@@ -154,9 +154,7 @@ TEST(ReplayRaySourceTest, FrameDrivesSectorMapBuilderPerContract)
     ASSERT_TRUE(frame.has_value());
 
     SectorMapBuilder builder{kConfig};
-    builder.reset(
-      frame->packet_continuity_valid, static_cast<float>(frame->origin_rise_bound_m),
-      static_cast<float>(frame->origin_fall_bound_m));
+    builder.reset(frame->packet_continuity_valid);
     for (const auto & ray : frame->rays) {
       builder.addRay(ray);
     }

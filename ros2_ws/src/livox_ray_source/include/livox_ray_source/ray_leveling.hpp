@@ -91,8 +91,7 @@ enum class LevelingStatus : uint8_t
 ///      attitude at t_i is R_i = q_fmu(t_ref) * F * M * dR * M^T * F;
 ///   5. for a return, add the origin motion d_i = x_i + R_i L - x_ref - R_ref L (NED, L the lever arm), with
 ///      x_i = x_ref + v_ref * (t_i - t_ref) from the FMU velocity at t_ref; a no-return has no end point and
-///      keeps its direction only. The vertical part of d_i is reported to the caller (`origin_rise_m`),
-///      which bounds it for the sector map;
+///      keeps its direction only;
 ///   6. rotate about down by minus the heading at t_ref (heading-aligned FRD);
 ///   7. negate right and down (FRD to FLU).
 /// The ray then carries azimuth, elevation and range in the output frame documented at the top of this
@@ -118,11 +117,8 @@ public:
   LevelingStatus beginFrame(uint64_t reference_time_ns);
 
   /// Transforms `ray` in place. On any status other than kOk the ray is left unchanged and must
-  /// be dropped by the caller (see breaksFrameContinuity()). On kOk `origin_rise_m` is set to how
-  /// far the sensor at the ray time is above the sensor at the reference time, metres (negative
-  /// when it is below).
-  [[nodiscard]] LevelingStatus level(
-    obstacle_sector_map::RaySample & ray, double & origin_rise_m) const;
+  /// be dropped by the caller (see breaksFrameContinuity()).
+  [[nodiscard]] LevelingStatus level(obstacle_sector_map::RaySample & ray) const;
 
 private:
   const PoseHistory & _poses;
