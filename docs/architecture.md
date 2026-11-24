@@ -65,7 +65,7 @@ owner approves its pass criterion (SYS-CP-025, OPEN-043).
 | ID | Situation | Expected V1 behaviour | Trace | Lane | Today |
 | --- | --- | --- | --- | --- | --- |
 | OS-01 | Level approach to a large flat wall at 3 to 12 m/s, Position and Mission | Speed falls so that the vehicle is at rest at least `CPB_MARGIN` before the wall, without oscillation (SITL proof criteria a to c) | SYS-CP-001, 005, 012, PERF-01, 02, SAFE-01 | GZ, FLT | Specified |
-| OS-02 | Oblique wall, inside corner, outside corner, two obstacles at different bearings | The commanded direction is kept and only the speed is limited (ADR 0025); a sector counts only when its obstacle may lie within `CPB_MARGIN` of the path; no sliding, no sideways push; a blocked direction gives zero horizontal output | SYS-CP-010, 012 | UT, GZ | Partial: unit tests of the ADR 0008 rule only |
+| OS-02 | Oblique wall, inside corner, outside corner, two obstacles at different bearings | The commanded direction is kept and only the speed is limited (ADR 0025); a sector counts only when its obstacle may lie within `CPB_MARGIN` of the path; no sliding, no sideways push; a blocked direction gives zero horizontal output | SYS-CP-010, 012 | UT, GZ | Partial: unit tests of ADR 0025 (fork PR #11); Gazebo SITL with bench values: oblique wall 30 degrees stopped at 2.07 m, output direction equal to the input; inside and outside corners not run |
 | OS-03 | Pole or post 0.15 to 0.5 m wide, 5 to 40 m ahead, in the path and at its edge | Detected and stopped for a width >= 0.30 m (DET-01); a narrower target is outside the claim and is stated as such | DET-01, HZ-CP-002 | GZ, RPL, FLT | Partial: DET-01 only |
 | OS-04 | Obstacle covers only part of a 5 degree sector (building edge, pole, vehicle) | The sector takes the nearest return and its cap applies to the whole sector; the quantization error is half a sector (1.59 m at 36.5 m) | SYS-CP-011, ICD-CP-03 | UT, GZ | Specified |
 | OS-05 | Obstacle appears suddenly (from behind another obstacle or around a corner) | The cap tightens at once on the first valid return; stopping is claimed only if the obstacle appears outside the stopping envelope | SYS-CP-013, HZ-CP-001, ADR 0008 | GZ | Partial: envelope only |
@@ -245,7 +245,7 @@ flowchart LR
 | FEAT-12 | Cap law: stopping model per sector | `cp_brake` | Exists; `CPB_T_LAT` unmeasured | SYS-CP-001, 012, 027 |
 | FEAT-13 | Release policy: dwell and rise | `cp_brake` | Exists | SYS-CP-013 |
 | FEAT-14 | State machine and start-up | `cp_brake` | Exists; start-up: one lookup value `kNotYetGood` and one state input make a heading that became good after the map was sampled unqualified (NOT_READY, no latch), a stale map still stops at `CPB_AGE_STOP` (fork PR #10, #112; ADR 0020 D5 states the first rule, corrected by the next docs-sync PR) | SYS-CP-007, 014, 024 |
-| FEAT-15 | Setpoint limiting hook | `mc_pos_control` | Exists (fork PR #8, merged), SITL stopping proof at one world | SYS-CP-005, 006, 012 |
+| FEAT-15 | Setpoint limiting hook | `mc_pos_control` | Exists (fork PR #8, merged); direction kept, speed scaled in the `CPB_MARGIN` corridor (ADR 0025, fork PR #11, merged); SITL with bench values: six scenes (walls beside the leg, corridor, wall ahead, oblique wall, pole off the path) | SYS-CP-005, 006, 012 |
 | FEAT-16 | Mode scope and release | hook, `cp_brake` | Partial: Position and Mission only; release not recorded (#113) | SYS-CP-008, 023 |
 | FEAT-17 | Logging, status, diagnostics | `cp_brake`, hook, Orin node | Partial | SYS-CP-009, NFR-CP-003 |
 | FEAT-18 | Configuration and platform values | `config/platforms`, `CPB_` parameters | Partial: values TBD, sentinels fail safe | SYS-CP-007, OPEN-005 |
@@ -355,7 +355,9 @@ source: ADR 0004.
   vehicle command and never requests a mode.
 - `cp_brake_constraints` (uORB, from `cp_brake` to the limiter): publication `timestamp`;
   `sample_timestamp` of the source map; `heading_rad` and `heading_valid` at the sample time; 72
-  body-FRD velocity caps in m/s clamped to `[0, CPB_MAX_V]`; `enforcement_active`; `valid`; state;
+  body-FRD velocity caps in m/s clamped to `[0, CPB_MAX_V]`; `distances_m`, per sector the distance
+  whose stopping speed is the cap (ADR 0025; a cap of 0 gives `CPB_MARGIN`); `clearance_m`
+  (`CPB_MARGIN`, the half-width of the corridor of ADR 0025); `enforcement_active`; `valid`; state;
   reason flags; counters. `cp_brake_status` (uORB, logging, from `cp_brake`) carries the module's own
   status: the three timestamps and ages, state, reasons, input counters and the heading lookup.
   `cp_brake_hook` (uORB, logging, published by `mc_pos_control`, apart from `cp_brake_status` so that a
@@ -363,8 +365,10 @@ source: ADR 0004.
   timestamp is taken when the hook applies the constraint, so sample-to-hook is sample-to-enforcement),
   input and output setpoints and feed-forward, actual velocity, active sector, state, reasons and the action.
 - Hook (verified in the pinned source): `PositionControl::update()` runs `_positionControl()` and
-  then `_velocityControl(dt)`. The limiter acts between them on `_vel_sp.xy()` and removes
-  horizontal feed-forward acceleration `_acc_sp.xy()` toward an affected sector. `_vel_sp` there
+  then `_velocityControl(dt)`. The limiter acts between them on `_vel_sp.xy()`: it scales it, never
+  turns it, against the sectors in the `CPB_MARGIN` corridor of the setpoint or of the current
+  velocity `_vel.xy()` (ADR 0025), and clears the horizontal feed-forward acceleration `_acc_sp.xy()`
+  when it limits (ADR 0020). `_vel_sp` there
   already holds the position-error term and the feed-forward, so position-only Mission setpoints
   are covered. Vertical, yaw, attitude and actuator outputs are not touched; no second control
   thread.
@@ -741,7 +745,10 @@ adds 3,472 bytes: on `e539f947b0` the image is 1,889,748 bytes (96.12%), 76,332 
 of the hook: on `e1e9f5b3ed` (same tree as the reviewed head `2d8801ed1d`) the image is 1,893,860 bytes (96.33%), 72,220
 bytes free (measured 2026-11-21). #112 (the heading start-up, fork PR `TanDatEmb/PX4-Autopilot#10`) adds 136 bytes
 on top of that: on `5af0869ac4` (same tree as the reviewed head `5ca1fc2a35`) the image is 1,893,996 bytes (96.33%), 72,084
-bytes free (measured 2026-11-23). #65 (the limiter hook, fork PR `TanDatEmb/PX4-Autopilot#8`) adds 2,680 bytes: on
+bytes free (measured 2026-11-23). #199 (the hook keeps the direction, fork PR `TanDatEmb/PX4-Autopilot#11`) adds 400
+bytes, both images rebuilt on the same host on 2026-11-24: `5af0869ac4` 1,893,972 bytes, `30c59d5e18` 1,894,372 bytes
+(96.35%), 71,708 bytes free (the git version string makes the image vary by some tens of bytes between builds of
+the same tree). #65 (the limiter hook, fork PR `TanDatEmb/PX4-Autopilot#8`) adds 2,680 bytes: on
 `982a2d83ad` (same tree as the reviewed head `e0a2739b90`) the image is 1,892,428 bytes (96.25%), 73,652
 bytes free (measured 2026-11-21). Any flash margin and any size target stay TBD until approved by the
 owner.

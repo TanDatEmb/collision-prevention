@@ -47,7 +47,7 @@ Ubuntu 24.04 and ROS 2 Jazzy.
 
 | Dependency | Pin |
 | --- | --- |
-| PX4 | `v1.17.0-23-g5af0869ac4`, fork branch `collision-prevention/release-1.17` |
+| PX4 | `v1.17.0-24-g30c59d5e18`, fork branch `collision-prevention/release-1.17` |
 | px4_msgs | `86d8239`, branch `release/1.17` |
 | Livox SDK2 | `68ae1e1d` (vendor version 1.3.3, no release tag; last tag `v1.3.1`), license review open (OPEN-014) |
 | PX4 targets | `px4_fmu-v6x_multicopter`, `px4_sitl_default` |
