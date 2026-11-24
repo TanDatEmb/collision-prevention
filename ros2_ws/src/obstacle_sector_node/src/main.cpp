@@ -55,9 +55,9 @@
 #include "obstacle_sector_node/odometry_pose.hpp"
 #include "obstacle_sector_node/platform_config.hpp"
 #include "obstacle_sector_node/ring_cloud_source.hpp"
+#include "px4_msgs/msg/vehicle_odometry.hpp"
 #include "rclcpp/rclcpp.hpp"
 #include "sensor_msgs/msg/laser_scan.hpp"
-#include "px4_msgs/msg/vehicle_odometry.hpp"
 #include "sensor_msgs/msg/point_cloud2.hpp"
 
 namespace

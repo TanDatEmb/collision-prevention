@@ -82,11 +82,13 @@ TEST(MaskingRaySourceTest, KeepsContinuityAndRayContent)
 TEST(MaskingRaySourceTest, RejectsNullSourceAndBadMaxDistance)
 {
   EXPECT_THROW(
-    MaskingRaySource(nullptr, SelfMask{{kCylinder}, kAtSensor}, kMaxDistanceM), std::invalid_argument);
+    MaskingRaySource(nullptr, SelfMask{{kCylinder}, kAtSensor}, kMaxDistanceM),
+    std::invalid_argument);
 
   for (const double bad : {0.0, -1.0, std::numeric_limits<double>::quiet_NaN()}) {
     auto inner = std::make_unique<ReplayRaySource>(std::vector<StreamSample>{}, kWindowNs);
     EXPECT_THROW(
-      MaskingRaySource(std::move(inner), SelfMask{{kCylinder}, kAtSensor}, bad), std::invalid_argument);
+      MaskingRaySource(std::move(inner), SelfMask{{kCylinder}, kAtSensor}, bad),
+      std::invalid_argument);
   }
 }

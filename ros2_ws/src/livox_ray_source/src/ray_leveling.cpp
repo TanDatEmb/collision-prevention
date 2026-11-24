@@ -98,7 +98,8 @@ std::array<double, 9> mountRotation(const LevelingConfig & config)
 {
   // Sensor FLU to body FLU: Rz(yaw) * Ry(pitch) * Rx(roll).
   return multiply(
-    rotationZ(config.yaw_left_rad), multiply(rotationY(config.pitch_down_rad), rotationX(config.roll_rad)));
+    rotationZ(config.yaw_left_rad),
+    multiply(rotationY(config.pitch_down_rad), rotationX(config.roll_rad)));
 }
 
 RayLeveler::RayLeveler(

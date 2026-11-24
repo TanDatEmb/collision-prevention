@@ -23,7 +23,8 @@ bool inside(const MaskCylinder & c, double x, double y, double z)
 }
 
 // True when the segment o + t * d, t in [0, t_max], meets the cylinder.
-bool segmentCrosses(const MaskCylinder & c, const std::array<double, 3> & o, double dx, double dy, double dz,
+bool segmentCrosses(
+  const MaskCylinder & c, const std::array<double, 3> & o, double dx, double dy, double dz,
   double t_max)
 {
   double lo = 0.0;

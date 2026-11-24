@@ -28,7 +28,8 @@ const livox_ray_source::LevelingConfig kAtSensor{0.0, 0.0, 0.0, {0.0, 0.0, 0.0}}
 const livox_ray_source::LevelingConfig kX500Mount{0.0, 0.1745, 0.0, {0.12, 0.0, 0.14}};
 
 // The sensor-frame ray that ends at the body point p (inverse of the mount).
-RaySample rayTo(const livox_ray_source::LevelingConfig & mount, const std::array<double, 3> & p, bool is_return)
+RaySample rayTo(
+  const livox_ray_source::LevelingConfig & mount, const std::array<double, 3> & p, bool is_return)
 {
   const auto r = livox_ray_source::mountRotation(mount);
   const double bx = p[0] - mount.lever_arm_flu_m[0];
@@ -38,8 +39,13 @@ RaySample rayTo(const livox_ray_source::LevelingConfig & mount, const std::array
   const double sy = r[1] * bx + r[4] * by + r[7] * bz;
   const double sz = r[2] * bx + r[5] * by + r[8] * bz;
   const double range = std::sqrt(sx * sx + sy * sy + sz * sz);
-  RaySample ray{1'000U, static_cast<float>(range), static_cast<float>(std::atan2(sy, sx)),
-    static_cast<float>(std::asin(sz / range)), false, RayReturnKind::kReturn};
+  RaySample ray{
+    1'000U,
+    static_cast<float>(range),
+    static_cast<float>(std::atan2(sy, sx)),
+    static_cast<float>(std::asin(sz / range)),
+    false,
+    RayReturnKind::kReturn};
   if (!is_return) {
     ray.range_m = std::numeric_limits<float>::quiet_NaN();
     ray.return_kind = RayReturnKind::kQualifiedNoReturn;
@@ -151,9 +157,11 @@ TEST(SelfMaskTest, RejectsInvalidCylinders)
 {
   const double nan = std::numeric_limits<double>::quiet_NaN();
   EXPECT_THROW(SelfMask({}, kAtSensor), std::invalid_argument);
-  EXPECT_THROW(SelfMask({MaskCylinder{0.0, 0.0, 0.0, -0.1, 0.1}}, kAtSensor), std::invalid_argument);
+  EXPECT_THROW(
+    SelfMask({MaskCylinder{0.0, 0.0, 0.0, -0.1, 0.1}}, kAtSensor), std::invalid_argument);
   EXPECT_THROW(SelfMask({MaskCylinder{0.0, 0.0, 0.2, 0.1, 0.1}}, kAtSensor), std::invalid_argument);
-  EXPECT_THROW(SelfMask({MaskCylinder{nan, 0.0, 0.2, -0.1, 0.1}}, kAtSensor), std::invalid_argument);
+  EXPECT_THROW(
+    SelfMask({MaskCylinder{nan, 0.0, 0.2, -0.1, 0.1}}, kAtSensor), std::invalid_argument);
 }
 
 TEST(SelfMaskLoaderTest, LoadsCylindersFromYaml)
@@ -169,29 +177,39 @@ TEST(SelfMaskLoaderTest, LoadsCylindersFromYaml)
 TEST(SelfMaskLoaderTest, RejectsNullMissingEmptyAndNonNumericValues)
 {
   EXPECT_THROW(
-    loadSelfMask(writeYaml(
-      "null",
-      "self_mask:\n  cylinders:\n    - center_m: [null, null]\n      radius_m: null\n"
-      "      z_min_m: null\n      z_max_m: null\n"), kAtSensor),
+    loadSelfMask(
+      writeYaml(
+        "null",
+        "self_mask:\n  cylinders:\n    - center_m: [null, null]\n      radius_m: null\n"
+        "      z_min_m: null\n      z_max_m: null\n"),
+      kAtSensor),
     std::invalid_argument);
   EXPECT_THROW(
-    loadSelfMask(writeYaml(
-      "missing", "self_mask:\n  cylinders:\n    - center_m: [1.0, 0.0]\n      radius_m: 0.2\n"), kAtSensor),
+    loadSelfMask(
+      writeYaml(
+        "missing", "self_mask:\n  cylinders:\n    - center_m: [1.0, 0.0]\n      radius_m: 0.2\n"),
+      kAtSensor),
     std::invalid_argument);
   EXPECT_THROW(
-    loadSelfMask(writeYaml("empty", "self_mask:\n  cylinders: []\n"), kAtSensor), std::invalid_argument);
-  EXPECT_THROW(loadSelfMask(writeYaml("nolist", "sensor:\n  model: x\n"), kAtSensor), std::invalid_argument);
-  EXPECT_THROW(
-    loadSelfMask(writeYaml(
-      "text",
-      "self_mask:\n  cylinders:\n    - center_m: [1.0, 0.0]\n      radius_m: wide\n"
-      "      z_min_m: -0.1\n      z_max_m: 0.1\n"), kAtSensor),
+    loadSelfMask(writeYaml("empty", "self_mask:\n  cylinders: []\n"), kAtSensor),
     std::invalid_argument);
   EXPECT_THROW(
-    loadSelfMask(writeYaml(
-      "threevalues",
-      "self_mask:\n  cylinders:\n    - center_m: [1.0, 0.0, 0.0]\n      radius_m: 0.2\n"
-      "      z_min_m: -0.1\n      z_max_m: 0.1\n"), kAtSensor),
+    loadSelfMask(writeYaml("nolist", "sensor:\n  model: x\n"), kAtSensor), std::invalid_argument);
+  EXPECT_THROW(
+    loadSelfMask(
+      writeYaml(
+        "text",
+        "self_mask:\n  cylinders:\n    - center_m: [1.0, 0.0]\n      radius_m: wide\n"
+        "      z_min_m: -0.1\n      z_max_m: 0.1\n"),
+      kAtSensor),
+    std::invalid_argument);
+  EXPECT_THROW(
+    loadSelfMask(
+      writeYaml(
+        "threevalues",
+        "self_mask:\n  cylinders:\n    - center_m: [1.0, 0.0, 0.0]\n      radius_m: 0.2\n"
+        "      z_min_m: -0.1\n      z_max_m: 0.1\n"),
+      kAtSensor),
     std::invalid_argument);
   EXPECT_THROW(loadSelfMask("/nonexistent/self_mask.yaml", kAtSensor), std::invalid_argument);
 }
@@ -218,7 +236,8 @@ TEST(SelfMaskBodyFrameTest, TheMountCarriesTheRayIntoTheBodyFrame)
 TEST(SelfMaskBodyFrameTest, AMountThatIsNotValidIsRefused)
 {
   const double nan = std::numeric_limits<double>::quiet_NaN();
-  EXPECT_THROW(SelfMask({kCylinder}, livox_ray_source::LevelingConfig{0.0, nan, 0.0, {0.0, 0.0, 0.0}}),
+  EXPECT_THROW(
+    SelfMask({kCylinder}, livox_ray_source::LevelingConfig{0.0, nan, 0.0, {0.0, 0.0, 0.0}}),
     std::invalid_argument);
   EXPECT_THROW(SelfMask({kCylinder}, livox_ray_source::LevelingConfig{}), std::invalid_argument);
 }
@@ -229,7 +248,8 @@ TEST(SelfMaskLoaderTest, RepositoryPlatformConfigHoldsTheFourPropellerCylinders)
   const auto mask = loadSelfMask(X500_YAML_PATH, kX500Mount);
   for (const double x : {0.174, -0.174}) {
     for (const double y : {0.174, -0.174}) {
-      EXPECT_TRUE(mask.isMasked(rayTo(kX500Mount, {x, y, 0.05}, true), kMaxDistanceM)) << x << " " << y;
+      EXPECT_TRUE(mask.isMasked(rayTo(kX500Mount, {x, y, 0.05}, true), kMaxDistanceM))
+        << x << " " << y;
     }
   }
   EXPECT_FALSE(mask.isMasked(rayTo(kX500Mount, {2.0, 0.0, 0.0}, true), kMaxDistanceM));
