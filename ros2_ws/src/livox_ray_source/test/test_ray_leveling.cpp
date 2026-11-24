@@ -2,14 +2,18 @@
 
 #include <array>
 #include <cmath>
+#include <algorithm>
 #include <functional>
 #include <limits>
 #include <stdexcept>
 
+#include "livox_ray_source/gyro_track.hpp"
 #include "livox_ray_source/pose_history.hpp"
 #include "livox_ray_source/ray_leveling.hpp"
 
 using livox_ray_source::breaksFrameContinuity;
+using livox_ray_source::GyroSample;
+using livox_ray_source::GyroTrack;
 using livox_ray_source::LevelingConfig;
 using livox_ray_source::LevelingStatus;
 using livox_ray_source::PoseHistory;
@@ -27,6 +31,8 @@ constexpr double kPi = 3.14159265358979323846;
 constexpr double kDeg = kPi / 180.0;
 constexpr double kFixtureMountPitchDownRad = 10.0 * kDeg;  // the ADR 0020 example, as a fixture
 constexpr uint64_t kMs = 1'000'000U;
+constexpr uint64_t kRefNs = 50U * kMs;  // the reference time of the fixtures
+constexpr uint64_t kRayNs = 100U * kMs;  // the ray time of the helpers, 50 ms after the reference
 constexpr float kAngleTol = 1.0e-5F;
 constexpr float kRangeTol = 1.0e-4F;
 
@@ -132,7 +138,7 @@ LevelingStatus levelRay(const RayLeveler & leveler, RaySample & ray)
 RaySample sensorReturn(double range_m, double azimuth_rad, double elevation_rad)
 {
   return RaySample{
-    1'000U, static_cast<float>(range_m), static_cast<float>(azimuth_rad),
+    kRayNs, static_cast<float>(range_m), static_cast<float>(azimuth_rad),
     static_cast<float>(elevation_rad), false, RayReturnKind::kReturn};
 }
 
@@ -151,7 +157,6 @@ RaySample rayToNedPoint(
 }
 
 constexpr uint64_t kFixtureMaxGapNs = 1'000'000'000U;
-constexpr uint64_t kRefNs = 500U;  // differs from the ray time (1000 ns) of the helpers
 
 PoseSample at(PoseSample pose, uint64_t time_ns)
 {
@@ -164,27 +169,78 @@ PoseHistoryConfig fixtureHistoryConfig()
   return PoseHistoryConfig{8U, kFixtureMaxGapNs};
 }
 
-// A history with one pose at the reference time and `at_ray` at 900 ns and 1100 ns, so that every
-// query between them (the ray time of the helpers is 1000 ns) gets `at_ray` and a query at the
-// reference time gets `at_reference`.
-class TwoPoseHistory : public PoseHistory
+const PoseHistoryConfig kFixtureGyroConfig{64U, 20U * kMs};
+
+Mat rotationOfQuaternion(const std::array<double, 4> & q)
+{
+  const double w = q[0], x = q[1], y = q[2], z = q[3];
+  return {{{1 - 2 * (y * y + z * z), 2 * (x * y - w * z), 2 * (x * z + w * y)},
+    {2 * (x * y + w * z), 1 - 2 * (x * x + z * z), 2 * (y * z - w * x)},
+    {2 * (x * z - w * y), 2 * (y * z + w * x), 1 - 2 * (x * x + y * y)}}};
+}
+
+// Rotation vector (axis times angle) of a rotation matrix, for angles below pi.
+Vec rotationVectorOf(const Mat & r)
+{
+  const double c = std::max(-1.0, std::min(1.0, 0.5 * (r[0][0] + r[1][1] + r[2][2] - 1.0)));
+  const double angle = std::acos(c);
+  if (angle < 1.0e-12) {
+    return {0.0, 0.0, 0.0};
+  }
+  const double k = angle / (2.0 * std::sin(angle));
+  return {k * (r[2][1] - r[1][2]), k * (r[0][2] - r[2][0]), k * (r[1][0] - r[0][1])};
+}
+
+// A gyro track that turns at a constant rate from before `from_ns` to after `to_ns`.
+void pushConstantRate(GyroTrack & gyro, const Vec & rate_flu_rad_s, uint64_t from_ns, uint64_t to_ns)
+{
+  for (uint64_t t = from_ns - 10U * kMs; t <= to_ns + 10U * kMs; t += 5U * kMs) {
+    GyroSample s;
+    s.timestamp_ns = t;
+    s.rate_flu_rad_s = rate_flu_rad_s;
+    gyro.push(s);
+  }
+}
+
+// The inputs of ADR 0023 for a vehicle that has the pose `at_reference` at the reference time and the pose
+// `at_ray` at the ray time: the FMU pose at the reference time, with the velocity that moves the body from
+// one position to the other, and a gyro that turns at the constant rate that takes the sensor from one
+// attitude to the other (dR = (F M)^T R_ref^T R_ray (F M), written here independently of the code).
+class Motion : public PoseHistory
 {
 public:
-  TwoPoseHistory(const PoseSample & at_reference, const PoseSample & at_ray)
-  : PoseHistory(fixtureHistoryConfig())
+  Motion(
+    const PoseSample & at_reference, const PoseSample & at_ray, const Mount & mount = Mount{0.0, 0.0, 0.0},
+    uint64_t reference_ns = kRefNs, uint64_t ray_ns = kRayNs)
+  : PoseHistory(fixtureHistoryConfig()), _gyro(kFixtureGyroConfig)
   {
-    push(at(at_reference, kRefNs));
-    push(at(at_ray, 900U));
-    push(at(at_ray, 1100U));
+    const double dt_s = static_cast<double>(ray_ns - reference_ns) * 1.0e-9;
+    PoseSample reference = at(at_reference, reference_ns);
+    for (std::size_t i = 0U; i < 3U; ++i) {
+      reference.velocity_ned_m_s[i] = (at_ray.position_ned_m[i] - at_reference.position_ned_m[i]) / dt_s;
+    }
+    push(reference);
+    const Mat f{{{1, 0, 0}, {0, -1, 0}, {0, 0, -1}}};
+    const Mat a = mul(f, mul(rz(mount.yaw_left_rad), mul(ry(mount.pitch_down_rad), rx(mount.roll_rad))));
+    const Mat d_r = mul(
+      transpose(a), mul(transpose(rotationOfQuaternion(at_reference.q_wxyz)),
+      mul(rotationOfQuaternion(at_ray.q_wxyz), a)));
+    const Vec angle = rotationVectorOf(d_r);
+    pushConstantRate(_gyro, {angle[0] / dt_s, angle[1] / dt_s, angle[2] / dt_s}, reference_ns, ray_ns);
   }
+
+  [[nodiscard]] const GyroTrack * gyro() const {return &_gyro;}
+
+private:
+  GyroTrack _gyro;
 };
 
 // The same pose at every time of the helpers.
-class ConstantPoseHistory : public TwoPoseHistory
+class ConstantMotion : public Motion
 {
 public:
-  explicit ConstantPoseHistory(const PoseSample & pose)
-  : TwoPoseHistory(pose, pose) {}
+  explicit ConstantMotion(const PoseSample & pose)
+  : Motion(pose, pose) {}
 };
 
 const Mount kZeroMount = mountOf(0.0, 0.0, 0.0);
@@ -203,8 +259,8 @@ TEST(LevelingConfigTest, DefaultHoldsTheSentinelsAndIsNotValid)
   EXPECT_TRUE(std::isnan(config.lever_arm_flu_m[1]));
   EXPECT_TRUE(std::isnan(config.lever_arm_flu_m[2]));
   EXPECT_FALSE(config.isValid());
-  const ConstantPoseHistory poses{poseOf(0, 0, 0)};
-  EXPECT_THROW((RayLeveler{poses, config}), std::invalid_argument);
+  const ConstantMotion poses{poseOf(0, 0, 0)};
+  EXPECT_THROW((RayLeveler{poses, config, poses.gyro()}), std::invalid_argument);
 }
 
 TEST(LevelingConfigTest, EachRequiredValueIsChecked)
@@ -234,8 +290,8 @@ TEST(LevelingConfigTest, EachRequiredValueIsChecked)
 
 TEST(RayLevelerTest, ZeroPoseAndZeroMountReproduceTheFluRayDirectly)
 {
-  const ConstantPoseHistory poses{poseOf(0, 0, 0)};
-  RayLeveler leveler{poses, configOf(kZeroMount)};
+  const ConstantMotion poses{poseOf(0, 0, 0)};
+  RayLeveler leveler{poses, configOf(kZeroMount), poses.gyro()};
   ASSERT_EQ(leveler.beginFrame(kRefNs), LevelingStatus::kOk);
   for (const double az : {-2.5, -1.0, 0.0, 0.7, 3.0}) {
     for (const double el : {-0.4, 0.0, 0.3}) {
@@ -250,14 +306,14 @@ TEST(RayLevelerTest, ZeroPoseAndZeroMountReproduceTheFluRayDirectly)
 
 TEST(RayLevelerTest, TheTimestampTheMaskAndTheKindAreKept)
 {
-  const ConstantPoseHistory poses{poseOf(0.1, -0.2, 0.3)};
-  RayLeveler leveler{poses, configOf(kZeroMount)};
+  const ConstantMotion poses{poseOf(0.1, -0.2, 0.3)};
+  RayLeveler leveler{poses, configOf(kZeroMount), poses.gyro()};
   ASSERT_EQ(leveler.beginFrame(kRefNs), LevelingStatus::kOk);
   RaySample ray = sensorReturn(5.0, 0.2, 0.1);
-  ray.timestamp_ns = 1'050U;
+  ray.timestamp_ns = kRayNs + 1'050U;
   ray.masked = true;
   ASSERT_EQ(levelRay(leveler, ray), LevelingStatus::kOk);
-  EXPECT_EQ(ray.timestamp_ns, 1'050U);
+  EXPECT_EQ(ray.timestamp_ns, kRayNs + 1'050U);
   EXPECT_TRUE(ray.masked);
   EXPECT_EQ(ray.return_kind, RayReturnKind::kReturn);
 }
@@ -267,8 +323,8 @@ TEST(RayLevelerTest, MountPitchedDownPutsTheBoresightBelowTheHorizonWithALevelVe
   // Convention: positive pitch_down_rad tilts the sensor boresight (sensor +x) DOWN, so with a
   // level vehicle a ray along the boresight has an elevation of minus the mount angle. A ray at
   // +mount angle in the sensor frame is the body horizon.
-  const ConstantPoseHistory poses{poseOf(0, 0, 0)};
-  RayLeveler leveler{poses, configOf(mountOf(0.0, kFixtureMountPitchDownRad, 0.0))};
+  const ConstantMotion poses{poseOf(0, 0, 0)};
+  RayLeveler leveler{poses, configOf(mountOf(0.0, kFixtureMountPitchDownRad, 0.0)), poses.gyro()};
   ASSERT_EQ(leveler.beginFrame(kRefNs), LevelingStatus::kOk);
 
   RaySample boresight = sensorReturn(10.0, 0.0, 0.0);
@@ -297,8 +353,8 @@ TEST(RayLevelerTest, MountRollAndYawFollowTheirDocumentedSigns)
 {
   // Roll about forward, positive = left side up: the sensor's left axis (+y) rises.
   {
-    const ConstantPoseHistory poses{poseOf(0, 0, 0)};
-    RayLeveler leveler{poses, configOf(mountOf(0.1, 0.0, 0.0))};
+    const ConstantMotion poses{poseOf(0, 0, 0)};
+    RayLeveler leveler{poses, configOf(mountOf(0.1, 0.0, 0.0)), poses.gyro()};
     ASSERT_EQ(leveler.beginFrame(kRefNs), LevelingStatus::kOk);
     RaySample left = sensorReturn(10.0, kPi / 2.0, 0.0);
     ASSERT_EQ(levelRay(leveler, left), LevelingStatus::kOk);
@@ -306,8 +362,8 @@ TEST(RayLevelerTest, MountRollAndYawFollowTheirDocumentedSigns)
   }
   // Yaw about up, positive = boresight turned to the left.
   {
-    const ConstantPoseHistory poses{poseOf(0, 0, 0)};
-    RayLeveler leveler{poses, configOf(mountOf(0.0, 0.0, 0.2))};
+    const ConstantMotion poses{poseOf(0, 0, 0)};
+    RayLeveler leveler{poses, configOf(mountOf(0.0, 0.0, 0.2)), poses.gyro()};
     ASSERT_EQ(leveler.beginFrame(kRefNs), LevelingStatus::kOk);
     RaySample boresight = sensorReturn(10.0, 0.0, 0.0);
     ASSERT_EQ(levelRay(leveler, boresight), LevelingStatus::kOk);
@@ -320,8 +376,8 @@ TEST(RayLevelerTest, LateralAndVerticalSignsAreNotMirrored)
   // A point on the vehicle's left stays positive left, a point above stays positive up, for a
   // level vehicle with any heading (the heading is the reference heading too).
   for (const double yaw : {0.0, 0.5, -2.0, 3.0}) {
-    const ConstantPoseHistory poses{poseOf(0, 0, yaw)};
-    RayLeveler leveler{poses, configOf(kZeroMount)};
+    const ConstantMotion poses{poseOf(0, 0, yaw)};
+    RayLeveler leveler{poses, configOf(kZeroMount), poses.gyro()};
     ASSERT_EQ(leveler.beginFrame(kRefNs), LevelingStatus::kOk);
     RaySample left = sensorReturn(4.0, kPi / 2.0, 0.0);
     RaySample right = sensorReturn(4.0, -kPi / 2.0, 0.0);
@@ -345,8 +401,8 @@ TEST(RayLevelerTest, AnObstacleOnTheLeftOfARolledVehicleStaysOnTheLeft)
   // degrees (left) and elevation 0.
   const double roll = 30.0 * kDeg;
   const Vec p_ned{0.0, -3.0, 0.0};  // yaw 0: west is the vehicle's left
-  const ConstantPoseHistory poses{poseOf(roll, 0, 0)};
-  RayLeveler leveler{poses, configOf(kZeroMount)};
+  const ConstantMotion poses{poseOf(roll, 0, 0)};
+  RayLeveler leveler{poses, configOf(kZeroMount), poses.gyro()};
   ASSERT_EQ(leveler.beginFrame(kRefNs), LevelingStatus::kOk);
   RaySample ray = rayToNedPoint(p_ned, roll, 0.0, 0.0, kZeroMount);
   ASSERT_EQ(levelRay(leveler, ray), LevelingStatus::kOk);
@@ -360,8 +416,8 @@ TEST(RayLevelerTest, HeadingChangeSinceTheReferenceRotatesTheRay)
   // The vehicle faces east (yaw 90 degrees) at the ray time and north at the reference time. A
   // ray along the body forward axis points east, which is to the RIGHT of the reference heading:
   // azimuth minus 90 degrees (counter-clockwise positive).
-  const TwoPoseHistory poses{poseOf(0, 0, 0), poseOf(0, 0, kPi / 2.0)};
-  RayLeveler leveler{poses, configOf(kZeroMount)};
+  const Motion poses{poseOf(0, 0, 0), poseOf(0, 0, kPi / 2.0)};
+  RayLeveler leveler{poses, configOf(kZeroMount), poses.gyro()};
   ASSERT_EQ(leveler.beginFrame(kRefNs), LevelingStatus::kOk);
   RaySample ray = sensorReturn(6.0, 0.0, 0.0);
   ASSERT_EQ(levelRay(leveler, ray), LevelingStatus::kOk);
@@ -375,8 +431,8 @@ TEST(RayLevelerTest, HeadingChangeSinceTheReferenceRotatesTheRay)
 
 TEST(RayLevelerTest, ACommonHeadingOffsetOfBothPosesDoesNotMatter)
 {
-  const TwoPoseHistory poses{poseOf(0, 0, 1.0), poseOf(0, 0, 1.0)};
-  RayLeveler leveler{poses, configOf(kZeroMount)};
+  const Motion poses{poseOf(0, 0, 1.0), poseOf(0, 0, 1.0)};
+  RayLeveler leveler{poses, configOf(kZeroMount), poses.gyro()};
   ASSERT_EQ(leveler.beginFrame(kRefNs), LevelingStatus::kOk);
   RaySample ray = sensorReturn(6.0, 0.3, 0.1);
   ASSERT_EQ(levelRay(leveler, ray), LevelingStatus::kOk);
@@ -406,9 +462,9 @@ void expectWallEquivalentToLevelVehicle(
   const double psi = at_reference.yaw;
   const double wall_ahead_m = 5.0;
   const double wall_height_m = 0.7;
-  const TwoPoseHistory poses{poseOf(at_reference.roll, at_reference.pitch, at_reference.yaw, vehicle),
-    poseOf(at_ray.roll, at_ray.pitch, at_ray.yaw, vehicle)};
-  RayLeveler leveler{poses, configOf(mount)};
+  const Motion poses{poseOf(at_reference.roll, at_reference.pitch, at_reference.yaw, vehicle),
+    poseOf(at_ray.roll, at_ray.pitch, at_ray.yaw, vehicle), mount};
+  RayLeveler leveler{poses, configOf(mount), poses.gyro()};
   ASSERT_EQ(leveler.beginFrame(kRefNs), LevelingStatus::kOk);
   for (const double wall_azimuth_deg : {-60.0, -30.0, -5.0, 0.0, 12.0, 45.0, 70.0}) {
     const double alpha = wall_azimuth_deg * kDeg;
@@ -467,23 +523,23 @@ TEST(RayLevelerTest, ReturnIsShiftedByTheOriginMotionSinceTheReference)
   // The vehicle is 1 m further north at the ray time. A point 5 m north of the reference
   // position is 4 m ahead of the vehicle at the ray time; seen from the reference origin it is
   // 5 m ahead again.
-  const TwoPoseHistory poses{poseOf(0, 0, 0, {0.0, 0.0, 0.0}), poseOf(0, 0, 0, {1.0, 0.0, 0.0})};
-  RayLeveler leveler{poses, configOf(kZeroMount)};
+  const Motion poses{poseOf(0, 0, 0, {0.0, 0.0, 0.0}), poseOf(0, 0, 0, {1.0, 0.0, 0.0})};
+  RayLeveler leveler{poses, configOf(kZeroMount), poses.gyro()};
   ASSERT_EQ(leveler.beginFrame(kRefNs), LevelingStatus::kOk);
   RaySample ray = sensorReturn(4.0, 0.0, 0.0);
   ASSERT_EQ(levelRay(leveler, ray), LevelingStatus::kOk);
   EXPECT_NEAR(ray.range_m, 5.0F, kRangeTol);
   EXPECT_NEAR(ray.azimuth_rad, 0.0F, kAngleTol);
   // Moving east by 0.3 m: a point 4 m ahead is, from the reference origin, 0.3 m to the right.
-  const TwoPoseHistory east{poseOf(0, 0, 0, {0.0, 0.0, 0.0}), poseOf(0, 0, 0, {0.0, 0.3, 0.0})};
-  RayLeveler leveler_east{east, configOf(kZeroMount)};
+  const Motion east{poseOf(0, 0, 0, {0.0, 0.0, 0.0}), poseOf(0, 0, 0, {0.0, 0.3, 0.0})};
+  RayLeveler leveler_east{east, configOf(kZeroMount), east.gyro()};
   ASSERT_EQ(leveler_east.beginFrame(kRefNs), LevelingStatus::kOk);
   RaySample ahead = sensorReturn(4.0, 0.0, 0.0);
   ASSERT_EQ(levelRay(leveler_east, ahead), LevelingStatus::kOk);
   EXPECT_NEAR(ahead.azimuth_rad, static_cast<float>(-std::atan2(0.3, 4.0)), kAngleTol);
   // Climbing by 0.3 m (NED z is -0.3): the point is 0.3 m below the reference origin's level.
-  const TwoPoseHistory up{poseOf(0, 0, 0, {0.0, 0.0, 0.0}), poseOf(0, 0, 0, {0.0, 0.0, -0.3})};
-  RayLeveler leveler_up{up, configOf(kZeroMount)};
+  const Motion up{poseOf(0, 0, 0, {0.0, 0.0, 0.0}), poseOf(0, 0, 0, {0.0, 0.0, -0.3})};
+  RayLeveler leveler_up{up, configOf(kZeroMount), up.gyro()};
   ASSERT_EQ(leveler_up.beginFrame(kRefNs), LevelingStatus::kOk);
   RaySample level_ray = sensorReturn(4.0, 0.0, 0.0);
   ASSERT_EQ(levelRay(leveler_up, level_ray), LevelingStatus::kOk);
@@ -494,8 +550,8 @@ TEST(RayLevelerTest, NeitherReturnNorNoReturnIsDroppedForMotion)
 {
   // 12 m/s over 100 ms is 1.2 m; here 4 m ahead and 4 m up: far above any threshold the old rule had.
   const double far_m = 4.0;
-  const TwoPoseHistory poses{poseOf(0, 0, 0), poseOf(0, 0, 0, {far_m, 0.0, -far_m})};
-  RayLeveler leveler{poses, configOf(kZeroMount)};
+  const Motion poses{poseOf(0, 0, 0), poseOf(0, 0, 0, {far_m, 0.0, -far_m})};
+  RayLeveler leveler{poses, configOf(kZeroMount), poses.gyro()};
   ASSERT_EQ(leveler.beginFrame(kRefNs), LevelingStatus::kOk);
   RaySample ray = sensorReturn(4.0, 0.0, 0.0);
   double rise_m = 0.0;
@@ -508,7 +564,7 @@ TEST(RayLevelerTest, NeitherReturnNorNoReturnIsDroppedForMotion)
   EXPECT_NEAR(rise_m, far_m, 1.0e-9);
 
   RaySample no_return{
-    1'000U, std::numeric_limits<float>::quiet_NaN(), 0.2F, 0.1F, false,
+    kRayNs, std::numeric_limits<float>::quiet_NaN(), 0.2F, 0.1F, false,
     RayReturnKind::kQualifiedNoReturn};
   ASSERT_EQ(leveler.level(no_return, rise_m), LevelingStatus::kOk);
   EXPECT_NEAR(no_return.azimuth_rad, 0.2F, kAngleTol);  // direction only, nothing to shift
@@ -519,8 +575,8 @@ TEST(RayLevelerTest, NeitherReturnNorNoReturnIsDroppedForMotion)
 TEST(RayLevelerTest, RiseIsPositiveWhenTheOriginIsHigherAndNegativeWhenLower)
 {
   for (const double up_m : {0.3, -0.2, 0.0}) {
-    const TwoPoseHistory poses{poseOf(0, 0, 0), poseOf(0, 0, 0, {1.0, 2.0, -up_m})};
-    RayLeveler leveler{poses, configOf(kZeroMount)};
+    const Motion poses{poseOf(0, 0, 0), poseOf(0, 0, 0, {1.0, 2.0, -up_m})};
+    RayLeveler leveler{poses, configOf(kZeroMount), poses.gyro()};
     ASSERT_EQ(leveler.beginFrame(kRefNs), LevelingStatus::kOk);
     RaySample ray = sensorReturn(4.0, 0.0, 0.0);
     double rise_m = 99.0;
@@ -535,9 +591,9 @@ TEST(RayLevelerTest, LeverArmMovesTheOriginWithTheAttitude)
   // vehicle is pitched nose up by 10 degrees at the same position: the sensor is then higher by
   // 0.12 sin(10) + 0.14 cos(10) - 0.14 = 0.0187 m and 0.12 cos(10) - 0.14 sin(10) - 0.12 ahead.
   const double pitch = 10.0 * kDeg;
-  const TwoPoseHistory poses{poseOf(0, 0, 0), poseOf(0, pitch, 0)};
+  const Motion poses{poseOf(0, 0, 0), poseOf(0, pitch, 0)};
   const Vec lever{0.12, 0.0, 0.14};
-  RayLeveler leveler{poses, configOf(kZeroMount, lever)};
+  RayLeveler leveler{poses, configOf(kZeroMount, lever), poses.gyro()};
   ASSERT_EQ(leveler.beginFrame(kRefNs), LevelingStatus::kOk);
   RaySample ray = sensorReturn(4.0, 0.0, 0.0);
   double rise_m = 0.0;
@@ -547,7 +603,7 @@ TEST(RayLevelerTest, LeverArmMovesTheOriginWithTheAttitude)
 
   // A pure rotation about the sensor itself would keep the sensor in place: with no lever arm the
   // origin is the body origin and nothing moves.
-  RayLeveler no_lever{poses, configOf(kZeroMount)};
+  RayLeveler no_lever{poses, configOf(kZeroMount), poses.gyro()};
   ASSERT_EQ(no_lever.beginFrame(kRefNs), LevelingStatus::kOk);
   RaySample r2 = sensorReturn(4.0, 0.0, 0.0);
   ASSERT_EQ(no_lever.level(r2, rise_m), LevelingStatus::kOk);
@@ -560,8 +616,8 @@ TEST(RayLevelerTest, ReturnWhoseEndPointFallsOnTheReferenceOriginIsDroppedNotKep
   // ahead: seen from the reference origin the range is 0. The sector map rejects such a ray, so
   // the transform must not report it as usable (it would be lost without breaking continuity and
   // another ray could then certify the sector clear). It is reported as a dropped ray.
-  const TwoPoseHistory poses{poseOf(0, 0, 0), poseOf(0, 0, 0, {-0.25, 0.0, 0.0})};
-  RayLeveler leveler{poses, configOf(kZeroMount)};
+  const Motion poses{poseOf(0, 0, 0), poseOf(0, 0, 0, {-0.25, 0.0, 0.0})};
+  RayLeveler leveler{poses, configOf(kZeroMount), poses.gyro()};
   ASSERT_EQ(leveler.beginFrame(kRefNs), LevelingStatus::kOk);
   RaySample ray = sensorReturn(0.25, 0.0, 0.0);
   const RaySample before = ray;
@@ -577,8 +633,8 @@ TEST(RayLevelerTest, ReturnTooCloseToTheReferenceOriginStaysAValidReturn)
   // A tiny positive range, also below the minimum distance of the sector map, is a valid return
   // (the map reports it as too close); only a range of 0 is dropped.
   for (const double remaining_m : {1.0e-4, 0.05, 0.5 * obstacle_sector_map::kMinDistanceM}) {
-    const TwoPoseHistory poses{poseOf(0, 0, 0), poseOf(0, 0, 0, {-0.25, 0.0, 0.0})};
-    RayLeveler leveler{poses, configOf(kZeroMount)};
+    const Motion poses{poseOf(0, 0, 0), poseOf(0, 0, 0, {-0.25, 0.0, 0.0})};
+    RayLeveler leveler{poses, configOf(kZeroMount), poses.gyro()};
     ASSERT_EQ(leveler.beginFrame(kRefNs), LevelingStatus::kOk);
     RaySample ray = sensorReturn(0.25 + remaining_m, 0.0, 0.0);
     ASSERT_EQ(levelRay(leveler, ray), LevelingStatus::kOk) << remaining_m;
@@ -591,11 +647,11 @@ TEST(RayLevelerTest, ReturnTooCloseToTheReferenceOriginStaysAValidReturn)
 
 TEST(RayLevelerTest, NoReturnKeepsItsDirectionAndHasNoRange)
 {
-  const TwoPoseHistory poses{poseOf(0, 0, 0), poseOf(0, 0, kPi / 2.0, {0.2, 0.0, 0.0})};
-  RayLeveler leveler{poses, configOf(kZeroMount)};
+  const Motion poses{poseOf(0, 0, 0), poseOf(0, 0, kPi / 2.0, {0.2, 0.0, 0.0})};
+  RayLeveler leveler{poses, configOf(kZeroMount), poses.gyro()};
   ASSERT_EQ(leveler.beginFrame(kRefNs), LevelingStatus::kOk);
   RaySample ray{
-    1'000U, std::numeric_limits<float>::quiet_NaN(), 0.0F, 0.1F, false,
+    kRayNs, std::numeric_limits<float>::quiet_NaN(), 0.0F, 0.1F, false,
     RayReturnKind::kQualifiedNoReturn};
   ASSERT_EQ(levelRay(leveler, ray), LevelingStatus::kOk);
   EXPECT_TRUE(std::isnan(ray.range_m));
@@ -605,14 +661,13 @@ TEST(RayLevelerTest, NoReturnKeepsItsDirectionAndHasNoRange)
 
 }
 
-TEST(RayLevelerTest, DeskewsWithTheInterpolatedPoseOfTheHistory)
+TEST(RayLevelerTest, DeskewsWithTheGyroAndTheReferenceVelocity)
 {
-  // From the reference time (t = 0.1 s) the vehicle turns from north to east in 100 ms while it
-  // moves 2 m north. A ray at 150 ms sees yaw 45 degrees and 1 m of motion.
-  PoseHistory history{PoseHistoryConfig{8U, 200U * kMs}};
-  history.push(poseOf(0, 0, 0, {0.0, 0.0, 0.0}, 0U, 100U * kMs));
-  history.push(poseOf(0, 0, kPi / 2.0, {2.0, 0.0, 0.0}, 0U, 200U * kMs));
-  RayLeveler leveler{history, configOf(kZeroMount)};
+  // From the reference time (t = 0.1 s) the vehicle turns from north towards east at 900 deg/s while it
+  // moves north at 20 m/s. A ray at 150 ms sees yaw 45 degrees and 1 m of motion.
+  const Motion motion{poseOf(0, 0, 0, {0.0, 0.0, 0.0}), poseOf(0, 0, kPi / 4.0, {1.0, 0.0, 0.0}),
+    kZeroMount, 100U * kMs, 150U * kMs};
+  RayLeveler leveler{motion, configOf(kZeroMount), motion.gyro()};
   ASSERT_EQ(leveler.beginFrame(100U * kMs), LevelingStatus::kOk);
   RaySample ray = sensorReturn(5.0, 0.0, 0.0);
   ray.timestamp_ns = 150U * kMs;
@@ -624,41 +679,81 @@ TEST(RayLevelerTest, DeskewsWithTheInterpolatedPoseOfTheHistory)
   EXPECT_EQ(ray.timestamp_ns, 150U * kMs);
 }
 
-TEST(RayLevelerTest, RaysOnTheExactBracketEdgesAreTransformed)
+TEST(RayLevelerTest, PitchAndYawInsideTheFrameHaveTheGyroSign)
 {
-  PoseHistory history{PoseHistoryConfig{8U, 200U * kMs}};
-  history.push(poseOf(0, 0, 0, {0.0, 0.0, 0.0}, 0U, 100U * kMs));
-  history.push(poseOf(0, 0, 0, {0.3, 0.0, 0.0}, 0U, 200U * kMs));
-  RayLeveler leveler{history, configOf(kZeroMount)};
-  ASSERT_EQ(leveler.beginFrame(100U * kMs), LevelingStatus::kOk);  // reference on the first sample
-  RaySample first = sensorReturn(5.0, 0.0, 0.0);
-  first.timestamp_ns = 100U * kMs;
-  EXPECT_EQ(levelRay(leveler, first), LevelingStatus::kOk);
-  EXPECT_NEAR(first.range_m, 5.0F, kRangeTol);
-  RaySample last = sensorReturn(5.0, 0.0, 0.0);
-  last.timestamp_ns = 200U * kMs;  // on the last sample
-  EXPECT_EQ(levelRay(leveler, last), LevelingStatus::kOk);
-  EXPECT_NEAR(last.range_m, 5.3F, kRangeTol);
-  RaySample after = sensorReturn(5.0, 0.0, 0.0);
-  after.timestamp_ns = 200U * kMs + 1U;  // one nanosecond past the last sample
-  EXPECT_EQ(levelRay(leveler, after), LevelingStatus::kNoPose);
+  // Written from the sensor rates directly, not from the fixture's matrices: with a zero mount and a level
+  // reference, a negative rate about the sensor's left axis lifts the boresight (nose up), and a positive
+  // rate about up turns it to the left (ADR 0023: writing the rule without F would flip both).
+  const double angle = 10.0 * kDeg;
+  const double dt_s = 0.05;
+  for (const int axis : {1, 2}) {
+    PoseHistory poses{fixtureHistoryConfig()};
+    PoseSample reference = at(poseOf(0, 0, 0), kRefNs);
+    reference.velocity_ned_m_s = {0.0, 0.0, 0.0};
+    poses.push(reference);
+    GyroTrack gyro{kFixtureGyroConfig};
+    Vec rate{0.0, 0.0, 0.0};
+    rate[static_cast<std::size_t>(axis)] = (axis == 1 ? -angle : angle) / dt_s;
+    pushConstantRate(gyro, rate, kRefNs, kRayNs);
+    RayLeveler leveler{poses, configOf(kZeroMount), &gyro};
+    ASSERT_EQ(leveler.beginFrame(kRefNs), LevelingStatus::kOk);
+    RaySample boresight = sensorReturn(10.0, 0.0, 0.0);
+    ASSERT_EQ(levelRay(leveler, boresight), LevelingStatus::kOk);
+    if (axis == 1) {
+      EXPECT_NEAR(boresight.elevation_rad, static_cast<float>(angle), kAngleTol);  // nose up: the ray rises
+      EXPECT_NEAR(boresight.azimuth_rad, 0.0F, kAngleTol);
+    } else {
+      EXPECT_NEAR(boresight.azimuth_rad, static_cast<float>(angle), kAngleTol);  // turned left
+      EXPECT_NEAR(boresight.elevation_rad, 0.0F, kAngleTol);
+    }
+  }
+}
+
+TEST(RayLevelerTest, ARayAtTheReferenceTimeNeedsNoGyroAndNoVelocity)
+{
+  // The Gazebo cloud stamps every ray of a frame with the reference time (ADR 0023 decision 6).
+  PoseHistory poses{fixtureHistoryConfig()};
+  poses.push(at(poseOf(0, 20.0 * kDeg, 0), kRefNs));  // velocity unknown (NaN)
+  RayLeveler leveler{poses, configOf(kZeroMount)};
+  ASSERT_EQ(leveler.beginFrame(kRefNs), LevelingStatus::kOk);
+  RaySample ray = rayToNedPoint({5.0, 0.0, -0.7}, 0.0, 20.0 * kDeg, 0.0, kZeroMount);
+  ray.timestamp_ns = kRefNs;
+  ASSERT_EQ(levelRay(leveler, ray), LevelingStatus::kOk);
+  EXPECT_NEAR(ray.elevation_rad, static_cast<float>(std::atan2(0.7, 5.0)), kAngleTol);
 }
 
 // --- Missing, invalid and reset poses ---------------------------------------------------------
 
-TEST(RayLevelerTest, RayWithoutPoseIsDroppedAndReported)
+TEST(RayLevelerTest, ARayAwayFromTheReferenceWithoutGyroOrVelocityIsDropped)
 {
   PoseHistory poses{fixtureHistoryConfig()};
-  poses.push(at(poseOf(0, 0, 0), kRefNs));  // no sample after the reference: rays have no pose
-  RayLeveler leveler{poses, configOf(kZeroMount)};
-  ASSERT_EQ(leveler.beginFrame(kRefNs), LevelingStatus::kOk);
+  PoseSample reference = at(poseOf(0, 0, 0), kRefNs);
+  poses.push(reference);
+  // No gyro.
+  RayLeveler no_gyro{poses, configOf(kZeroMount)};
+  ASSERT_EQ(no_gyro.beginFrame(kRefNs), LevelingStatus::kOk);
   RaySample ray = sensorReturn(4.0, 0.2, 0.1);
   const RaySample before = ray;
-  EXPECT_EQ(levelRay(leveler, ray), LevelingStatus::kNoPose);
+  EXPECT_EQ(levelRay(no_gyro, ray), LevelingStatus::kNoPose);
   EXPECT_EQ(ray.azimuth_rad, before.azimuth_rad);
   EXPECT_EQ(ray.elevation_rad, before.elevation_rad);
   EXPECT_EQ(ray.range_m, before.range_m);
   EXPECT_TRUE(breaksFrameContinuity(LevelingStatus::kNoPose));
+  // A gyro, but the FMU velocity at the reference is unknown.
+  GyroTrack gyro{kFixtureGyroConfig};
+  pushConstantRate(gyro, {0.0, 0.0, 0.0}, kRefNs, kRayNs);
+  RayLeveler no_velocity{poses, configOf(kZeroMount), &gyro};
+  ASSERT_EQ(no_velocity.beginFrame(kRefNs), LevelingStatus::kOk);
+  EXPECT_EQ(levelRay(no_velocity, ray), LevelingStatus::kNoPose);
+  // A gyro that does not reach the ray time (beyond its tail).
+  PoseHistory with_velocity{fixtureHistoryConfig()};
+  reference.velocity_ned_m_s = {0.0, 0.0, 0.0};
+  with_velocity.push(reference);
+  GyroTrack short_gyro{kFixtureGyroConfig};
+  pushConstantRate(short_gyro, {0.0, 0.0, 0.0}, kRefNs, kRefNs + 10U * kMs);  // last sample at 70 ms
+  RayLeveler short_leveler{with_velocity, configOf(kZeroMount), &short_gyro};
+  ASSERT_EQ(short_leveler.beginFrame(kRefNs), LevelingStatus::kOk);
+  EXPECT_EQ(levelRay(short_leveler, ray), LevelingStatus::kNoPose);  // 100 ms: 30 ms past the newest
 }
 
 TEST(RayLevelerTest, NoPoseAtTheReferenceTimeFailsTheFrame)
@@ -673,8 +768,8 @@ TEST(RayLevelerTest, NoPoseAtTheReferenceTimeFailsTheFrame)
 
 TEST(RayLevelerTest, LevelBeforeBeginFrameHasNoReference)
 {
-  const ConstantPoseHistory poses{poseOf(0, 0, 0)};
-  RayLeveler leveler{poses, configOf(kZeroMount)};
+  const ConstantMotion poses{poseOf(0, 0, 0)};
+  RayLeveler leveler{poses, configOf(kZeroMount), poses.gyro()};
   RaySample ray = sensorReturn(4.0, 0.2, 0.1);
   EXPECT_EQ(levelRay(leveler, ray), LevelingStatus::kNoReference);
 }
@@ -682,81 +777,79 @@ TEST(RayLevelerTest, LevelBeforeBeginFrameHasNoReference)
 TEST(RayLevelerTest, AFailedBeginFrameForgetsTheEarlierReference)
 {
   PoseHistory poses{fixtureHistoryConfig()};
-  poses.push(at(poseOf(0, 0, 0), kRefNs));  // no sample after the reference: rays have no pose
+  poses.push(at(poseOf(0, 0, 0), kRefNs));  // no sample after the reference
   RayLeveler leveler{poses, configOf(kZeroMount)};
   ASSERT_EQ(leveler.beginFrame(kRefNs), LevelingStatus::kOk);
   EXPECT_EQ(leveler.beginFrame(kRefNs + 1U), LevelingStatus::kNoPose);
   RaySample ray = sensorReturn(4.0, 0.2, 0.1);
+  ray.timestamp_ns = kRefNs + 1U;
   EXPECT_EQ(levelRay(leveler, ray), LevelingStatus::kNoReference);
 }
 
-TEST(RayLevelerTest, ResetCounterChangeBetweenReferenceAndRayDropsTheRay)
+TEST(RayLevelerTest, AGyroRestartBetweenReferenceAndRayDropsTheRay)
 {
-  // Each lookup is valid, but a reset happened between the two times, so the position difference
-  // means nothing.
-  const TwoPoseHistory poses{poseOf(0, 0, 0, {0, 0, 0}, 3U), poseOf(0, 0, 0, {0, 0, 0}, 4U)};
-  RayLeveler leveler{poses, configOf(kZeroMount)};
+  // The gyro lost samples (a gap above its limit) between the two times: the two orientations belong to two
+  // integrations and cannot be combined.
+  PoseHistory poses{fixtureHistoryConfig()};
+  PoseSample reference = at(poseOf(0, 0, 0), kRefNs);
+  reference.velocity_ned_m_s = {0.0, 0.0, 0.0};
+  poses.push(reference);
+  GyroTrack gyro{kFixtureGyroConfig};
+  pushConstantRate(gyro, {0.0, 0.0, 1.0}, kRefNs, kRefNs + 5U * kMs);     // up to 65 ms
+  pushConstantRate(gyro, {0.0, 0.0, 1.0}, kRayNs, kRayNs);                // from 90 ms: 25 ms gap
+  RayLeveler leveler{poses, configOf(kZeroMount), &gyro};
   ASSERT_EQ(leveler.beginFrame(kRefNs), LevelingStatus::kOk);
   RaySample ray = sensorReturn(4.0, 0.2, 0.1);
   EXPECT_EQ(levelRay(leveler, ray), LevelingStatus::kResetSinceReference);
   EXPECT_TRUE(breaksFrameContinuity(LevelingStatus::kResetSinceReference));
+  RaySample in_gap = sensorReturn(4.0, 0.2, 0.1);
+  in_gap.timestamp_ns = 80U * kMs;  // bracket 65 ms (old segment) and 90 ms (new segment)
+  EXPECT_EQ(levelRay(leveler, in_gap), LevelingStatus::kNoPose);
 }
 
-TEST(RayLevelerTest, ResetCounterChangeInsideTheBracketOfTheHistoryDropsTheRay)
+TEST(RayLevelerTest, TheFmuPoseIsUsedOnlyAtTheReferenceTime)
 {
-  PoseHistory history{PoseHistoryConfig{8U, 200U * kMs}};
-  history.push(poseOf(0, 0, 0, {0, 0, 0}, 0U, 100U * kMs));
-  history.push(poseOf(0, 0, 0, {0, 0, 0}, 0U, 150U * kMs));
-  history.push(poseOf(0, 0, 0, {0, 0, 0}, 1U, 200U * kMs));
-  RayLeveler leveler{history, configOf(kZeroMount)};
-  ASSERT_EQ(leveler.beginFrame(100U * kMs), LevelingStatus::kOk);
-  RaySample inside = sensorReturn(4.0, 0.0, 0.0);
-  inside.timestamp_ns = 175U * kMs;  // bracket 150 ms (counter 0) and 200 ms (counter 1)
-  EXPECT_EQ(levelRay(leveler, inside), LevelingStatus::kNoPose);
-  RaySample on_new = sensorReturn(4.0, 0.0, 0.0);
-  on_new.timestamp_ns = 200U * kMs;  // on the first sample after the reset: counter differs
-  EXPECT_EQ(levelRay(leveler, on_new), LevelingStatus::kResetSinceReference);
+  // ADR 0023: a reset or a NaN sample of the FMU after the reference does not change the rays, which are
+  // expressed relative to the reference time.
+  PoseHistory poses{fixtureHistoryConfig()};
+  PoseSample reference = at(poseOf(0, 0, 0, {0, 0, 0}, 3U), kRefNs);
+  reference.velocity_ned_m_s = {0.0, 0.0, 0.0};
+  poses.push(reference);
+  PoseSample nan_later = at(poseOf(0, 0, 0, {9, 9, 9}, 4U), 80U * kMs);
+  nan_later.q_wxyz[0] = std::numeric_limits<double>::quiet_NaN();
+  poses.push(nan_later);
+  poses.push(at(poseOf(0, 1.0, 2.0, {9, 9, 9}, 4U), 120U * kMs));
+  GyroTrack gyro{kFixtureGyroConfig};
+  pushConstantRate(gyro, {0.0, 0.0, 0.0}, kRefNs, kRayNs);
+  RayLeveler leveler{poses, configOf(kZeroMount), &gyro};
+  ASSERT_EQ(leveler.beginFrame(kRefNs), LevelingStatus::kOk);
+  RaySample ray = sensorReturn(4.0, 0.2, 0.1);
+  ASSERT_EQ(levelRay(leveler, ray), LevelingStatus::kOk);
+  EXPECT_NEAR(ray.azimuth_rad, 0.2F, kAngleTol);
+  EXPECT_NEAR(ray.elevation_rad, 0.1F, kAngleTol);
+  EXPECT_NEAR(ray.range_m, 4.0F, kRangeTol);
 }
 
-TEST(RayLevelerTest, NaNQuaternionGivesNoPoseForTheRayAndForTheReference)
+TEST(RayLevelerTest, NaNQuaternionAtTheReferenceFailsTheFrame)
 {
-  PoseHistory history{PoseHistoryConfig{8U, 200U * kMs}};
-  history.push(poseOf(0, 0, 0, {0, 0, 0}, 0U, 100U * kMs));
-  PoseSample bad = poseOf(0, 0, 0, {0, 0, 0}, 0U, 150U * kMs);
-  bad.q_wxyz[0] = std::numeric_limits<double>::quiet_NaN();
-  history.push(bad);
-  history.push(poseOf(0, 0, 0, {0, 0, 0}, 0U, 200U * kMs));
-  RayLeveler leveler{history, configOf(kZeroMount)};
-  ASSERT_EQ(leveler.beginFrame(100U * kMs), LevelingStatus::kOk);
-  RaySample ray = sensorReturn(4.0, 0.0, 0.0);
-  ray.timestamp_ns = 125U * kMs;
-  EXPECT_EQ(levelRay(leveler, ray), LevelingStatus::kNoPose);
-
-  // The same with a NaN quaternion on both sides of the ray time.
   PoseSample nan_pose = poseOf(0, 0, 0);
   nan_pose.q_wxyz[2] = std::numeric_limits<double>::quiet_NaN();
-  const TwoPoseHistory nan_ray_history{poseOf(0, 0, 0), nan_pose};
-  RayLeveler nan_ray_leveler{nan_ray_history, configOf(kZeroMount)};
-  ASSERT_EQ(nan_ray_leveler.beginFrame(kRefNs), LevelingStatus::kOk);
-  RaySample r = sensorReturn(4.0, 0.0, 0.0);
-  EXPECT_EQ(levelRay(nan_ray_leveler, r), LevelingStatus::kNoPose);
-  // And NaN at the reference time fails the frame.
-  const ConstantPoseHistory nan_reference{nan_pose};
-  RayLeveler nan_leveler{nan_reference, configOf(kZeroMount)};
+  const ConstantMotion nan_reference{nan_pose};
+  RayLeveler nan_leveler{nan_reference, configOf(kZeroMount), nan_reference.gyro()};
   EXPECT_EQ(nan_leveler.beginFrame(kRefNs), LevelingStatus::kNoPose);
 }
 
 TEST(RayLevelerTest, AttitudeWithAVerticalForwardAxisHasNoReferenceHeading)
 {
-  const ConstantPoseHistory poses{poseOf(0, kPi / 2.0, 0)};
-  RayLeveler leveler{poses, configOf(kZeroMount)};
+  const ConstantMotion poses{poseOf(0, kPi / 2.0, 0)};
+  RayLeveler leveler{poses, configOf(kZeroMount), poses.gyro()};
   EXPECT_EQ(leveler.beginFrame(kRefNs), LevelingStatus::kNoPose);
 }
 
 TEST(RayLevelerTest, InvalidRaysAreLeftUnchangedAndDoNotBreakContinuity)
 {
-  const ConstantPoseHistory poses{poseOf(0, 0, 0)};
-  RayLeveler leveler{poses, configOf(kZeroMount)};
+  const ConstantMotion poses{poseOf(0, 0, 0)};
+  RayLeveler leveler{poses, configOf(kZeroMount), poses.gyro()};
   ASSERT_EQ(leveler.beginFrame(kRefNs), LevelingStatus::kOk);
 
   RaySample no_time = sensorReturn(4.0, 0.2, 0.1);

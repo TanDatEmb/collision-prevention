@@ -30,4 +30,9 @@ struct LevelingSettings
 /// when the file cannot be read, a value is null, missing or not a number, or a result is not valid.
 [[nodiscard]] LevelingSettings loadLevelingSettings(const std::string & yaml_path);
 
+/// Reads `gyro_history.depth` and `gyro_history.max_bracket_gap_ms`: the size of the Livox gyro track of ADR
+/// 0023, needed by the `livox` source only. None has a default. Throws std::invalid_argument like
+/// loadLevelingSettings.
+[[nodiscard]] livox_ray_source::PoseHistoryConfig loadGyroHistoryConfig(const std::string & yaml_path);
+
 }  // namespace obstacle_sector_node

@@ -28,6 +28,7 @@ struct SdkSourceState
   std::string config_path;
   LivoxSdkSampleSource::Sink sink;
   LivoxSdkSampleSource::Log log;
+  LivoxSdkSampleSource::GyroSink gyro_sink;
   bool configure_point_type{true};
   bool started{false};
   std::atomic<bool> detection_handled{false};
@@ -41,6 +42,8 @@ struct SdkSourceState
   std::atomic<uint64_t> unsynchronized_packets{0U};
   std::atomic<uint64_t> continuity_breaks{0U};
   std::atomic<uint64_t> dropped_rays{0U};
+  std::atomic<uint64_t> imu_packets{0U};
+  std::atomic<uint64_t> imu_unusable{0U};
 
   void say(const std::string & text) const
   {
@@ -90,6 +93,22 @@ void onPointCloud(uint32_t, const uint8_t, LivoxLidarEthernetPacket * packet, vo
   for (const auto & sample : samples) {
     impl->sink(sample);
   }
+}
+
+void onImu(const uint32_t, const uint8_t, LivoxLidarEthernetPacket * packet, void * client_data)
+{
+  if (packet == nullptr || client_data == nullptr) {
+    return;
+  }
+  auto * impl = static_cast<Impl *>(client_data);
+  ++impl->imu_packets;
+  const DecodedImuPacket decoded =
+    decodeImuPacket(reinterpret_cast<const uint8_t *>(packet), packet->length);
+  if (!decoded.gyro.isValid()) {
+    ++impl->imu_unusable;
+    return;
+  }
+  impl->gyro_sink(decoded.gyro);
 }
 
 int pointTypeOf(const LivoxLidarDiagInternalInfoResponse & response)
@@ -179,6 +198,13 @@ LivoxSdkSampleSource::LivoxSdkSampleSource(
 
 LivoxSdkSampleSource::~LivoxSdkSampleSource() { stop(); }
 
+void LivoxSdkSampleSource::setGyroSink(GyroSink sink)
+{
+  if (!_impl->started) {
+    _impl->gyro_sink = std::move(sink);
+  }
+}
+
 bool LivoxSdkSampleSource::start()
 {
   if (_impl->started) {
@@ -196,6 +222,9 @@ bool LivoxSdkSampleSource::start()
     return false;
   }
   SetLivoxLidarPointCloudCallBack(onPointCloud, _impl.get());
+  if (_impl->gyro_sink) {
+    SetLivoxLidarImuDataCallback(onImu, _impl.get());
+  }
   SetLivoxLidarInfoChangeCallback(onLidarInfoChange, _impl.get());
   _impl->started = true;
   return true;
@@ -221,6 +250,8 @@ SdkSourceStats LivoxSdkSampleSource::stats() const
   result.unsynchronized_packets = _impl->unsynchronized_packets;
   result.continuity_breaks = _impl->continuity_breaks;
   result.dropped_rays = _impl->dropped_rays;
+  result.imu_packets = _impl->imu_packets;
+  result.imu_unusable = _impl->imu_unusable;
   return result;
 }
 

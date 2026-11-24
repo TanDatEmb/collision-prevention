@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <limits>
 
+#include "livox_ray_source/gyro_track.hpp"
 #include "livox_ray_source/pose_history.hpp"
 #include "obstacle_sector_map/types.hpp"
 
@@ -60,8 +61,8 @@ enum class LevelingStatus : uint8_t
 {
   kOk,
   kNoReference,           ///< beginFrame() was not called or did not succeed
-  kNoPose,                ///< no pose for the ray time (or, from beginFrame, the reference time)
-  kResetSinceReference,   ///< the pose reset counter differs from that of the reference pose
+  kNoPose,                ///< no FMU pose at the reference time, or no gyro cover or velocity for the ray time
+  kResetSinceReference,   ///< the gyro restarted (gap or time step) between the reference and the ray time
   kDegenerateReturn,      ///< the origin motion moved a return's end point onto the reference origin
                           ///< (range 0): the ray has no direction
   kInvalidRay,            ///< no time, non-finite direction, a return without a finite positive range, or
@@ -78,32 +79,42 @@ enum class LevelingStatus : uint8_t
   return status != LevelingStatus::kOk && status != LevelingStatus::kInvalidRay;
 }
 
-/// The leveling and deskew transform of ADR 0020 D1 for the rays of one frame.
+/// The leveling and deskew transform of ADR 0020 D1 for the rays of one frame, with the pose sources of
+/// ADR 0023: the FMU pose only at the reference time t_ref (the map timestamp: the earliest contributing
+/// ray time) and the Livox gyro for the rotation inside the frame.
 ///
-/// For a ray at time t_i and a reference time t_ref (the map timestamp: the earliest contributing
-/// ray time):
+/// For a ray at time t_i:
 ///   1. sensor point from range, azimuth, elevation (sensor FLU);
-///   2. calibrated mount rotation to the body frame (FLU), then FLU to FRD;
-///   3. q(t_i) rotates body FRD to NED;
-///   4. for a return, add the origin motion d_i = x_i + R_i L - x_ref - R_ref L (NED, L the lever arm);
-///      a no-return has no end point and keeps its direction only. The vertical part of d_i is
-///      reported to the caller (`origin_rise_m`), which bounds it for the sector map;
-///   5. rotate about down by minus the heading at t_ref (heading-aligned FRD);
-///   6. negate right and down (FRD to FLU).
-/// The ray then carries azimuth, elevation and range in the output frame documented at
-/// MountRotation; `timestamp_ns` stays the original sensor time. Nothing else is changed.
+///   2. dR, the rotation of the sensor from t_ref to t_i from the gyro (the identity when t_i == t_ref);
+///   3. calibrated mount rotation M to the body frame (FLU), then F, FLU to FRD;
+///   4. q_fmu(t_ref) rotates body FRD to NED: p_ned = q_fmu(t_ref) * F * M * dR * p_sensor, so the body
+///      attitude at t_i is R_i = q_fmu(t_ref) * F * M * dR * M^T * F;
+///   5. for a return, add the origin motion d_i = x_i + R_i L - x_ref - R_ref L (NED, L the lever arm), with
+///      x_i = x_ref + v_ref * (t_i - t_ref) from the FMU velocity at t_ref; a no-return has no end point and
+///      keeps its direction only. The vertical part of d_i is reported to the caller (`origin_rise_m`),
+///      which bounds it for the sector map;
+///   6. rotate about down by minus the heading at t_ref (heading-aligned FRD);
+///   7. negate right and down (FRD to FLU).
+/// The ray then carries azimuth, elevation and range in the output frame documented at the top of this
+/// file; `timestamp_ns` stays the original sensor time. Nothing else is changed.
 ///
-/// Not thread safe; use one instance per frame-building thread. `poses` must outlive it.
+/// A ray with t_i != t_ref needs the gyro (orientations at t_ref and t_i in one segment) and a finite FMU
+/// velocity at t_ref; otherwise it gets kNoPose (or kResetSinceReference when the gyro restarted between
+/// the two times).
+///
+/// Not thread safe; use one instance per frame-building thread. `poses` and `gyro` must outlive it.
 class RayLeveler
 {
 public:
-  /// Throws std::invalid_argument when `config` is not valid.
-  RayLeveler(const PoseHistory & poses, const LevelingConfig & config);
+  /// Throws std::invalid_argument when `config` is not valid. `gyro` may be null for a source whose rays
+  /// of one frame all carry the reference time (the Gazebo cloud).
+  RayLeveler(
+    const PoseHistory & poses, const LevelingConfig & config, const GyroTrack * gyro = nullptr);
 
-  /// Sets the reference time (the map timestamp) and looks up the reference pose: position and
-  /// heading. Returns kOk, or kNoPose when there is no usable pose at that time (no pose, or an
-  /// attitude whose forward axis is vertical so that it has no heading). On failure every
-  /// level() call returns kNoReference until a call succeeds.
+  /// Sets the reference time (the map timestamp) and looks up the FMU pose there: attitude, position,
+  /// velocity and heading. Returns kOk, or kNoPose when there is no usable pose at that time (no pose, or
+  /// an attitude whose forward axis is vertical so that it has no heading). On failure every level() call
+  /// returns kNoReference until a call succeeds.
   LevelingStatus beginFrame(uint64_t reference_time_ns);
 
   /// Transforms `ray` in place. On any status other than kOk the ray is left unchanged and must
@@ -114,16 +125,18 @@ public:
     obstacle_sector_map::RaySample & ray, double & origin_rise_m) const;
 
 private:
-  /// x + R L in NED: the body origin plus the lever arm rotated by the attitude.
-  [[nodiscard]] std::array<double, 3> sensorPositionNed(const PoseSample & pose) const;
-
   const PoseHistory & _poses;
+  const GyroTrack * _gyro;
   LevelingConfig _config;
   std::array<double, 9> _mount_rotation;  // sensor FLU to body FLU, row-major
+  std::array<double, 9> _sensor_to_frd;   // F * M: sensor FLU to body FRD, row-major
   bool _has_reference{false};
+  uint64_t _reference_time_ns{0U};
+  std::array<double, 9> _reference_attitude{};  // body FRD to NED at t_ref, row-major
+  std::array<double, 3> _reference_position_ned_m{};
+  std::array<double, 3> _reference_velocity_ned_m_s{};
   std::array<double, 3> _reference_sensor_position_ned_m{};
   double _reference_heading_rad{0.0};
-  uint8_t _reference_reset_counter{0U};
 };
 
 }  // namespace livox_ray_source

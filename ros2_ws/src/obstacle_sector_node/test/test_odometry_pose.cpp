@@ -70,3 +70,24 @@ TEST(OdometryPoseTest, NanQuaternionOrPositionGivesAnInvalidSample)
   ASSERT_TRUE(sample.has_value());
   EXPECT_FALSE(sample->isValid());
 }
+
+TEST(OdometryPoseTest, VelocityIsCopiedOnlyInTheNedFrame)
+{
+  VehicleOdometry odometry = odometryAt(4'000'000U);
+  odometry.velocity = {12.0F, -1.0F, 0.5F};
+  odometry.velocity_frame = VehicleOdometry::VELOCITY_FRAME_NED;
+  auto pose = poseFromOdometry(odometry, kNowNs);
+  ASSERT_TRUE(pose.has_value());
+  EXPECT_DOUBLE_EQ(pose->velocity_ned_m_s[0], 12.0);
+  EXPECT_DOUBLE_EQ(pose->velocity_ned_m_s[1], -1.0);
+  EXPECT_DOUBLE_EQ(pose->velocity_ned_m_s[2], 0.5);
+  for (const uint8_t frame : {VehicleOdometry::VELOCITY_FRAME_UNKNOWN, VehicleOdometry::VELOCITY_FRAME_FRD,
+      VehicleOdometry::VELOCITY_FRAME_BODY_FRD})
+  {
+    odometry.velocity_frame = frame;
+    pose = poseFromOdometry(odometry, kNowNs);
+    ASSERT_TRUE(pose.has_value());
+    EXPECT_TRUE(std::isnan(pose->velocity_ned_m_s[0])) << static_cast<int>(frame);
+    EXPECT_TRUE(pose->isValid());  // the pose itself stays usable at the reference time
+  }
+}

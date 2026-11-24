@@ -16,6 +16,8 @@ using obstacle_sector_map::RaySample;
 constexpr std::size_t kHeaderBytes{36U};
 constexpr std::size_t kPointBytes{10U};
 constexpr uint8_t kSphericalDataType{3U};
+constexpr uint8_t kImuDataType{0U};
+constexpr std::size_t kImuSampleBytes{24U};  // six float32
 constexpr uint8_t kPtpTimeType{1U};
 constexpr uint32_t kMaxTheta{18000U};  // 0.01 degree
 constexpr uint32_t kMaxPhi{36000U};    // 0.01 degree
@@ -33,6 +35,26 @@ T readLe(const uint8_t * at)
 }
 
 }  // namespace
+
+DecodedImuPacket decodeImuPacket(const uint8_t * data, std::size_t size)
+{
+  DecodedImuPacket packet;
+  if (data == nullptr || size != kHeaderBytes + kImuSampleBytes || data[10] != kImuDataType) {
+    return packet;
+  }
+  packet.layout_ok = true;
+  packet.time_type = data[11];
+  const uint64_t packet_time_ns = readLe<uint64_t>(data + 28);
+  if (packet.time_type != kPtpTimeType || packet_time_ns == 0U) {
+    return packet;
+  }
+  packet.gyro.timestamp_ns = packet_time_ns;
+  for (std::size_t axis = 0U; axis < 3U; ++axis) {
+    packet.gyro.rate_flu_rad_s[axis] =
+      static_cast<double>(readLe<float>(data + kHeaderBytes + axis * sizeof(float)));
+  }
+  return packet;
+}
 
 DecodedPacket decodeSphericalPacket(const uint8_t * data, std::size_t size)
 {

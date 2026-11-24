@@ -13,6 +13,9 @@ sensor:
 pose_history:  # the pose input of the leveling step (#137, ADR 0022 decision 2)
   depth: null  # TBD: OPEN-032 (samples kept; the bench measures the odometry rate first)
   max_bracket_gap_ms: null  # TBD: OPEN-032 (largest gap between the two poses around a ray time)
+gyro_history:  # the Livox gyro track for the rotation inside one frame (ADR 0023), source livox only
+  depth: null  # TBD (samples kept at 200 Hz)
+  max_bracket_gap_ms: null  # TBD: above the 6.0 ms IMU step measured (ADR 0023 decision 4)
 sector_map:
   height_up_m: 0.25  # OPEN-036, bench, delegated 2026-11-22: from the lidar, level frame (ADR 0022)
   height_down_m: 0.60  # OPEN-036, bench, delegated 2026-11-22: from the lidar, level frame

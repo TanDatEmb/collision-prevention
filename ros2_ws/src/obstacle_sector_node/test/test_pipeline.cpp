@@ -125,7 +125,8 @@ TEST(SectorMapPipelineTest, ReportsTheEndOfTheSourceAndKeepsTheCounters)
 // ahead of the sensor is 5 m away horizontally when the vehicle is pitched 10 degrees nose up (the boresight is
 // then level, the rays lie in both halves of the band). With the vehicle level the same rays all point 10 degrees
 // down: no ray lies in the upper half, so the sector is unknown (coverage rule, SYS-CP-029) instead of showing a
-// wall at 4.92 m. A pitch applied with the wrong sign would also leave the sector unknown, not at 5 m.
+// wall at 4.92 m. A pitch applied with the wrong sign would also leave the sector unknown, not at 5 m. Both rays
+// carry the reference time, as in the Gazebo cloud, so no gyro is needed (ADR 0023).
 namespace
 {
 
@@ -152,7 +153,7 @@ uint16_t wallDistanceCm(double vehicle_pitch_up_rad)
   livox_ray_source::LevelingConfig leveling{0.0, mount_pitch_down_rad, 0.0, {0.0, 0.0, 0.0}};
   SectorMapPipeline pipeline{
     std::make_unique<livox_ray_source::LevelingRaySource>(
-      replay({makeReturn(6'500'000U, 5.0F), makeReturn(6'600'000U, 5.0F)}), poses, leveling),
+      replay({makeReturn(6'500'000U, 5.0F), makeReturn(6'500'000U, 5.0F)}), poses, leveling),
     kConfig};
   const auto result = pipeline.step();
   EXPECT_EQ(result.status, StepStatus::kMessage);

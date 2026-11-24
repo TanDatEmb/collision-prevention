@@ -30,6 +30,12 @@ std::optional<livox_ray_source::PoseSample> poseFromOdometry(
   for (std::size_t i = 0U; i < 4U; ++i) {
     sample.q_wxyz[i] = static_cast<double>(odometry.q[i]);
   }
+  // Velocity only in the local NED frame (ADR 0023 decision 3); any other frame leaves it unknown (NaN).
+  if (odometry.velocity_frame == px4_msgs::msg::VehicleOdometry::VELOCITY_FRAME_NED) {
+    for (std::size_t i = 0U; i < 3U; ++i) {
+      sample.velocity_ned_m_s[i] = static_cast<double>(odometry.velocity[i]);
+    }
+  }
   return sample;
 }
 

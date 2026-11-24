@@ -12,8 +12,9 @@ namespace livox_ray_source
 {
 
 LevelingRaySource::LevelingRaySource(
-  std::unique_ptr<RaySource> inner, const PoseHistory & poses, const LevelingConfig & config)
-: _inner(std::move(inner)), _leveler(poses, config)
+  std::unique_ptr<RaySource> inner, const PoseHistory & poses, const LevelingConfig & config,
+  const GyroTrack * gyro)
+: _inner(std::move(inner)), _leveler(poses, config, gyro)
 {
   if (!_inner) {
     throw std::invalid_argument("leveling source needs an inner source");

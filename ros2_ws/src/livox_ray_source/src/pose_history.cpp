@@ -146,6 +146,8 @@ PoseLookupResult PoseHistory::poseAt(uint64_t time_ns) const
   for (std::size_t i = 0U; i < 3U; ++i) {
     result.pose.position_ned_m[i] =
       lo.position_ned_m[i] + t * (hi.position_ned_m[i] - lo.position_ned_m[i]);
+    result.pose.velocity_ned_m_s[i] =
+      lo.velocity_ned_m_s[i] + t * (hi.velocity_ned_m_s[i] - lo.velocity_ned_m_s[i]);
   }
   return result;
 }
