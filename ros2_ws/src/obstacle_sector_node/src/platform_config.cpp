@@ -87,6 +87,8 @@ obstacle_sector_map::SectorMapConfig loadSectorMapConfig(const std::string & yam
   const double window = number(child(map, "obstacle_window_m"), "obstacle window");
   const double obstacle_returns = number(child(map, "obstacle_min_returns"), "obstacle returns");
   const double free_rays = number(child(map, "free_min_rays"), "free rays");
+  const double certified_range = number(child(map, "certified_range_m"), "certified range");
+  const double allowance = number(child(map, "attitude_allowance_rad"), "attitude allowance");
 
   for (const double count : {obstacle_returns, free_rays}) {
     if (count < 1.0 || count != std::floor(count) || count > 4.0e9) {
@@ -96,7 +98,8 @@ obstacle_sector_map::SectorMapConfig loadSectorMapConfig(const std::string & yam
 
   obstacle_sector_map::SectorMapConfig config{
     static_cast<float>(height_up), static_cast<float>(height_down), static_cast<float>(window),
-    static_cast<uint32_t>(obstacle_returns), static_cast<uint32_t>(free_rays)};
+    static_cast<uint32_t>(obstacle_returns), static_cast<uint32_t>(free_rays),
+    static_cast<float>(certified_range), static_cast<float>(allowance)};
 
   // Optional: the start of the rear class (issue #141). Absent or null keeps the default, no rear class.
   const YAML::Node rear_start = child(map, "rear_start_rad");

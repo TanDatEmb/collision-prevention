@@ -21,7 +21,7 @@ namespace
 {
 
 // Test fixture values, not approved platform values.
-constexpr SectorMapConfig kConfig{1.0F, 1.0F, 0.5F, 2U, 2U};
+constexpr SectorMapConfig kConfig{1.0F, 1.0F, 0.5F, 2U, 2U, 40.0F, 0.0F};
 constexpr uint64_t kWindowNs = 1'000'000U;
 
 std::unique_ptr<livox_ray_source::RaySource> makeSource()

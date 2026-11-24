@@ -41,13 +41,30 @@ TEST(PlatformConfigTest, LoadsTheSectorMapValues)
   const auto config = loadSectorMapConfig(writeYaml(
     "valid",
     "sector_map:\n  height_up_m: 1.0\n  height_down_m: 0.8\n  obstacle_window_m: 0.5\n"
-    "  obstacle_min_returns: 3\n  free_min_rays: 2\n"));
+    "  obstacle_min_returns: 3\n  free_min_rays: 2\n" "  certified_range_m: 12.0\n  attitude_allowance_rad: 0.01\n"));
 
   EXPECT_FLOAT_EQ(config.height_up_m, 1.0F);
   EXPECT_FLOAT_EQ(config.height_down_m, 0.8F);
   EXPECT_FLOAT_EQ(config.obstacle_window_m, 0.5F);
   EXPECT_EQ(config.obstacle_min_returns, 3U);
   EXPECT_EQ(config.free_min_rays, 2U);
+  EXPECT_FLOAT_EQ(config.certified_range_m, 12.0F);
+  EXPECT_FLOAT_EQ(config.attitude_allowance_rad, 0.01F);
+}
+
+TEST(PlatformConfigTest, TheCertifiedRangeAndTheAllowanceAreRequiredAndChecked)
+{
+  const std::string base =
+    "sector_map:\n  height_up_m: 1.0\n  height_down_m: 1.0\n  obstacle_window_m: 0.5\n"
+    "  obstacle_min_returns: 2\n  free_min_rays: 2\n";
+  EXPECT_TRUE(rejects(writeYaml("range_missing", base + "  attitude_allowance_rad: 0.01\n")));
+  EXPECT_TRUE(rejects(writeYaml("allowance_missing", base + "  certified_range_m: 12.0\n")));
+  EXPECT_TRUE(rejects(writeYaml("range_null", base + "  certified_range_m: null\n  attitude_allowance_rad: 0.01\n")));
+  for (const std::string range : {"0.05", "40.5", "-3"}) {
+    EXPECT_TRUE(rejects(writeYaml(
+      "range" + range, base + "  certified_range_m: " + range + "\n  attitude_allowance_rad: 0.01\n")));
+  }
+  EXPECT_TRUE(rejects(writeYaml("allowance_negative", base + "  certified_range_m: 12.0\n  attitude_allowance_rad: -0.01\n")));
 }
 
 TEST(PlatformConfigTest, RejectsNullMissingAndNonNumericValues)
@@ -68,7 +85,7 @@ TEST(PlatformConfigTest, RejectsNullMissingAndNonNumericValues)
 TEST(PlatformConfigTest, RejectsABadCountOrBand)
 {
   const std::string prefix =
-    "sector_map:\n  height_up_m: 1.0\n  height_down_m: 1.0\n  obstacle_window_m: 0.5\n";
+    "sector_map:\n  height_up_m: 1.0\n  height_down_m: 1.0\n  obstacle_window_m: 0.5\n" "  certified_range_m: 12.0\n  attitude_allowance_rad: 0.01\n";
 
   for (const std::string count : {"0", "2.5", "-1"}) {
     EXPECT_TRUE(rejects(writeYaml(
@@ -80,18 +97,18 @@ TEST(PlatformConfigTest, RejectsABadCountOrBand)
   EXPECT_TRUE(rejects(writeYaml(
     "band",
     "sector_map:\n  height_up_m: -1.0\n  height_down_m: 1.0\n  obstacle_window_m: 0.5\n"
-    "  obstacle_min_returns: 2\n  free_min_rays: 2\n")));
+    "  obstacle_min_returns: 2\n  free_min_rays: 2\n" "  certified_range_m: 12.0\n  attitude_allowance_rad: 0.01\n")));
   EXPECT_TRUE(rejects(writeYaml(
     "window",
     "sector_map:\n  height_up_m: 1.0\n  height_down_m: 1.0\n  obstacle_window_m: 0.0\n"
-    "  obstacle_min_returns: 2\n  free_min_rays: 2\n")));
+    "  obstacle_min_returns: 2\n  free_min_rays: 2\n" "  certified_range_m: 12.0\n  attitude_allowance_rad: 0.01\n")));
 }
 
 TEST(PlatformConfigTest, TheRearStartIsOptionalAndMustBeAnAngleFromZeroToPi)
 {
   const std::string base =
     "sector_map:\n  height_up_m: 1.0\n  height_down_m: 1.0\n  obstacle_window_m: 0.5\n"
-    "  obstacle_min_returns: 2\n  free_min_rays: 2\n";
+    "  obstacle_min_returns: 2\n  free_min_rays: 2\n" "  certified_range_m: 12.0\n  attitude_allowance_rad: 0.01\n";
   EXPECT_NEAR(loadSectorMapConfig(writeYaml("rear_absent", base)).rear_start_rad, 3.14159265F, 1e-6F);
   EXPECT_NEAR(
     loadSectorMapConfig(writeYaml("rear_null", base + "  rear_start_rad: null\n")).rear_start_rad,

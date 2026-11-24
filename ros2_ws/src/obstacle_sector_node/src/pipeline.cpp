@@ -28,9 +28,7 @@ StepResult SectorMapPipeline::step()
 
   ++_stats.frames;
 
-  _builder.reset(
-    frame->packet_continuity_valid, static_cast<float>(frame->origin_rise_bound_m),
-    static_cast<float>(frame->origin_fall_bound_m));
+  _builder.reset(frame->packet_continuity_valid);
   for (const auto & ray : frame->rays) {
     _builder.addRay(ray);
   }

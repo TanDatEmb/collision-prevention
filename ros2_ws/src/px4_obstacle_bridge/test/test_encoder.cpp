@@ -15,7 +15,7 @@ using px4_obstacle_bridge::encodeObstacleDistance;
 namespace
 {
 
-constexpr SectorMapConfig kConfig{1.0F, 1.0F, 0.5F, 2U, 2U};
+constexpr SectorMapConfig kConfig{1.0F, 1.0F, 0.5F, 2U, 2U, 40.0F, 0.0F};
 
 SectorMap makeMap()
 {
@@ -153,7 +153,7 @@ TEST(ObstacleDistanceEncoderTest, RejectsInvalidConfigAndInvalidOccupiedDistance
   EXPECT_FALSE(encodeObstacleDistance(map, kConfig).has_value());
 
   setSector(map, 0U, SectorState::kOccupied, 1.0F);
-  const SectorMapConfig invalid_config{1.0F, 1.0F, 0.5F, 0U, 2U};
+  const SectorMapConfig invalid_config{1.0F, 1.0F, 0.5F, 0U, 2U, 40.0F, 0.0F};
   EXPECT_FALSE(encodeObstacleDistance(map, invalid_config).has_value());
 }
 
