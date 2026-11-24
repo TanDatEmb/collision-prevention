@@ -518,7 +518,7 @@ enforces the caps 0.07 to 0.14 s after the sample, which is why the module recom
 | G1 Requirements | ODD, hazards and SYS-CP requirements approved by the owner, who is the sole safety approver until another is named (waiver, 2026-11-19); every hazard traces to a requirement or an OPEN item; every requirement has a verify method |
 | G2 Architecture | OPEN-026 and OPEN-027 closed by ADR 0014 and 0015; ICD-CP-01 to 06 approved (done: 06, the ray-source to map interface, was approved on 2026-11-19); latency and CPU budget allocation and owners approved, values measured and approved at G5 (OPEN-004, OPEN-028); observation core reviewed against the proposed architecture (issue #5) before G2 is approved  Approved by the owner on 2026-11-19. |
 | G3 Core implementation | Build clean with `-Werror`; UT groups for assigned requirements pass; Orin node composes source, map and bridge; no SITL claim |
-| G4 SITL X500 | `x500.yaml` values approved and filled (SITL bench values on 2026-11-24, #207; the gyro history and the self-mask wait for #206 and the real sensor); SITL scenarios pass with fidelity gaps below recorded; no detection or braking claim |
+| G4 SITL X500 | `x500.yaml` values approved and filled (SITL bench values on 2026-11-24, #207; self-mask filled and applied in the body frame, #210, VM-55 Gazebo positive control passed; the gyro history waits for the real sensor); SITL scenarios pass with fidelity gaps below recorded; no detection or braking claim |
 | G5 HIL | FMU timing, DDS, load and p99 latency within the approved budget on target hardware |
 | G6 Flight | Flight scenarios pass; measured braking envelope closes OPEN-002 and OPEN-003; release review |
 
