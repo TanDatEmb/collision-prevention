@@ -57,6 +57,11 @@ Values marked TBD stay TBD.
 
 ## Decision
 ### 1. Band reference and origin handling: the lidar centre at `t_ref`
+Items b, c, e and h amended by ADR 0024 (approved 2026-11-24): the free distance no longer comes from where a ray
+leaves the band, so the frame-level origin bounds and their guards are removed and the `(r^2 / h) dtheta`
+over-claim no longer exists; the attitude error acts on the band test, bounded by the allowance. Items a and d
+(returns shifted exactly, the lever arm) stand.
+
 Band reference (option a, unchanged in substance). The band is taken around the lidar centre at `t_ref`,
 with `h_up` and `h_down` relative to the lidar. With `L` the lidar position in the PX4 vehicle reference
 frame, that is from `base_link` (0.075 m above `base_link` for the current X500 SDF, 0.14 m for the

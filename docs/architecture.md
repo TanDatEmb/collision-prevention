@@ -130,7 +130,7 @@ owner approves its pass criterion (SYS-CP-025, OPEN-043).
 | PERF-04 | Safe-stop at 0.5 s sample age; no Hold timer | ADR 0007 | SITL, HIL | Approved baseline (owner, 2026-11-19); qualify at G5 |
 | PERF-05 | Rise 2.0 m/s^2 after 0.3 s clear dwell | ADR 0008 | SITL, Flight | Approved baseline, OPEN-024 |
 | SAFE-01 | Clearance margin 2.0 m beyond body and self-mask radius | ADR 0010 | Analysis | Approved baseline, OPEN-005 |
-| DET-01 | Detect at >= 40 m a static target: width >= 0.30 m, reflectivity >= 10%; wires unqualified | ADR 0010 | Flight | Approved baseline, OPEN-006 |
+| DET-01 | Detect at >= 40 m a static target: width >= 0.30 m, reflectivity >= 10%; wires unqualified | ADR 0010 | Flight | Approved baseline, OPEN-006. Conflict (ADR 0024, owner decision): at Livox-like gaps (1.07 x 1.0 deg, estimate, OPEN-023) with a 0.85 m band and 3 confirming returns, a 0.30 m wide target is guaranteed in every frame only to 8.6 m (face-on, 1.0 m tall) (`tools/scenarios/certified_range.py`); over several frames the pattern may still hit it |
 | REL-01 | False-brake <= 5% of labelled 60 s clear windows (>= 0.5 m/s reduction for >= 0.2 s) | ADR 0010 | Flight | Approved baseline, OPEN-007 |
 | ENV-01 | Light rain <= 2.5 mm/h, wind <= 5 m/s, no fog, dust or water film | ADR 0010 | Flight | Approved baseline, OPEN-008 |
 | NFR-CP-001 | Deterministic output for the same input | Baseline | UT | Draft |
@@ -143,12 +143,12 @@ Requirements added by the SE review, approved by the owner on 2026-11-20 (chat; 
 
 | ID | Requirement | Source | Verify | Status |
 | --- | --- | --- | --- | --- |
-| SYS-CP-017 | Rays are expressed in a gravity-aligned, yaw-only frame at the map reference time, so the sector map does not depend on roll and pitch | ICD-CP-06, ADR 0015, 0019, HZ-CP-017 | UT, GZ | Approved; designed, not implemented (#57) |
+| SYS-CP-017 | Rays are expressed in a gravity-aligned, yaw-only frame at the map reference time, so the sector map does not depend on roll and pitch | ICD-CP-06, ADR 0015, 0019, 0023, HZ-CP-017 | UT, GZ | Approved; implemented (#179, #188: FMU pose at the reference time, Livox gyro inside the frame); SITL: wall distance within 0.017 m to a 36.5 deg tilt and 160 deg/s (#191) |
 | SYS-CP-018 | Over the attitude envelope of the ODD (OPEN-039) the horizon in the direction of motion stays inside the sensor field of view, by the mount pose and by braking limits set per direction; where part of the envelope is not observed, the sector's certified free distance covers only what is observed, and with no evidence the sector is unknown (cap 0), never clear (the rear non-claim zone, where the cap is the locked speed of SYS-CP-031, is the stated exception) | HZ-CP-016 | Analysis, GZ, FLT | Approved |
 | SYS-CP-019 | A ground return is not an obstacle for a vehicle at or above the minimum height (OPEN-038); it is rejected by the vertical envelope in the gravity-aligned frame, not by range | HZ-CP-017 | UT, GZ | Approved |
-| SYS-CP-020 | The distance of a sector is the smaller of the confirmed obstacle distance and the free distance certified by rays covering both halves of the vertical collision envelope; the sector is clear only when that free distance reaches the qualified range, and rays at one elevation certify only the part of the envelope they cross | HZ-CP-018, OPEN-036 | UT | Approved |
+| SYS-CP-020 | The distance of a sector is the smaller of the confirmed obstacle distance and the certified range `certified_range_m`, given when rays cover both halves of the vertical collision envelope (ADR 0024: the range at which one sector is guaranteed the confirming returns of the smallest claimed obstacle); the sector is clear only when that range is the qualified range and no obstacle is confirmed | HZ-CP-018, OPEN-036, ADR 0024 | UT, GZ | Approved; amended by ADR 0024 (#191) |
 | SYS-CP-021 | The support a return needs before it counts as obstacle evidence (rays, time) is explicit, set from measured false-brake and miss rates, and its latency is in the budget | HZ-CP-006, 019, REL-01, PERF-03 | RPL, GZ, FLT | Approved; value TBD (OPEN-041) |
-| SYS-CP-022 | The operator documentation lists the obstacle classes outside the claim: wires, thin branches, foliage unless qualified, low reflectivity, dynamic obstacles | HZ-CP-022, DET-01 | Review | Approved |
+| SYS-CP-022 | The operator documentation lists the obstacle classes outside the claim: wires, thin branches, foliage unless qualified, low reflectivity, dynamic obstacles, and, per frame, objects smaller than the smallest claimed obstacle or more oblique than `phi_max` at the certified range (ADR 0024) | HZ-CP-022, DET-01 | Review | Approved; amended by ADR 0024 |
 | SYS-CP-023 | Every release of the constraint by a mode change is logged and shown to the operator; the behaviour afterwards is PX4's | ADR 0007, HZ-CP-020 | GZ | Approved (#113) |
 | SYS-CP-024 | The change from invalid to valid PX4 state in flight gives a defined start-up: no latched SAFE_STOP without a stated reason and a stated way out | HZ-CP-021, SYS-CP-007 | GZ | Approved (#112) |
 | SYS-CP-025 | A scenario counts as evidence only after the owner approves its pass criterion; a scenario without one is exploratory and carries no claim | ADR 0011 | Review | Approved |
@@ -170,7 +170,7 @@ measured range is below 40 m or errors exceed the residual margin, the 12 m/s cl
 | ID | Hazard | Cause | Safety constraint, requirement |
 | --- | --- | --- | --- |
 | HZ-CP-001 | Collision with static obstacle in a qualified sector | Late or weak braking | Conservative caps, tighten at once: SYS-CP-001, 012, PERF-01/02 |
-| HZ-CP-002 | Obstacle outside FOV, masked, thin or unobserved | Coverage gap | Unknown is not free: SYS-CP-004, 011 |
+| HZ-CP-002 | Obstacle outside FOV, masked, thin or unobserved | Coverage gap | Unknown is not free: SYS-CP-004, 011; free space is certified only to the range that guarantees the confirming returns of the smallest claimed obstacle (ADR 0024); smaller objects, and surfaces more oblique than `phi_max`, are a stated non-claim per frame (SYS-CP-022) |
 | HZ-CP-003 | Stale, malformed or missing stream | Link, driver or process fault | Reject, safe-stop, report: SYS-CP-004, 007, 009, PERF-04 |
 | HZ-CP-004 | Wrong timestamp, clock, frame or sector sign | Metadata or conversion fault | Validate and reject: SYS-CP-002, 016 |
 | HZ-CP-005 | NaN, overflow, bad parameter or denominator | Math or config fault | Validate; fault gives safe-stop: SYS-CP-007, NFR-CP-002 |
@@ -235,8 +235,8 @@ flowchart LR
 | FEAT-02 | Time alignment of the map and PX4 | Orin node, `cp_brake` | Exists; limits TBD (OPEN-033) | SYS-CP-016, ICD-CP-02 |
 | FEAT-03 | Static self-mask | `livox_ray_source` | Library exists (`SelfMask`, `MaskingRaySource`, unit tests; upright cylinders in the sensor frame); the `obstacle_sector_node` executable does not call it, so no self-return is excluded in any run yet (FEAT-23, #137) | SYS-CP-015 |
 | FEAT-04 | Pose-based deskew | `livox_ray_source` | Missing (#57) | SYS-CP-016 |
-| FEAT-05 | Gravity-aligned leveling (roll and pitch removed) | `livox_ray_source` | Missing; no lidar-side package has an attitude input | SYS-CP-017 |
-| FEAT-06 | Vertical envelope and ground rejection | `livox_ray_source`, `obstacle_sector_map` | Partial: height band, certified free distance (PR #131) and the vertical coverage rule (PR #167) built, unit tests only, no SITL, applied to unleveled rays until #57 | SYS-CP-019, 020 |
+| FEAT-05 | Gravity-aligned leveling (roll and pitch removed) | `livox_ray_source` | Built: `LevelingRaySource` with the FMU pose at the reference time and the Livox gyro inside the frame (#179, #188, ADR 0023); SITL only, the gyro path unit-tested only | SYS-CP-017 |
+| FEAT-06 | Vertical envelope and ground rejection | `livox_ray_source`, `obstacle_sector_map` | Built: height band with the attitude allowance, coverage rule (PR #167) and the certified range (ADR 0024, #191) on leveled rays; SITL with bench values, no hardware | SYS-CP-019, 020 |
 | FEAT-07 | Evidence classification and isolated-return policy | `livox_ray_source`, `obstacle_sector_map` | Partial: return, no-return and invalid exist; a zero-depth sample with a valid direction is a qualified no-return (PR #173); one return makes a sector occupied, no support rule | SYS-CP-011, 021 |
 | FEAT-08 | Sector map: nearest range, coverage, too close | `obstacle_sector_map` | Exists, unit tests | SYS-CP-004, 011 |
 | FEAT-09 | Wire encoding and transport | `px4_obstacle_bridge`, Orin node | Exists | SYS-CP-002 |
@@ -287,7 +287,7 @@ collision envelope. PX4 uses `MAV_FRAME_BODY_FRD`; only `px4_obstacle_bridge` co
 | --- | --- | --- |
 | ICD-CP-01 sensor geometry | Mid-360S, 360 deg horizontal, -7 to 52 deg vertical; CAD self-mask; `livox_frame -> base_link` repeatability <= 5 mm, <= 0.5 deg | Out of tolerance: recalibrate, new mask revision |
 | ICD-CP-02 time | Hardware PTPv2 or sim `/clock` (ADR 0003); three runtime timestamps: sample, constraint, status; `sample_age = status - sample`; sync residual <= 2 ms; integer microseconds | Zero or unconvertible: unknown sectors; regression or age > 0.5 s: safe-stop |
-| ICD-CP-03 `ObstacleDistance` | `/fmu/in/obstacle_distance`; frame 12, sensor LASER (0); 72 x 5 deg, `angle_offset=0`; cm; 10 Hz nominal, no bursts; QoS best-effort, volatile, keep-last 2 (OPEN-011); `min_distance=10`, `max_distance=4000`; `0` too close, `max_distance+1` clear, `UINT16_MAX` unknown; timestamp = acquisition time | Missing, invalid or stale: no velocity toward affected sectors; never inferred clear |
+| ICD-CP-03 `ObstacleDistance` | `/fmu/in/obstacle_distance`; frame 12, sensor LASER (0); 72 x 5 deg, `angle_offset=0`; cm; 10 Hz nominal, no bursts; QoS best-effort, volatile, keep-last 2 (OPEN-011); `min_distance=10`, `max_distance=4000`; `0` too close, `max_distance+1` clear, `UINT16_MAX` unknown; a distance is the nearest confirmed obstacle or, when none is nearer, the certified range (ADR 0024: free space guaranteed for the smallest claimed obstacle, not an obstacle seen there); timestamp = acquisition time | Missing, invalid or stale: no velocity toward affected sectors; never inferred clear |
 | ICD-CP-04 PX4 constraint | `cp_brake` messages and limiter hook: approved design below (ADR 0014) | Non-finite, stale or malformed constraint: zero velocity toward the affected direction plus a reason |
 | ICD-CP-05 logging | Each intervention reconstructs sample, constraint, hook, response, recovery; status 10 Hz plus every transition; Orin diagnostics 1 Hz; raw clouds only in a debug profile; raw ULog, rosbag, MCAP stay out of Git (manifests and hashes only) | Run verdict `PASS`, `FAIL` or `INVALID`; incomplete evidence is never `PASS` |
 | ICD-CP-06 ray batch | `livox_ray_source` to `obstacle_sector_map`, in one process with no ROS hop: approved design below (ADR 0004, 0006, 0015) | A ray without a valid time or direction is `kInvalid`; a frame without continuity gives no clear evidence |
@@ -314,19 +314,20 @@ source: ADR 0004.
 
 - Contract: per map, one frame of `RaySample` (non-zero `timestamp_ns`, `range_m`, `azimuth_rad`
   counter-clockwise FLU, `elevation_rad`, `masked`, `return_kind`) plus one packet-continuity flag
-  and two frame bounds, `origin_rise_bound_m` and `origin_fall_bound_m` (metres, not negative: the
-  largest rise and fall of the sensor origin from its position at the reference time over the rays of
-  the frame, ADR 0022 decision 1 item e; NaN means not provided, for a source that does not level, and 0 is a real bound, as in PX4 setpoints). Sensor tags and
+  (the two frame bounds of ADR 0022 decision 1 item e are removed by ADR 0024). Sensor tags and
   confidence stay in `livox_ray_source`.
 - Frame: gravity-aligned, yaw only (roll and pitch removed), origin at the sensor position (body
   origin plus the lever arm) at the deskew reference time, which is the map timestamp (earliest
   contributing ray, SYS-CP-016).
 - Framing: a window of `coverage_window_ms` by sensor timestamp; the whole frame is buffered, then
-  `reset(continuity, rise bound, fall bound)`, `addRay` and `finalize` run. The builder certifies the
-  free distance of a ray only inside the band room left above and below the moved origin
-  (`h_up` less the rise bound, `h_down` less the fall bound); a NaN bound means no correction and a
-  negative or infinite bound leaves no room. Returns are never dropped for origin motion; their end point is shifted
-  exactly.
+  `reset(continuity)`, `addRay` and `finalize` run. A covered sector is certified free to
+  `certified_range_m` (ADR 0024); a return is obstacle evidence when its height, widened by
+  `distance tan(attitude_allowance_rad)`, meets the band. Returns are never dropped for origin motion; their end
+  point is shifted exactly.
+- Leveling poses (ADR 0023): the FMU pose (`VehicleOdometry`) is looked up only at the reference time; the
+  rotation inside the frame comes from the Livox gyro (trapezoid integration, a gap or a time step restarts it)
+  and the position from the FMU velocity at the reference time. A ray at the reference time needs neither (the
+  Gazebo cloud).
 - Distance limits: one pair `kMinDistanceM` and `kMaxDistanceM` (ICD-CP-03: 10 cm, 4000 cm), fixed
   constants in `obstacle_sector_map` and not platform configuration; the separate name
   `qualified_range_m` is dropped.
@@ -338,11 +339,12 @@ source: ADR 0004.
 - Self-mask (ADR 0006): `livox_ray_source` sets `masked`. A return is masked when its endpoint is
   inside a cylinder; a no-return is masked when its ray segment up to `max_distance_m` crosses a
   cylinder. A masked ray is neither obstacle nor clear evidence.
-- Missing pose for a ray's time (ADR 0015): the ray is dropped and the frame's continuity flag is
-  false, so no sector of that frame becomes clear.
+- Missing pose (ADR 0015, 0023): no FMU pose at the reference time, or no gyro cover for a ray's time, drops the
+  ray and clears the frame's continuity flag, so no sector of that frame becomes clear.
 - Vertical envelope: platform values (OPEN-005) in the gravity-aligned frame. The owner prefers a
   height band to an elevation-angle band; how a no-return ray, which has no endpoint, is tested
-  against a height band is decided by ADR 0020 D2 (OPEN-036 keeps the values) and the builder implements it since PR #131, still without leveling (#57).
+  against a height band is decided by ADR 0020 D2 (OPEN-036 keeps the values); since ADR 0024 a no-return only
+  counts for the coverage of its half, and the rays are leveled (#179, #188).
 
 ### ICD-CP-04 design (approved 2026-11-19)
 
@@ -666,7 +668,7 @@ Coverage: every OS row with a UT, GZ, RPL, HIL or FLT lane is in a record; none 
 | OPEN-028 | Orin and FMU CPU, memory and thermal budgets | Orin Lead + PX4 | TBD | G5 |
 | OPEN-029 | X500 SITL model name and lidar mount pose (note, no value: the SDF include pose `.12 0 .26` is in the model frame, which puts the lidar link 0.02 m and the sensor 0.075 m above `base_link`, and the X500 propellers enter the lower field of view at that height with a 10 degree nose-down pitch; read from the SDF, not checked by a static run, #153; ADR 0022) | SE | TBD | G4 |
 | OPEN-030 | Measured latency of `VehicleOdometry` on the target network: the latency plus one odometry period must stay below the frame span minus the time from the frame origin to the reference ray, since the FMU pose is looked up only at the reference time (ADR 0023; source ADR 0018). SITL uORB: p99 24 ms at 125 Hz (OPEN-032) | Perception + PX4 | TBD | G3 |
-| OPEN-031 | Clear evidence when the ray origin moves during a scan. Mechanism (ADR 0022 decision 1, owner chat 2026-11-21; implemented in #177, see ICD-CP-06): returns are never dropped for origin motion; free evidence (no-returns and the free part of returns) is corrected in the builder with a frame-level bound of the vertical origin motion per half-band, guards (numerator <= 0 gives 0 and no NaN; the chord form stands for the real ray direction, never above the true exit) and the lever arm in the origin offset; the scalar origin-motion threshold of ADR 0018 is removed; the two frame bounds of ICD-CP-06 are new and need the owner's approval. Values TBD: error budget epsilon and attitude allowance dtheta_b (after measurement, #156), h_up, h_down, n_free, any pose-uncertainty drop limit | Perception + SE | TBD | G3 |
+| OPEN-031 | Clear evidence when the ray origin moves during a scan. Superseded by ADR 0024 (#191): a ray no longer certifies a distance of its own, so the frame-level origin bounds of ADR 0022 decision 1 items b, c and e are removed; the vertical origin motion enters the derivation of `certified_range_m` as `dz` (0.07 m in SITL). Returns stay shifted exactly with the lever arm (ADR 0022 items a, d). Values TBD: `certified_range_m` and `attitude_allowance_rad` (ADR 0024; the allowance must cover the measured attitude error, #156), h_up, h_down, n_free | Perception + SE | TBD | G3 |
 | OPEN-032 | Staleness threshold and publish rate of the `cp_brake_constraints` output; heading history source and depth (source `vehicle_local_position`, chosen in fork PR #7 from Gazebo SITL measurements: 125 Hz for it and for `vehicle_odometry`, 250 Hz for `vehicle_attitude`, `timestamp - timestamp_sample` mean 3.5 ms and p99 24 ms; the depth and the gap limit are the sentinels `CPB_HDG_DEPTH` and `CPB_HDG_GAP`, TBD until the G4 SITL measurements); until then the module evaluates and publishes every 50 ms (an implementation value of fork PR #6, not approved) | PX4 + Controls | TBD | G4 |
 | OPEN-033 | Numeric limits for judging the sync from `timesync_status` at PX4 and for an excessive map age (the gate of fork PR #7 judges three quantities, the age of the latest `timesync_status`, its round-trip time and the absolute difference of the observed and estimated offset, against the sentinels `CPB_SYNC_AGE`, `CPB_SYNC_RTT` and `CPB_SYNC_OFF`, measured at G5; it is on only when `UXRCE_DDS_SYNCT` is not 0, and a NuttX build with it off is a configuration fault); the Orin-side rejection of a negative age is implemented in a separate issue (structure decided) | PX4 + Software Integration | TBD | G5 |
 | OPEN-035 | Hook interaction with FlightTask feedback of the published setpoint, the XY velocity integrator and the tilt limit; V1 handling decided by the owner on 2026-11-20: the hook is a stateless pure function applied identically on every `update()` call (PX4 calls it up to three times per cycle), the read-back of the limited setpoint by `FlightTask` is accepted, the XY velocity integrator gets no special handling, and any windup seen in SITL is recorded | Controls + PX4 | TBD | G4 |
