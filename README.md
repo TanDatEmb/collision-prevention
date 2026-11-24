@@ -26,7 +26,7 @@ Livox -> obstacle_sector_map -> px4_obstacle_bridge -> uXRCE-DDS -> PX4
 
 ```
 AGENTS.md                      rules for AI agents and contributors
-config/platforms/x500.yaml     platform values (X500 SITL; all TBD)
+config/platforms/x500.yaml     platform values (X500 SITL bench values; gyro and self-mask TBD)
 docs/architecture.md           scope, requirements, ICDs, hazards, V&V, open items
 docs/adr/                      accepted architecture decisions
 firmware/PX4-Autopilot         PX4 fork (submodule, pinned)
