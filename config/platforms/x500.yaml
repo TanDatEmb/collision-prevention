@@ -24,15 +24,15 @@ sector_map:
   obstacle_min_returns: null  # TBD: OPEN-041 (n_obstacle)
   free_min_rays: null  # TBD: OPEN-023 (n_free)
   # Trade-off (ADR 0024, tools/scenarios/certified_range.py): a covered sector is certified free to
-  # certified_range_m, which sets the top speed through the cp_brake stopping model; it can only be as long as
-  # the sampling resolves the smallest obstacle claimed: longer range = larger smallest obstacle (h_obj tall,
-  # w_obj wide), a smaller attitude allowance or a denser sensor. Examples at Livox-like gaps (1.07 x 1.0 deg):
-  # allowance 0.9 deg, h_obj 1.0 m, w_obj 1.5 m -> 27 m, 8.9 m/s; 0.3 deg, 1.0 m, 2.5 m -> 38.9 m, 11.4 m/s;
-  # the 40 m wire cap allows 11.6 m/s (12 m/s needs 41.9 m with CPB_T_LAT 0.95 s, CPB_A_BRK 3, CPB_JERK 4).
+  # certified_range_m, which sets the top speed through the cp_brake stopping model; it can only be as long as one
+  # sector is guaranteed n_obstacle returns from the smallest claimed obstacle: longer range = larger smallest
+  # obstacle (h_obj tall, w_obj wide) or a denser sensor. Examples at Livox-like gaps (1.07 x 1.0 deg), band 0.85 m:
+  # 1.0 x 1.5 m -> 20.9 m, 7.4 m/s; 1.0 x 3.0 m -> 28.6 m, 9.3 m/s; 1.0 x 5.0 m -> 40 m, 11.6 m/s (the wire cap;
+  # 12 m/s needs 41.9 m with CPB_T_LAT 0.95 s, CPB_A_BRK 3, CPB_JERK 4).
   certified_range_m: null  # TBD (ADR 0024): from h_obj, w_obj, the measured angular gaps (OPEN-023) and the allowance
   # Trade-off: a larger allowance counts more band-edge returns as obstacles (fewer over-claims under attitude
-  # error, more false stops near the band edges) and shortens certified_range_m; it must cover the measured
-  # attitude error (SITL EKF tilt error p99 0.68, max 0.85 deg; target not measured, #156).
+  # error, more false stops near the band edges); it must cover the measured attitude error (SITL EKF tilt error
+  # p99 0.68, max 0.85 deg; target not measured, #156). It does not change certified_range_m.
   attitude_allowance_rad: null  # TBD (ADR 0024 decision 3, ADR 0022 dtheta_b, #156)
 self_mask:  # decided 2026-11-22 (OPEN-046): four propeller cylinders in the BODY frame, filled with the body-frame mask code (FEAT-23, #137)
   cylinders:
