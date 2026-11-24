@@ -1,7 +1,8 @@
 # 0024. Free space certified to the range the sampling resolves
 
-Status: Proposed. The owner chose this direction in chat on 2026-11-24 ("Triển khai tiếp") after the evidence
-of issue #189 and the critique below (issue #190). It amends ADR 0020 D2 (free distance of a ray) and ADR 0022
+Status: Accepted. The owner chose this direction in chat on 2026-11-24 ("Triển khai tiếp") after the evidence
+of issue #189 and the critique below (issue #190), and approved the order that records it on the same day ("Oke
+duyệt thứ tự nha", issue #192). Implemented in #191. It amends ADR 0020 D2 (free distance of a ray) and ADR 0022
 decision 1 items b, c, e and h. Values marked TBD stay TBD.
 
 ## Context

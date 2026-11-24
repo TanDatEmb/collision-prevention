@@ -94,6 +94,10 @@ the last step would mirror lateral obstacles and flip the height band. One pose 
 transform, so the SITL path exercises leveling (OS-11 to OS-13).
 
 ### D2. Sector evidence: confirmed obstacle and certified free distance (FEAT-06, 07; SYS-CP-018 to 021)
+Amended by ADR 0024 (approved 2026-11-24): a ray no longer certifies a free distance of its own; a sector whose
+halves are covered is certified free to `certified_range_m`, and the band test is widened by the attitude
+allowance. The coverage rule and the obstacle confirmation below are unchanged.
+
 One rule replaces the elevation band, the single-return obstacle and the all-or-nothing clear. In the
 level frame the vertical envelope is a height band from `-h_down` to `+h_up` around the vehicle
 (OPEN-005, OPEN-036).
