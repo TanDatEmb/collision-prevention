@@ -7,8 +7,8 @@ has no default either, so the layout and the SDF cannot drift apart unseen.
 `gz_cloud_topic` is the Gazebo topic of the cloud of the `x500_lidar_multi_ring` model instance of PX4 SITL
 (tools/scenarios/models); change it when the world or the model instance has another name.
 
-The node has no leveling and no mount yet (#137): the rays are in the sensor frame, pitched 10 degrees
-down on the bench model, so a sector map from this launch is not leveled.
+The node levels the rays with the mount and the FMU pose from `/fmu/out/vehicle_odometry` (#179), so PX4
+SITL and the uXRCE-DDS agent must run; without odometry the frames are dropped and no sector is clear.
 """
 
 from launch import LaunchDescription
