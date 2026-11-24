@@ -131,6 +131,7 @@ void ObstacleSectorNode::publishDiagnostics()
   status.values.push_back(keyValue("messages", _pipeline->stats().messages));
   status.values.push_back(keyValue("encode_failures", _pipeline->stats().encode_failures));
   status.values.push_back(keyValue("negative_age_drops", _negative_age_drops));
+  status.values.push_back(keyValue("rejected_rays", _pipeline->stats().rejected_rays));
 
   diagnostic_msgs::msg::DiagnosticArray array;
   array.header.stamp = now();

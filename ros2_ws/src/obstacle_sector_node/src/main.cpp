@@ -47,15 +47,17 @@
 #include "livox_ray_source/gyro_track.hpp"
 #include "livox_ray_source/leveling_ray_source.hpp"
 #include "livox_ray_source/livox_sdk_sample_source.hpp"
+#include "livox_ray_source/masking_ray_source.hpp"
 #include "livox_ray_source/pose_history.hpp"
+#include "livox_ray_source/self_mask.hpp"
 #include "obstacle_sector_node/laser_scan_source.hpp"
 #include "obstacle_sector_node/node.hpp"
 #include "obstacle_sector_node/odometry_pose.hpp"
 #include "obstacle_sector_node/platform_config.hpp"
 #include "obstacle_sector_node/ring_cloud_source.hpp"
+#include "px4_msgs/msg/vehicle_odometry.hpp"
 #include "rclcpp/rclcpp.hpp"
 #include "sensor_msgs/msg/laser_scan.hpp"
-#include "px4_msgs/msg/vehicle_odometry.hpp"
 #include "sensor_msgs/msg/point_cloud2.hpp"
 
 namespace
@@ -219,6 +221,11 @@ int main(int argc, char ** argv)
     livox_ray_source::LevelingRaySource * leveling_source = nullptr;
     if (leveled) {
       const auto settings = obstacle_sector_node::loadLevelingSettings(platform_config);
+      // The self-mask first, on the sensor-frame rays, with the same mount as the leveler (FEAT-23, #206): a ray
+      // that meets the airframe is marked masked and never counts as obstacle or free evidence.
+      source = std::make_unique<livox_ray_source::MaskingRaySource>(
+        std::move(source), livox_ray_source::loadSelfMask(platform_config, settings.leveling),
+        static_cast<double>(config.certified_range_m));
       poses = std::make_shared<livox_ray_source::PoseHistory>(settings.history);
       if (source_kind == "livox") {
         gyro = std::make_shared<livox_ray_source::GyroTrack>(

@@ -22,6 +22,8 @@ namespace
 
 // Test fixture geometry, not an approved platform value.
 const MaskCylinder kCylinder{1.0, 0.0, 0.2, -0.1, 0.1};
+// A sensor at the body origin with no rotation: the body frame is the sensor frame.
+const livox_ray_source::LevelingConfig kAtSensor{0.0, 0.0, 0.0, {0.0, 0.0, 0.0}};
 constexpr double kMaxDistanceM = 40.0;
 constexpr uint64_t kWindowNs = 1'000'000U;
 
@@ -51,7 +53,7 @@ TEST(MaskingRaySourceTest, MasksSelfReturnsAndCrossingNoReturnsOnly)
       makeNoReturn(5'200U, 0.0F),      // segment crosses the cylinder
       makeNoReturn(5'300U, 0.5F)},     // segment passes beside it
     kWindowNs);
-  MaskingRaySource source{std::move(inner), SelfMask{{kCylinder}}, kMaxDistanceM};
+  MaskingRaySource source{std::move(inner), SelfMask{{kCylinder}, kAtSensor}, kMaxDistanceM};
 
   const auto frame = source.nextFrame();
   ASSERT_TRUE(frame.has_value());
@@ -68,7 +70,7 @@ TEST(MaskingRaySourceTest, KeepsContinuityAndRayContent)
   StreamSample broken = makeReturn(5'000U, 12.0F, 0.5F);
   broken.continuity_break = true;
   auto inner = std::make_unique<ReplayRaySource>(std::vector<StreamSample>{broken}, kWindowNs);
-  MaskingRaySource source{std::move(inner), SelfMask{{kCylinder}}, kMaxDistanceM};
+  MaskingRaySource source{std::move(inner), SelfMask{{kCylinder}, kAtSensor}, kMaxDistanceM};
 
   const auto frame = source.nextFrame();
   ASSERT_TRUE(frame.has_value());
@@ -80,11 +82,13 @@ TEST(MaskingRaySourceTest, KeepsContinuityAndRayContent)
 TEST(MaskingRaySourceTest, RejectsNullSourceAndBadMaxDistance)
 {
   EXPECT_THROW(
-    MaskingRaySource(nullptr, SelfMask{{kCylinder}}, kMaxDistanceM), std::invalid_argument);
+    MaskingRaySource(nullptr, SelfMask{{kCylinder}, kAtSensor}, kMaxDistanceM),
+    std::invalid_argument);
 
   for (const double bad : {0.0, -1.0, std::numeric_limits<double>::quiet_NaN()}) {
     auto inner = std::make_unique<ReplayRaySource>(std::vector<StreamSample>{}, kWindowNs);
     EXPECT_THROW(
-      MaskingRaySource(std::move(inner), SelfMask{{kCylinder}}, bad), std::invalid_argument);
+      MaskingRaySource(std::move(inner), SelfMask{{kCylinder}, kAtSensor}, bad),
+      std::invalid_argument);
   }
 }

@@ -57,6 +57,10 @@ struct LevelingConfig
   [[nodiscard]] bool isValid() const;
 };
 
+/// The mount rotation R = Rz(yaw) * Ry(pitch) * Rx(roll), sensor FLU to body FLU, row-major (see the frame
+/// conventions above). Shared by the leveler and the body-frame self-mask so both use one definition.
+[[nodiscard]] std::array<double, 9> mountRotation(const LevelingConfig & config);
+
 enum class LevelingStatus : uint8_t
 {
   kOk,

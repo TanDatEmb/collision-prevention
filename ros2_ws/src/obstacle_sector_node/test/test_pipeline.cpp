@@ -106,6 +106,22 @@ TEST(SectorMapPipelineTest, EncodeFailureIsSilentAndCounted)
   EXPECT_EQ(pipeline.stats().frames, 1U);
   EXPECT_EQ(pipeline.stats().encode_failures, 1U);
   EXPECT_EQ(pipeline.stats().messages, 0U);
+  EXPECT_EQ(pipeline.stats().rejected_rays, 2U);
+}
+
+TEST(SectorMapPipelineTest, CountsSelfMaskedRaysAsRejectedAcrossFrames)
+{
+  StreamSample masked = makeReturn(5'000'000U, 0.3F);
+  masked.ray.masked = true;
+  StreamSample later_masked = masked;
+  later_masked.ray.timestamp_ns = 9'000'000U;
+  SectorMapPipeline pipeline{
+    replay({masked, makeNoReturn(5'100'000U), later_masked, makeNoReturn(9'100'000U)}), kConfig};
+
+  EXPECT_EQ(pipeline.step().status, StepStatus::kMessage);
+  EXPECT_EQ(pipeline.stats().rejected_rays, 1U);
+  EXPECT_EQ(pipeline.step().status, StepStatus::kMessage);
+  EXPECT_EQ(pipeline.stats().rejected_rays, 2U);
 }
 
 TEST(SectorMapPipelineTest, ReportsTheEndOfTheSourceAndKeepsTheCounters)
