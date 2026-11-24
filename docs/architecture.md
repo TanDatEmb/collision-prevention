@@ -65,7 +65,7 @@ owner approves its pass criterion (SYS-CP-025, OPEN-043).
 | ID | Situation | Expected V1 behaviour | Trace | Lane | Today |
 | --- | --- | --- | --- | --- | --- |
 | OS-01 | Level approach to a large flat wall at 3 to 12 m/s, Position and Mission | Speed falls so that the vehicle is at rest at least `CPB_MARGIN` before the wall, without oscillation (SITL proof criteria a to c) | SYS-CP-001, 005, 012, PERF-01, 02, SAFE-01 | GZ, FLT | Specified |
-| OS-02 | Oblique wall, inside corner, outside corner, two obstacles at different bearings | Each sector limits only the motion entering it; no sliding; an empty feasible set gives zero horizontal output | SYS-CP-010, 012 | UT, GZ | Partial: unit tests only |
+| OS-02 | Oblique wall, inside corner, outside corner, two obstacles at different bearings | The commanded direction is kept and only the speed is limited (ADR 0025); a sector counts only when its obstacle may lie within `CPB_MARGIN` of the path; no sliding, no sideways push; a blocked direction gives zero horizontal output | SYS-CP-010, 012 | UT, GZ | Partial: unit tests of the ADR 0008 rule only |
 | OS-03 | Pole or post 0.15 to 0.5 m wide, 5 to 40 m ahead, in the path and at its edge | Detected and stopped for a width >= 0.30 m (DET-01); a narrower target is outside the claim and is stated as such | DET-01, HZ-CP-002 | GZ, RPL, FLT | Partial: DET-01 only |
 | OS-04 | Obstacle covers only part of a 5 degree sector (building edge, pole, vehicle) | The sector takes the nearest return and its cap applies to the whole sector; the quantization error is half a sector (1.59 m at 36.5 m) | SYS-CP-011, ICD-CP-03 | UT, GZ | Specified |
 | OS-05 | Obstacle appears suddenly (from behind another obstacle or around a corner) | The cap tightens at once on the first valid return; stopping is claimed only if the obstacle appears outside the stopping envelope | SYS-CP-013, HZ-CP-001, ADR 0008 | GZ | Partial: envelope only |
@@ -119,7 +119,7 @@ owner approves its pass criterion (SYS-CP-025, OPEN-043).
 | SYS-CP-009 | Log enough to reconstruct observation age, constraint application and response | HZ-CP-003 | SITL, HIL | Draft |
 | SYS-CP-010 | No planner, SLAM, dynamic tracking, vertical CP or sliding | Scope | Review | Draft |
 | SYS-CP-011 | Clear only from positive, time-valid evidence meeting the coverage rule; else `UINT16_MAX` | ADR 0004 | UT | Draft, UT partial, OPEN-023 |
-| SYS-CP-012 | Constrain only motion entering an affected direction; empty feasible set gives zero horizontal output and a report | ADR 0008 | UT, SITL | Draft |
+| SYS-CP-012 | Keep the direction of the horizontal velocity setpoint and limit only its speed; a sector counts when its obstacle may lie within `CPB_MARGIN` of the ray along the setpoint or the current velocity; a blocked direction gives zero horizontal output and a report | ADR 0008, 0025 | UT, SITL | Draft; amended by ADR 0025 (#195) |
 | SYS-CP-013 | New obstacle tightens at once; relaxation after 0.3 s of qualified clear data, rise bounded | ADR 0008 | UT, SITL | Draft, OPEN-024 |
 | SYS-CP-014 | Observer-only before `TAKEOFF_STATE_FLIGHT`; landing needs an explicit logged disable | ADR 0009 | SITL | Draft |
 | SYS-CP-015 | Static self-mask removes self-returns; masked rays are neither obstacle nor clear evidence | ADR 0006 | UT | Draft |
@@ -272,9 +272,11 @@ told through the PX4 log and event channel; the pilot acknowledges with a MAVLin
 by `cp_brake` (command id fixed at detailed design). The exit rules are the ones stated above
 (owner, 2026-11-19).
 
-Directional limiting (ADR 0008): each sector is a half-plane on the horizontal setpoint; a side
-obstacle does not reduce forward motion, a front obstacle does not reduce retreat. A global minimum
-range applied to all motion is prohibited. Node and topic naming: `obstacle_sector_node`,
+Directional limiting (ADR 0008, amended by ADR 0025): the hook keeps the direction of the
+horizontal velocity setpoint and scales only its speed, against the sectors whose obstacle may lie
+within `CPB_MARGIN` of the ray along the setpoint or the current velocity; an obstacle farther than
+that from the path does not reduce motion along it, a front obstacle does not reduce retreat, and the
+vehicle never slides. A global minimum range applied to all motion is prohibited. Node and topic naming: `obstacle_sector_node`,
 namespace `/obstacle_sector`. Unit suffixes: `_us`, `_s`, `_m`, `_cm`, `_m_s`, `_rad`, `_ns`.
 
 ## 5. Interfaces (ICD)
@@ -384,7 +386,8 @@ source: ADR 0004.
   `REASON_TIME_SYNC`. The limits are OPEN-033 (sentinels). The heading history is fed from
   `vehicle_local_position` and keyed by `timestamp_sample`; a reset counter change invalidates
   interpolation across it.
-- Limiter rule: ADR 0008 (directional half-plane per sector; no global minimum range).
+- Limiter rule: ADR 0008 amended by ADR 0025 (direction kept, speed scaled against the sectors in the
+  `CPB_MARGIN` corridor; no global minimum range; no sliding).
 - Transparent paths: with `CPB_EN` off, or before `TAKEOFF_STATE_FLIGHT` (observer-only, ADR 0009)
   whether the constraint is valid or not, the hook leaves the setpoints unchanged (SYS-CP-006, 014).
 - Once `TAKEOFF_STATE_FLIGHT` is reached: a stale constraint, or one that is unusable as a whole
@@ -571,7 +574,7 @@ Suite column: the smallest suite holding the GZ and RPL records of the row; UT r
 | VM-05 | S | Pilot holds full stick toward the wall in Position mode, `MPC_XY_VEL_MAX` at its largest allowed value. Expected a to c, M5 reported | GZ 1-8 | 1 | OS-32; SYS-CP-001, 005; FEAT-12, 15 | R |
 | VM-06 | E | Oblique wall yawed a 30, b 60 degrees to the leg [P7]; M2 required. Expected a to c on M2 (GZ); UT: each sector holds the nearest return of the wall | GZ 1-4; UT 1-8 | 2 | OS-02; SYS-CP-010, 012; FEAT-08, 12 | R |
 | VM-07 | E | a Inside corner, b outside corner. Expected: an empty feasible set gives zero horizontal output | GZ 1-4; UT 1-8 | 2 | OS-02; SYS-CP-012; FEAT-08, 12 | R |
-| VM-08 | E | Two obstacles: lateral one closer, one ahead farther. Expected: each sector limits only motion entering it | GZ 1-4; UT 1-8 | 1 | OS-02; SYS-CP-012; FEAT-08, 12 | R |
+| VM-08 | E | Two obstacles: lateral one closer, one ahead farther. Expected: the lateral one, farther than `CPB_MARGIN` from the path, does not limit; the one ahead stops the vehicle `CPB_MARGIN` short; the direction is kept (ADR 0025) | GZ 1-4; UT 1-8 | 1 | OS-02; SYS-CP-012; FEAT-08, 12 | R |
 | VM-09 | E | Thin pole on the leg, width a 0.15 (below DET-01, exploratory), b 0.30, c 0.50 m. Expected a to c on M2 for b and c (GZ, FLT); UT: the pole's sector holds its nearest return | GZ 1-4; UT 1-8; FLT 1 | 3 | OS-03; SYS-CP-021, DET-01; FEAT-07, 08 | R |
 | VM-10 | E | Pole near the path, lateral offset a 0.5, b 1.5 m [P7]. Expected: stops, M2 at least `CPB_MARGIN` | GZ 1-4 | 2 | OS-03, 02; SYS-CP-012; FEAT-08, 12 | R |
 | VM-11 | E | Partial sector: a obstacle edge on a sector boundary (leg 2.5 degrees off the sector centre), b obstacle covering half a sector. Expected: the nearest return caps the whole sector | GZ 1; UT 1-8 | 2 | OS-04; SYS-CP-011; FEAT-08 | R |
@@ -601,7 +604,7 @@ Suite column: the smallest suite holding the GZ and RPL records of the row; UT r
 | VM-35 | E | Another PX4 failsafe at the same time (RC loss, battery, geofence). Exploratory | GZ 1 | 1 | OS-31; SYS-CP-008; FEAT-14 | F |
 | VM-36 | E | SAFE_STOP and recovery after VM-21: a input returns, no acknowledgement (stays latched), b acknowledged and revalidated (flight resumes under the caps) | GZ 1-4 | 2 | OS-23, 29; SYS-CP-007; FEAT-14 | R |
 | VM-37 | N | Moving away: wall at the opposite bearing (a) and abeam (b). Expected: no reduction from that sector, M9 zero | GZ 1-8 | 2 | OS-02; SYS-CP-012; FEAT-12 | R |
-| VM-38 | E | Hover next to the obstacle at `CPB_MARGIN` + 0.5 m [P7], then a motion along it, b motion toward it. Expected: a free, b held, M2 at least `CPB_MARGIN` | GZ 1-4 | 2 | OS-02, 32; SYS-CP-001, 012; FEAT-12, 15 | R |
+| VM-38 | E | Hover next to the obstacle at `CPB_MARGIN` + 0.5 m [P7], then a motion along it, b motion toward it. Expected: a not limited below the speed the sector quantisation allows (ADR 0025: about 2.7 m/s at this distance with the bench stopping model), no sideways motion; b held, M2 at least `CPB_MARGIN` | GZ 1-4 | 2 | OS-02, 32; SYS-CP-001, 012; FEAT-12, 15 | R |
 | VM-39 | S | Reversal near the wall: retreat commanded during braking, then toward again. Expected: retreat not limited (ADR 0008), second approach also stops, M4 per approach | GZ 1-4; UT 1-8 | 1 | OS-02, 30; SYS-CP-012, 013; FEAT-12, 13 | R |
 | VM-40 | E | Flight: level wall in Mission and Position, speeds from the G6 test card (TBD, OPEN-002, 003) | FLT 1-4 | 1 | OS-01; SYS-CP-027; FEAT-12 | F |
 | VM-41 | E | Rain at the ODD limit, dirty or blocked window. Exploratory | FLT 1 | 1 | OS-20; SYS-CP-004, 011; FEAT-07 | F |
@@ -683,6 +686,7 @@ Coverage: every OS row with a UT, GZ, RPL, HIL or FLT lane is in a record; none 
 | OPEN-044 | Withdrawn (2026-11-23): the tilt reserve rho (4.5 degrees, delegated on 2026-11-22) and the wind tilt term belonged to the per-bearing tilt budget that the two classes of SYS-CP-028 replace; the steady tilt in wind is measured under OPEN-039 | SE + Controls | Withdrawn | - |
 | OPEN-045 | Withdrawn (2026-11-23) with SYS-CP-030 | Controls | Withdrawn | - |
 | OPEN-046 | Self-mask values for the mount pitched 10 degrees down. Decided by the owner on 2026-11-22: cover the propeller returns with a mask (no mount change). Mask: four cylinders about the propeller axes, in the body frame (SYS-CP-032): centres (+-0.174, +-0.174) m, radius 0.1565 m (propeller radius 0.1465 m plus 0.01 m), z 0.034 to 0.0794 m from `base_link` (propeller thickness plus 0.01 m). The margin 0.01 m is the smallest (ADR 0006): it masks 398 of the 43200 rays of a 720 x 60 grid against the 40 that cross the discs (0.02 m would take 960). The values come from the SDF and mesh of the X500; the CAD value of the real airframe stays with OPEN-005 and RPL-001. Not yet in `x500.yaml`: the library reads cylinders in the sensor frame until the body-frame mask lands (FEAT-23, #137) | Mechanical + SE | Decided: four cylinders, margin 0.01 m | G4 |
+| OPEN-047 | Setpoint the hook receives in Position and Mission: ADR 0025 limits the setpoint, not the path flown while the vehicle follows a changed command. A kinematic model kept at least 1.93 m with the command ramped at 3 m/s^2 and fell to 0.34 m with an instantaneous 90 degree step at 8 m/s near a pole. Measure in SITL how fast the setpoint the hook sees can turn in both modes, and the clearance in command swerves, before the claim | Controls + SE | TBD | G3 |
 
 OPEN-022 and 023 block any operational clear-sector claim. OPEN-002 to OPEN-008 block the
 12 m/s claim. Neither blocks the implementation and SITL work that produces the evidence.

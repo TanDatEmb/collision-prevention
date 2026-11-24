@@ -1,7 +1,8 @@
 # 0025. The limiter keeps the commanded direction and limits only the speed
 
-Status: Proposed. The owner chose this option of three in chat on 2026-11-24 ("Nếu vậy thì PA1 cái tôi muốn là
-không trượt": option 1, no sliding), issue #195. It amends ADR 0008 decision 1 (each sector a half-plane, only the
+Status: Accepted. The owner chose this option of three in chat on 2026-11-24 ("Nếu vậy thì PA1 cái tôi muốn là
+không trượt": option 1, no sliding), issue #195, and approved this record and its implementation in chat on the
+same day ("Oke triển khai", issue #197). It amends ADR 0008 decision 1 (each sector a half-plane, only the
 entering component limited) and SYS-CP-012. ADR 0008 decisions 2 and 3 (tighten at once, dwell, rise) and the
 feed-forward rule of ADR 0020 are unchanged. Values marked TBD stay TBD.
 

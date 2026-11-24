@@ -1,5 +1,9 @@
 # 0008. Directional constraints with asymmetric release
 
+Decision 1 (half-plane per sector, entering component removed) is amended by ADR 0025: the direction of the
+setpoint is kept, only its speed is scaled, and a sector counts only when its obstacle may lie within
+`CPB_MARGIN` of the path. Decisions 2 and 3 stand.
+
 ## Context
 A global minimum range would stop forward motion in a corridor because of side walls, and
 immediate release causes brake/release chatter on transient returns.
