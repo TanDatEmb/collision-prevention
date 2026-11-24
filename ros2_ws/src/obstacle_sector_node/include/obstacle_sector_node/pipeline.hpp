@@ -29,6 +29,7 @@ struct PipelineStats
   uint64_t frames{0U};
   uint64_t messages{0U};
   uint64_t encode_failures{0U};
+  uint64_t rejected_rays{0U};  // rays the map did not use, self-masked rays included (summed over frames)
 };
 
 /// Frame to ObstacleDistance, without ROS: one frame of a RaySource goes through the sector map

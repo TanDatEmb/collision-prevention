@@ -33,7 +33,10 @@ StepResult SectorMapPipeline::step()
     _builder.addRay(ray);
   }
 
-  auto message = px4_obstacle_bridge::encodeObstacleDistance(_builder.finalize(), _config);
+  const auto map = _builder.finalize();
+  _stats.rejected_rays += map.rejected_ray_count;
+
+  auto message = px4_obstacle_bridge::encodeObstacleDistance(map, _config);
 
   if (!message.has_value()) {
     ++_stats.encode_failures;
