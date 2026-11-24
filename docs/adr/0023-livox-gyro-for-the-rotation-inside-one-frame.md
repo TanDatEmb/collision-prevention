@@ -82,7 +82,10 @@ SITL, not on the target.
    c. IMU and point time stamps on one base: a steady capture after the PTP lock, with the offset between
       the IMU and the point time stamps (the +0.5 s step above).
    d. End-to-end time offset: rotate the rigid lidar and FMU assembly and cross-correlate the Livox gyro
-      with the PX4 angular velocity. This measures problem 3 on the target chain (G5).
+      with the rate derived from the `VehicleOdometry.q` samples, the attitude the leveler uses (as
+      `tools/scenarios/analyze_attitude_time.py` does against ground truth in SITL). The PX4 angular
+      velocity is not enough: it can be aligned while the attitude output lags its `timestamp_sample`,
+      so it would miss the EKF lag. This measures problem 3 on the target chain (G5).
 6. Simulation. Gazebo stamps a cloud once (ADR 0015), so every ray has `t_i = t_ref` and needs no gyro,
    and the cloud arrives about 12 ms after `t_ref` (evidence, #156), so the SITL drop of problem 1 remains.
    It is a simulator artefact: counted and reported, not fixed by a mechanism. A Gazebo IMU on the lidar
