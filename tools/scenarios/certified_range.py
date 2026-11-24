@@ -10,10 +10,10 @@ from the smallest claimed object (h_obj tall, w_obj wide) lying in the band:
   k(r)    = floor((min(h_obj, band) - dz) / (r tan gap_v))   rings crossing the part of the object inside the band
   cols(r) = floor(min(w_obj / 2, r tan 5 deg) / (r tan gap_h)) columns in the sector holding more of the object
             (an object on a sector boundary is split, and a sector confirms only its own returns)
-  k(r) >= 1 and k(r) * cols(r) >= n_obstacle, and the returns fit the confirmation window: when one column holds
-  fewer than n_obstacle rings, m = ceil(n_obstacle / k(r)) neighbouring columns are needed, and on a surface at
-  incidence phi (between its normal and the ray) they spread over (m - 1) * r * tan(gap_h) * tan(phi), which must
-  stay within obstacle_window_m (a vertical surface keeps the rings of one column at one horizontal range)
+  k(r) >= 1, and some block of a rings x b columns (a <= k(r), b <= cols(r), a * b >= n_obstacle) fits the
+  confirmation window on a plane whose normal is up to phi from the ray, horizontally, vertically (a slope) or both:
+  r * tan(phi) * hypot((b - 1) tan(gap_h), (a - 1) tan(gap_v)) <= obstacle_window_m
+  (the range gradient of a plane has norm tan(phi), so this bounds the spread of the block: Cauchy-Schwarz)
 The rays are physical: an attitude error does not remove one; it can move a return across a band edge, which the
 allowance covers in the band test (ADR 0024 decision 3), so the allowance does not shorten the range here.
 the speed is the cp_brake stopping model: v * t_lat + braking distance with jerk + margin <= range. The output is a
@@ -35,11 +35,16 @@ def confirmed(r, h_obj, w_obj, dz, gap_v_deg, gap_h_deg, band, n_obstacle, windo
     rings = math.floor(overlap / (r * math.tan(math.radians(gap_v_deg))))
     if rings < 1:
         return False  # no ring is guaranteed on the object inside the band: not certifiable at r
-    step = r * math.tan(math.radians(gap_h_deg))
-    columns = math.floor(min(w_obj / 2.0, r * math.tan(math.radians(SECTOR_DEG))) / step)
-    needed = math.ceil(n_obstacle / rings)
-    spread = (needed - 1) * step * math.tan(math.radians(incidence_deg))
-    return columns >= needed and spread <= window
+    step_h = r * math.tan(math.radians(gap_h_deg))
+    step_v = r * math.tan(math.radians(gap_v_deg))
+    columns = math.floor(min(w_obj / 2.0, r * math.tan(math.radians(SECTOR_DEG))) / step_h)
+    slope = math.tan(math.radians(incidence_deg))
+    for used_rings in range(1, min(rings, n_obstacle) + 1):
+        used_columns = math.ceil(n_obstacle / used_rings)
+        spread = math.hypot((used_columns - 1) * step_h, (used_rings - 1) * step_v) * slope
+        if used_columns <= columns and spread <= window:
+            return True
+    return False
 
 
 def certified_range(h_obj, w_obj, dz, gap_v_deg, gap_h_deg, band, n_obstacle, window, incidence_deg, cap):
@@ -103,6 +108,9 @@ def selftest():
     checks.append(('an oblique wall at 30 m is not certified there', evaluate(a)[1] < 28.0))
     a.incidence_deg = 0.0
     checks.append(('the same wall face-on reaches the cap', abs(evaluate(a)[1] - 40.0) < 1e-9))
+    # A 0.5 m wide surface sloped 70 deg from vertical near 12-13.5 m: its rings spread beyond a 0.5 m window.
+    a.w_obj, a.incidence_deg = 0.5, 75.0
+    checks.append(('a steep slope at 12 m is not certified there', evaluate(a)[1] < 12.2))
     for name, ok in checks:
         print('%s: %s' % ('PASS' if ok else 'FAIL', name))
     return all(ok for _, ok in checks)
@@ -120,7 +128,8 @@ def main():
     ap.add_argument('--n-obstacle', type=int, default=3, help='obstacle_min_returns')
     ap.add_argument('--window', type=float, default=0.5, help='obstacle_window_m [m]')
     ap.add_argument('--incidence-deg', type=float, default=45.0,
-                    help='largest angle between an obstacle surface normal and the ray that is claimed (owner)')
+                    help='largest angle between an obstacle surface normal and the ray that is claimed, '
+                         'horizontally or vertically (owner)')
     ap.add_argument('--t-lat', type=float, default=0.95, help='CPB_T_LAT [s]')
     ap.add_argument('--a-brake', type=float, default=3.0, help='CPB_A_BRK [m/s^2]')
     ap.add_argument('--jerk', type=float, default=4.0, help='CPB_JERK [m/s^3]')

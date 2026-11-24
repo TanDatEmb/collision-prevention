@@ -40,10 +40,11 @@ decision 3 covers. No certification rule can claim more without a smaller gap.
    - rings on the part of the object inside the band: `k(r) = floor((min(h_obj, H) - dz) / (r tan g_v))`;
    - columns in one sector: `c(r) = floor(min(w_obj / 2, r tan 5 deg) / (r tan g_h))`, because a sector confirms
      only its own returns and an object on a sector boundary is split;
-   - the returns must fit the confirmation window: when one column holds fewer than `n_obstacle` rings,
-     `m = ceil(n_obstacle / k(r))` neighbouring columns are needed, and on a surface at incidence `phi` (between its
-     normal and the ray) they spread over `(m - 1) r tan(g_h) tan(phi)`, which must stay within `obstacle_window_m`;
-     `phi_max`, the most oblique surface claimed, is an owner input;
+   - the returns must fit the confirmation window: some block of `a` rings by `b` columns (`a <= k(r)`,
+     `b <= c(r)`, `a b >= n_obstacle`) spreads over `r tan(phi_max) hypot((b - 1) tan(g_h), (a - 1) tan(g_v))` at
+     most `obstacle_window_m` (a plane's range gradient has norm `tan(phi)`, so this bounds the spread), where
+     `phi_max`, an owner input, is the largest angle between a claimed surface's normal and the ray, horizontally,
+     vertically (a slope) or both;
    - `certified_range_m` is the largest `r`, at most 40 m, with `k(r) >= 1`, `k(r) * c(r) >= n_obstacle` and the
      window condition (none of them improves with `r`, so every shorter range passes too).
    The allowance does not enter: it widens the band test (decision 3) instead.
@@ -80,9 +81,9 @@ Trade-offs of the parameters (`tools/scenarios/certified_range.py --table` print
 | 1.0 x 3.0 m | 1.07 deg | 0 deg | 0.5 m, 3 | 28.6 m | 9.3 m/s |
 | 1.0 x 5.0 m | 1.07 deg | 0 deg | 0.5 m, 3 | 40 m (cap) | 11.6 m/s |
 | 1.0 x 5.0 m | 1.07 deg | 30 deg | 0.5 m, 3 | 24.8 m | 8.4 m/s |
-| 1.0 x 5.0 m | 1.07 deg | 45 deg | 0.5 m, 3 | 20.9 m | 7.4 m/s |
+| 1.0 x 5.0 m | 1.07 deg | 45 deg | 0.5 m, 3 | 19.6 m | 7.0 m/s |
 | 1.0 x 5.0 m | 1.07 deg | 45 deg | 1.0 m, 3 or 0.5 m, 2 | 28.6 m | 9.3 m/s |
-| 1.0 x 3.0 m | 0.5 deg | 45 deg | 0.5 m, 3 | 29.8 m | 9.5 m/s |
+| 1.0 x 3.0 m | 0.5 deg | 45 deg | 0.5 m, 3 | 28.6 m | 9.3 m/s |
 | 1.0 x 3.0 m | 0.5 deg | 0 deg | 0.5 m, 3 | 40 m (cap) | 11.6 m/s |
 
 - Range against the smallest obstacle: each metre of certified range needs a larger smallest obstacle (mostly a
@@ -96,7 +97,7 @@ Trade-offs of the parameters (`tools/scenarios/certified_range.py --table` print
 - `n_obstacle` and `obstacle_window_m` against thin and oblique objects: fewer confirming returns resolve narrower
   objects, and a wider window confirms more oblique surfaces, both at the cost of noise rejection (scattered
   returns can then confirm a false obstacle, a false stop); a taller band crosses more rings at the cost of
-  overhangs that stop the vehicle. Surfaces more oblique than `phi_max` are a non-claim at the certified range.
+  overhangs that stop the vehicle. Surfaces more oblique than `phi_max`, horizontally or as a slope, are a non-claim at the certified range.
 - The wire cap: the qualified range is 40 m (ICD-CP-03, checked by the cp_brake input check). It allows 11.6 m/s
   with the bench stopping model; 12 m/s needs 41.9 m. A longer qualified range needs ICD-CP-03 and the cp_brake
   input check to change (fork PR and pointer PR), and a sensor that returns from the darkest claimed object at
