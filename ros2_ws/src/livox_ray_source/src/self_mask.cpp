@@ -22,17 +22,19 @@ bool inside(const MaskCylinder & c, double x, double y, double z)
   return dx * dx + dy * dy <= c.radius_m * c.radius_m && z >= c.z_min_m && z <= c.z_max_m;
 }
 
-// True when the segment t * d, t in [0, t_max], meets the cylinder.
-bool segmentCrosses(const MaskCylinder & c, double dx, double dy, double dz, double t_max)
+// True when the segment o + t * d, t in [0, t_max], meets the cylinder.
+bool segmentCrosses(const MaskCylinder & c, const std::array<double, 3> & o, double dx, double dy, double dz,
+  double t_max)
 {
   double lo = 0.0;
   double hi = t_max;
 
-  // Horizontal condition: |t * (dx, dy) - (cx, cy)|^2 <= r^2, a quadratic in t.
+  // Horizontal condition: |(o_xy - c_xy) + t * (dx, dy)|^2 <= r^2, a quadratic in t.
+  const double px = o[0] - c.center_x_m;
+  const double py = o[1] - c.center_y_m;
   const double a = dx * dx + dy * dy;
-  const double b = -2.0 * (c.center_x_m * dx + c.center_y_m * dy);
-  const double q =
-    c.center_x_m * c.center_x_m + c.center_y_m * c.center_y_m - c.radius_m * c.radius_m;
+  const double b = 2.0 * (px * dx + py * dy);
+  const double q = px * px + py * py - c.radius_m * c.radius_m;
 
   if (a < 1.0e-12) {
     if (q > 0.0) {
@@ -49,15 +51,15 @@ bool segmentCrosses(const MaskCylinder & c, double dx, double dy, double dz, dou
     hi = std::min(hi, (-b + root) / (2.0 * a));
   }
 
-  // Vertical condition: z_min <= t * dz <= z_max.
+  // Vertical condition: z_min <= o_z + t * dz <= z_max.
   if (std::fabs(dz) < 1.0e-12) {
-    if (0.0 < c.z_min_m || 0.0 > c.z_max_m) {
+    if (o[2] < c.z_min_m || o[2] > c.z_max_m) {
       return false;
     }
   }
   else {
-    const double t1 = c.z_min_m / dz;
-    const double t2 = c.z_max_m / dz;
+    const double t1 = (c.z_min_m - o[2]) / dz;
+    const double t2 = (c.z_max_m - o[2]) / dz;
     lo = std::max(lo, std::min(t1, t2));
     hi = std::min(hi, std::max(t1, t2));
   }
@@ -87,8 +89,14 @@ double finiteNumber(const YAML::Node & node, const std::string & what)
 
 }  // namespace
 
-SelfMask::SelfMask(std::vector<MaskCylinder> cylinders) : _cylinders(std::move(cylinders))
+SelfMask::SelfMask(std::vector<MaskCylinder> cylinders, const LevelingConfig & mount)
+: _cylinders(std::move(cylinders)), _rotation{}, _origin_m(mount.lever_arm_flu_m)
 {
+  if (!mount.isValid()) {
+    throw std::invalid_argument("self_mask: the mount is not valid");
+  }
+  _rotation = mountRotation(mount);
+
   if (_cylinders.empty()) {
     throw std::invalid_argument("self_mask: no cylinder declared");
   }
@@ -109,10 +117,16 @@ bool SelfMask::isMasked(const obstacle_sector_map::RaySample & ray, double max_d
     return false;
   }
 
+  // the ray direction in the sensor frame, then in the body frame (the origin is the lever arm)
   const double cos_el = std::cos(static_cast<double>(ray.elevation_rad));
-  const double dx = cos_el * std::cos(static_cast<double>(ray.azimuth_rad));
-  const double dy = cos_el * std::sin(static_cast<double>(ray.azimuth_rad));
-  const double dz = std::sin(static_cast<double>(ray.elevation_rad));
+  const double sx = cos_el * std::cos(static_cast<double>(ray.azimuth_rad));
+  const double sy = cos_el * std::sin(static_cast<double>(ray.azimuth_rad));
+  const double sz = std::sin(static_cast<double>(ray.elevation_rad));
+  const auto & r = _rotation;
+  const double dx = r[0] * sx + r[1] * sy + r[2] * sz;
+  const double dy = r[3] * sx + r[4] * sy + r[5] * sz;
+  const double dz = r[6] * sx + r[7] * sy + r[8] * sz;
+  const auto & o = _origin_m;
 
   if (ray.return_kind == RayReturnKind::kReturn) {
     if (!std::isfinite(ray.range_m)) {
@@ -120,7 +134,7 @@ bool SelfMask::isMasked(const obstacle_sector_map::RaySample & ray, double max_d
     }
     const double range = static_cast<double>(ray.range_m);
     return std::any_of(_cylinders.begin(), _cylinders.end(), [&](const MaskCylinder & c) {
-      return inside(c, range * dx, range * dy, range * dz);
+      return inside(c, o[0] + range * dx, o[1] + range * dy, o[2] + range * dz);
     });
   }
 
@@ -129,7 +143,7 @@ bool SelfMask::isMasked(const obstacle_sector_map::RaySample & ray, double max_d
       return false;
     }
     return std::any_of(_cylinders.begin(), _cylinders.end(), [&](const MaskCylinder & c) {
-      return segmentCrosses(c, dx, dy, dz, max_distance_m);
+      return segmentCrosses(c, o, dx, dy, dz, max_distance_m);
     });
   }
 
@@ -143,7 +157,7 @@ void SelfMask::apply(obstacle_sector_map::RaySample & ray, double max_distance_m
   }
 }
 
-SelfMask loadSelfMask(const std::string & yaml_path)
+SelfMask loadSelfMask(const std::string & yaml_path, const LevelingConfig & mount)
 {
   YAML::Node root;
   try {
@@ -171,7 +185,7 @@ SelfMask loadSelfMask(const std::string & yaml_path)
       finiteNumber(entry["z_min_m"], "z_min_m"), finiteNumber(entry["z_max_m"], "z_max_m")});
   }
 
-  return SelfMask(std::move(cylinders));
+  return SelfMask(std::move(cylinders), mount);
 }
 
 }  // namespace livox_ray_source

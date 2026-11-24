@@ -3,7 +3,7 @@
 # the mount (owner, 2026-11-21), the model name, `height_up_m` and `height_down_m` (chosen under the owner's
 # delegation of 2026-11-22, bench values, OPEN-036), and the G4 bench values approved by the owner on 2026-11-24
 # (#207) from the Gazebo SITL campaigns: bench values for X500 SITL, not flight values. Still null: the gyro
-# history (Livox source only, measured on the real sensor) and the self-mask (body-frame mask, #206).
+# history (Livox source only, measured on the real sensor).
 platform: x500
 sim:
   gz_model: x500_lidar_multi_ring  # OPEN-029 (tools/scenarios/models, bench asset)
@@ -39,9 +39,12 @@ sector_map:
   # error, more false stops near the band edges); it must cover the measured attitude error (SITL EKF tilt error
   # p99 0.68, max 0.85 deg; target not measured, #156). It does not change certified_range_m.
   attitude_allowance_rad: 0.0157  # bench (#207): 0.9 deg, above the SITL EKF tilt error (p99 0.68, max 0.85 deg, #182)
-self_mask:  # decided 2026-11-22 (OPEN-046): four propeller cylinders in the BODY frame, filled with the body-frame mask code (FEAT-23, #137)
+# Decided by the owner on 2026-11-22 (OPEN-046): the four propeller discs of the X500 SDF and meshes, base_link
+# FLU (x forward, y left, z up), radius = propeller radius 0.1465 m + 0.01 m, z = propeller thickness + 0.01 m.
+# Applied in the body frame with the mount above (FEAT-23, #206). The CAD value of the real airframe is OPEN-005.
+self_mask:
   cylinders:
-    - center_m: [null, null]  # TBD: OPEN-005 (x, y of the axis)
-      radius_m: null  # TBD: OPEN-005
-      z_min_m: null  # TBD: OPEN-005
-      z_max_m: null  # TBD: OPEN-005
+    - {center_m: [0.174, 0.174], radius_m: 0.1565, z_min_m: 0.034, z_max_m: 0.0794}
+    - {center_m: [0.174, -0.174], radius_m: 0.1565, z_min_m: 0.034, z_max_m: 0.0794}
+    - {center_m: [-0.174, 0.174], radius_m: 0.1565, z_min_m: 0.034, z_max_m: 0.0794}
+    - {center_m: [-0.174, -0.174], radius_m: 0.1565, z_min_m: 0.034, z_max_m: 0.0794}

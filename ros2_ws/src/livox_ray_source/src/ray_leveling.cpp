@@ -94,6 +94,13 @@ bool LevelingConfig::isValid() const
          std::isfinite(lever_arm_flu_m[2]);
 }
 
+std::array<double, 9> mountRotation(const LevelingConfig & config)
+{
+  // Sensor FLU to body FLU: Rz(yaw) * Ry(pitch) * Rx(roll).
+  return multiply(
+    rotationZ(config.yaw_left_rad), multiply(rotationY(config.pitch_down_rad), rotationX(config.roll_rad)));
+}
+
 RayLeveler::RayLeveler(
   const PoseHistory & poses, const LevelingConfig & config, const GyroTrack * gyro)
 : _poses(poses), _gyro(gyro), _config(config), _mount_rotation{}, _sensor_to_frd{}
@@ -102,10 +109,7 @@ RayLeveler::RayLeveler(
     throw std::invalid_argument(
             "LevelingConfig: the mount angles must be finite within [-pi, pi] and the lever arm finite");
   }
-  // Sensor FLU to body FLU: Rz(yaw) * Ry(pitch) * Rx(roll).
-  _mount_rotation = multiply(
-    rotationZ(config.yaw_left_rad),
-    multiply(rotationY(config.pitch_down_rad), rotationX(config.roll_rad)));
+  _mount_rotation = mountRotation(config);
   _sensor_to_frd = multiply(fluToFrd(), _mount_rotation);
 }
 
