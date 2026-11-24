@@ -121,9 +121,17 @@ TEST(PlatformConfigTest, TheRearStartIsOptionalAndMustBeAnAngleFromZeroToPi)
   }
 }
 
-TEST(PlatformConfigTest, RepositoryPlatformConfigIsRefusedWhileValuesAreTbd)
+TEST(PlatformConfigTest, RepositoryPlatformConfigHoldsTheApprovedBenchValues)
 {
-  EXPECT_TRUE(rejects(X500_YAML_PATH));
+  // G4 bench values approved by the owner on 2026-11-24 (#207)
+  const auto config = loadSectorMapConfig(X500_YAML_PATH);
+  EXPECT_FLOAT_EQ(config.height_up_m, 0.25F);
+  EXPECT_FLOAT_EQ(config.height_down_m, 0.60F);
+  EXPECT_FLOAT_EQ(config.obstacle_window_m, 0.5F);
+  EXPECT_EQ(config.obstacle_min_returns, 3U);
+  EXPECT_EQ(config.free_min_rays, 5U);
+  EXPECT_FLOAT_EQ(config.certified_range_m, 20.0F);
+  EXPECT_FLOAT_EQ(config.attitude_allowance_rad, 0.0157F);
 }
 
 namespace
@@ -183,10 +191,15 @@ TEST(LevelingSettingsTest, RejectsNullMissingAndInvalidValues)
   EXPECT_TRUE(levelingRejects("/nonexistent/platform.yaml"));
 }
 
-TEST(LevelingSettingsTest, RepositoryPlatformConfigHasTheMountButNoPoseHistoryYet)
+TEST(LevelingSettingsTest, RepositoryPlatformConfigHoldsTheMountAndThePoseHistory)
 {
-  // The mount is filled (owner, 2026-11-21); the pose history values are TBD, so the file is refused.
-  EXPECT_TRUE(levelingRejects(X500_YAML_PATH));
+  // The mount (owner, 2026-11-21) and the bench pose history (owner, 2026-11-24, #207)
+  const auto settings = loadLevelingSettings(X500_YAML_PATH);
+  EXPECT_DOUBLE_EQ(settings.leveling.lever_arm_flu_m[0], 0.12);
+  EXPECT_DOUBLE_EQ(settings.leveling.lever_arm_flu_m[2], 0.14);
+  EXPECT_DOUBLE_EQ(settings.leveling.pitch_down_rad, 0.1745);
+  EXPECT_EQ(settings.history.depth, 64U);
+  EXPECT_EQ(settings.history.max_bracket_gap_ns, 50'000'000U);
 }
 
 TEST(GyroHistoryConfigTest, LoadsTheGyroHistoryAndRefusesMissingOrBadValues)
