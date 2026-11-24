@@ -10,7 +10,10 @@ from the smallest claimed object (h_obj tall, w_obj wide) lying in the band:
   k(r)    = floor((min(h_obj, band) - dz) / (r tan gap_v))   rings crossing the part of the object inside the band
   cols(r) = floor(min(w_obj / 2, r tan 5 deg) / (r tan gap_h)) columns in the sector holding more of the object
             (an object on a sector boundary is split, and a sector confirms only its own returns)
-  k(r) >= 1 and k(r) * cols(r) >= n_obstacle
+  k(r) >= 1 and k(r) * cols(r) >= n_obstacle, and the returns fit the confirmation window: when one column holds
+  fewer than n_obstacle rings, m = ceil(n_obstacle / k(r)) neighbouring columns are needed, and on a surface at
+  incidence phi (between its normal and the ray) they spread over (m - 1) * r * tan(gap_h) * tan(phi), which must
+  stay within obstacle_window_m (a vertical surface keeps the rings of one column at one horizontal range)
 The rays are physical: an attitude error does not remove one; it can move a return across a band edge, which the
 allowance covers in the band test (ADR 0024 decision 3), so the allowance does not shorten the range here.
 the speed is the cp_brake stopping model: v * t_lat + braking distance with jerk + margin <= range. The output is a
@@ -24,22 +27,26 @@ import math
 SECTOR_DEG = 5.0
 
 
-def guaranteed_returns(r, h_obj, w_obj, dz, gap_v_deg, gap_h_deg, band):
+def confirmed(r, h_obj, w_obj, dz, gap_v_deg, gap_h_deg, band, n_obstacle, window, incidence_deg):
+    """True when one sector is guaranteed n_obstacle returns of the smallest object inside one confirmation window."""
     overlap = min(h_obj, band) - dz
     if overlap <= 0.0:
-        return 0
+        return False
     rings = math.floor(overlap / (r * math.tan(math.radians(gap_v_deg))))
     if rings < 1:
-        return 0  # no ring is guaranteed on the object inside the band: not certifiable at r
-    width = min(w_obj / 2.0, r * math.tan(math.radians(SECTOR_DEG)))
-    return rings * math.floor(width / (r * math.tan(math.radians(gap_h_deg))))
+        return False  # no ring is guaranteed on the object inside the band: not certifiable at r
+    step = r * math.tan(math.radians(gap_h_deg))
+    columns = math.floor(min(w_obj / 2.0, r * math.tan(math.radians(SECTOR_DEG))) / step)
+    needed = math.ceil(n_obstacle / rings)
+    spread = (needed - 1) * step * math.tan(math.radians(incidence_deg))
+    return columns >= needed and spread <= window
 
 
-def certified_range(h_obj, w_obj, dz, gap_v_deg, gap_h_deg, band, n_obstacle, cap):
-    # The guaranteed count does not grow with the range, so the largest passing range is the certified one.
+def certified_range(h_obj, w_obj, dz, gap_v_deg, gap_h_deg, band, n_obstacle, window, incidence_deg, cap):
+    # The guarantee does not improve with the range, so the largest passing range is the certified one.
     r = cap
     while r > 0.1:
-        if guaranteed_returns(r, h_obj, w_obj, dz, gap_v_deg, gap_h_deg, band) >= n_obstacle:
+        if confirmed(r, h_obj, w_obj, dz, gap_v_deg, gap_h_deg, band, n_obstacle, window, incidence_deg):
             return r
         r -= 0.05
     return 0.0
@@ -62,7 +69,8 @@ def speed_for(range_m, t_lat, a, j, margin, v_max=30.0):
 
 def evaluate(a):
     rh = (min(a.h_obj, a.band) - a.dz) / math.tan(math.radians(a.gap_v_deg))  # one ring on the object in the band
-    certified = certified_range(a.h_obj, a.w_obj, a.dz, a.gap_v_deg, a.gap_h_deg, a.band, a.n_obstacle, a.range_cap)
+    certified = certified_range(a.h_obj, a.w_obj, a.dz, a.gap_v_deg, a.gap_h_deg, a.band, a.n_obstacle, a.window,
+                                a.incidence_deg, a.range_cap)
     return rh, certified, speed_for(certified, a.t_lat, a.a_brake, a.jerk, a.margin)
 
 
@@ -72,6 +80,7 @@ def selftest():
     a = A()
     a.h_obj, a.w_obj, a.allowance_deg, a.gap_v_deg, a.gap_h_deg = 1.0, 1.5, 0.9, 1.07, 1.0
     a.dz, a.band, a.n_obstacle, a.t_lat, a.a_brake, a.jerk, a.margin, a.range_cap = 0.07, 0.85, 3, 0.95, 3.0, 4.0, 2.0, 40.0
+    a.window, a.incidence_deg = 0.5, 0.0
     checks = [
         ('stopping distance at 12 m/s is 41.9 m', abs(stopping_distance(12.0, 0.95, 3.0, 4.0, 2.0) - 41.9) < 0.05),
         ('jerk-limited branch below a^2/j', abs(stopping_distance(1.0, 0.0, 3.0, 4.0, 0.0) - 0.5) < 1e-9),
@@ -88,7 +97,12 @@ def selftest():
     # The certified range holds the condition at every shorter range (the count never grows with the range).
     c = evaluate(a)[1]
     checks.append(('monotonic below the certified range', all(
-        guaranteed_returns(r, 1.0, 1.5, 0.07, 1.07, 1.0, 0.85) >= 3 for r in [0.5 + 0.1 * i for i in range(int(c * 10) - 5)])))
+        confirmed(r, 1.0, 1.5, 0.07, 1.07, 1.0, 0.85, 3, 0.5, 0.0) for r in [0.5 + 0.1 * i for i in range(int(c * 10) - 5)])))
+    # A wide wall at 45 deg (x = 30 + y) at 30 m: three returns of one sector do not fit a 0.5 m window.
+    a.w_obj, a.incidence_deg = 5.0, 45.0
+    checks.append(('an oblique wall at 30 m is not certified there', evaluate(a)[1] < 28.0))
+    a.incidence_deg = 0.0
+    checks.append(('the same wall face-on reaches the cap', abs(evaluate(a)[1] - 40.0) < 1e-9))
     for name, ok in checks:
         print('%s: %s' % ('PASS' if ok else 'FAIL', name))
     return all(ok for _, ok in checks)
@@ -104,6 +118,9 @@ def main():
     ap.add_argument('--dz', type=float, default=0.07, help='largest vertical origin motion in one frame [m]')
     ap.add_argument('--band', type=float, default=0.85, help='height_up_m + height_down_m [m]')
     ap.add_argument('--n-obstacle', type=int, default=3, help='obstacle_min_returns')
+    ap.add_argument('--window', type=float, default=0.5, help='obstacle_window_m [m]')
+    ap.add_argument('--incidence-deg', type=float, default=45.0,
+                    help='largest angle between an obstacle surface normal and the ray that is claimed (owner)')
     ap.add_argument('--t-lat', type=float, default=0.95, help='CPB_T_LAT [s]')
     ap.add_argument('--a-brake', type=float, default=3.0, help='CPB_A_BRK [m/s^2]')
     ap.add_argument('--jerk', type=float, default=4.0, help='CPB_JERK [m/s^3]')
@@ -115,12 +132,13 @@ def main():
     if a.selftest:
         raise SystemExit(0 if selftest() else 1)
     if a.table:
-        print('h_obj  w_obj  gap_v  |  r_h(1 ring)  certified |  v_max')
+        print('h_obj  w_obj  gap_v  incidence | r_h(1 ring)  certified |  v_max   (window %.2f m)' % a.window)
         for gap in (1.07, 0.5):
-            for h, w in ((0.5, 1.5), (1.0, 1.5), (1.0, 3.0), (1.0, 5.0), (2.0, 5.0)):
-                a.h_obj, a.w_obj, a.gap_v_deg = h, w, gap
-                rh, c, v = evaluate(a)
-                print('%4.1f m %5.1f m %5.2f deg | %8.1f m %8.1f m | %4.1f m/s' % (h, w, gap, rh, c, v))
+            for phi in (0.0, 30.0, 45.0):
+                for h, w in ((1.0, 1.5), (1.0, 3.0), (1.0, 5.0)):
+                    a.h_obj, a.w_obj, a.gap_v_deg, a.incidence_deg = h, w, gap, phi
+                    rh, c, v = evaluate(a)
+                    print('%4.1f m %5.1f m %5.2f deg %5.0f deg | %7.1f m %8.1f m | %4.1f m/s' % (h, w, gap, phi, rh, c, v))
         print('speed at the range cap %.0f m: %.1f m/s; 12 m/s needs %.1f m' % (
             a.range_cap, speed_for(a.range_cap, a.t_lat, a.a_brake, a.jerk, a.margin),
             stopping_distance(12.0, a.t_lat, a.a_brake, a.jerk, a.margin)))

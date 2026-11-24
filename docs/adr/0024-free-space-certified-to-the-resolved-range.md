@@ -40,8 +40,12 @@ decision 3 covers. No certification rule can claim more without a smaller gap.
    - rings on the part of the object inside the band: `k(r) = floor((min(h_obj, H) - dz) / (r tan g_v))`;
    - columns in one sector: `c(r) = floor(min(w_obj / 2, r tan 5 deg) / (r tan g_h))`, because a sector confirms
      only its own returns and an object on a sector boundary is split;
-   - `certified_range_m` is the largest `r`, at most 40 m, with `k(r) >= 1` and `k(r) * c(r) >= n_obstacle`
-     (neither count grows with `r`, so every shorter range passes too).
+   - the returns must fit the confirmation window: when one column holds fewer than `n_obstacle` rings,
+     `m = ceil(n_obstacle / k(r))` neighbouring columns are needed, and on a surface at incidence `phi` (between its
+     normal and the ray) they spread over `(m - 1) r tan(g_h) tan(phi)`, which must stay within `obstacle_window_m`;
+     `phi_max`, the most oblique surface claimed, is an owner input;
+   - `certified_range_m` is the largest `r`, at most 40 m, with `k(r) >= 1`, `k(r) * c(r) >= n_obstacle` and the
+     window condition (none of them improves with `r`, so every shorter range passes too).
    The allowance does not enter: it widens the band test (decision 3) instead.
    `g_v` and `g_h` are properties of the sensor in one frame: for the SITL grid its steps; for the Mid-360S they
    are measured from real frames (OPEN-023), as the non-repetitive pattern is not a grid.
@@ -63,21 +67,23 @@ Evidence of the rule, the same records recomputed offline with a given certified
 | Beam 1.0 m tall, certified range 30.1 m; the same with the 0.3 m beam | 0 over-claims; 1 over-claim on the 0.3 m beam |
 | Tall wall at 15 m, tilt to 36.6 deg and 161 deg/s, Livox density, certified range 29 m | published minus truth: median -0.001 m, p95 0.049 m, frame-to-frame p95 0.008 m, 0 over-claims |
 
-The node runs of PR #191 (SITL, certified range 27 and 40 m) are in the PR. Those two ranges were set before the
-per-sector width rule of decision 2 was written; by that rule they need wider smallest objects than first assumed
-(28.6 m for 1.0 x 3.0 m and 40 m for 1.0 x 5.0 m).
+The node runs of PR #191 (SITL, certified range 27 and 40 m, face-on wall) are in the PR. Those two ranges were set
+before the per-sector, ring and window conditions of decision 2 were written; by them they hold for face-on
+smallest objects of about 1.0 x 2.9 m and 1.0 x 5.0 m, and an oblique surface shortens them (table below).
 
 Trade-offs of the parameters (`tools/scenarios/certified_range.py --table` prints them for any inputs; `g_h`
 1.0 deg, `dz` 0.07 m, band 0.85 m, `n_obstacle` 3, the bench stopping model):
 
-| `h_obj` | `w_obj` | `g_v` | Certified range | Top speed |
-| --- | --- | --- | --- | --- |
-| 0.5 m | 1.5 m | 1.07 deg (Livox-like) | 14.3 m | 5.5 m/s |
-| 1.0 m | 1.5 m | 1.07 deg | 20.9 m | 7.4 m/s |
-| 1.0 m | 3.0 m | 1.07 deg | 28.6 m | 9.3 m/s |
-| 1.0 m | 5.0 m | 1.07 deg | 40 m (cap) | 11.6 m/s |
-| 1.0 m | 1.5 m | 0.5 deg | 29.8 m | 9.5 m/s |
-| 1.0 m | 3.0 m | 0.5 deg | 40 m (cap) | 11.6 m/s |
+| `h_obj` x `w_obj` | `g_v` | `phi_max` | Window, `n_obstacle` | Certified range | Top speed |
+| --- | --- | --- | --- | --- | --- |
+| 1.0 x 1.5 m | 1.07 deg (Livox-like) | 0 deg (face-on) | 0.5 m, 3 | 20.9 m | 7.4 m/s |
+| 1.0 x 3.0 m | 1.07 deg | 0 deg | 0.5 m, 3 | 28.6 m | 9.3 m/s |
+| 1.0 x 5.0 m | 1.07 deg | 0 deg | 0.5 m, 3 | 40 m (cap) | 11.6 m/s |
+| 1.0 x 5.0 m | 1.07 deg | 30 deg | 0.5 m, 3 | 24.8 m | 8.4 m/s |
+| 1.0 x 5.0 m | 1.07 deg | 45 deg | 0.5 m, 3 | 20.9 m | 7.4 m/s |
+| 1.0 x 5.0 m | 1.07 deg | 45 deg | 1.0 m, 3 or 0.5 m, 2 | 28.6 m | 9.3 m/s |
+| 1.0 x 3.0 m | 0.5 deg | 45 deg | 0.5 m, 3 | 29.8 m | 9.5 m/s |
+| 1.0 x 3.0 m | 0.5 deg | 0 deg | 0.5 m, 3 | 40 m (cap) | 11.6 m/s |
 
 - Range against the smallest obstacle: each metre of certified range needs a larger smallest obstacle (mostly a
   wider one: a sector confirms only its own returns, and at long range the band crosses one ring) or smaller gaps.
@@ -87,8 +93,10 @@ Trade-offs of the parameters (`tools/scenarios/certified_range.py --table` print
 - Allowance against false stops: a larger allowance counts more band-edge returns as obstacles (more false stops,
   fewer over-claims); it must cover the measured attitude error (SITL EKF: p99 0.68, max 0.85 deg; target #156).
   It does not change the certified range.
-- `n_obstacle` against thin poles: fewer confirming returns resolve narrower objects at the cost of noise
-  rejection; a taller band crosses more rings at the cost of overhangs that stop the vehicle.
+- `n_obstacle` and `obstacle_window_m` against thin and oblique objects: fewer confirming returns resolve narrower
+  objects, and a wider window confirms more oblique surfaces, both at the cost of noise rejection (scattered
+  returns can then confirm a false obstacle, a false stop); a taller band crosses more rings at the cost of
+  overhangs that stop the vehicle. Surfaces more oblique than `phi_max` are a non-claim at the certified range.
 - The wire cap: the qualified range is 40 m (ICD-CP-03, checked by the cp_brake input check). It allows 11.6 m/s
   with the bench stopping model; 12 m/s needs 41.9 m. A longer qualified range needs ICD-CP-03 and the cp_brake
   input check to change (fork PR and pointer PR), and a sensor that returns from the darkest claimed object at
@@ -105,5 +113,6 @@ hide the problem); carrying free evidence over frames (a new mechanism; not need
 - ICD-CP-06 loses its two frame fields; ADR 0020 D2, ADR 0022 and OPEN-031 / OPEN-036 are updated by the
   docs-sync PR. The `(r^2 / h) dtheta` over-claim of ADR 0022 item h no longer exists: the certified range does
   not depend on a ray's elevation; the attitude error now acts on the band test, bounded by the allowance.
-- The speed claim is set by two owner choices (`h_obj`, `w_obj`) and one measurement (the gaps); the allowance
-  (owner, measured attitude error) sets how conservative the band test is.
+- The speed claim is set by owner choices (`h_obj`, `w_obj`, `phi_max`, with `obstacle_window_m` and
+  `n_obstacle`) and one measurement (the gaps); the allowance (owner, measured attitude error) sets how
+  conservative the band test is.
