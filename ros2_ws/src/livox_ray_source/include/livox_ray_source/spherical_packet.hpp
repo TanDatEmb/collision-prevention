@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <vector>
 
+#include "livox_ray_source/gyro_track.hpp"
 #include "livox_ray_source/ray_source.hpp"
 #include "obstacle_sector_map/types.hpp"
 
@@ -50,6 +51,21 @@ struct DecodedPacket
 ///
 /// Input is the whole UDP payload.
 [[nodiscard]] DecodedPacket decodeSphericalPacket(const uint8_t * data, std::size_t size);
+
+/// One decoded Livox IMU packet (data type 0).
+struct DecodedImuPacket
+{
+  bool layout_ok{false};  ///< data type 0 and exactly 36 + 24 bytes
+  uint8_t time_type{0U};  ///< 0 no sync (time since power on), 1 PTP, 2 GPS
+  GyroSample gyro{};      ///< valid only with layout_ok and PTP time (`time_type` 1, non-zero time)
+};
+
+/// Decodes one Livox Mid-360(S) IMU packet: the 36 byte header (the same layout and time stamp as the
+/// point packets) and one sample of six little-endian floats, gyro x, y, z in rad/s then acceleration
+/// x, y, z in g (`LivoxLidarImuRawPoint`; units measured on a real Mid-360S, ADR 0019). Only PTP time is
+/// used, as for the points (ADR 0003); the acceleration is not used (ADR 0023). Input is the whole UDP
+/// payload.
+[[nodiscard]] DecodedImuPacket decodeImuPacket(const uint8_t * data, std::size_t size);
 
 /// Packet loss on the point stream through the 16 bit `udp_cnt`: a packet is a break when its
 /// counter is not the previous one plus one (a gap, a duplicate, a step back); the counter wraps.

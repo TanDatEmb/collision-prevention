@@ -7,6 +7,7 @@
 
 #include "obstacle_sector_node/platform_config.hpp"
 
+using obstacle_sector_node::loadGyroHistoryConfig;
 using obstacle_sector_node::loadLevelingSettings;
 using obstacle_sector_node::loadSectorMapConfig;
 
@@ -169,4 +170,28 @@ TEST(LevelingSettingsTest, RepositoryPlatformConfigHasTheMountButNoPoseHistoryYe
 {
   // The mount is filled (owner, 2026-11-21); the pose history values are TBD, so the file is refused.
   EXPECT_TRUE(levelingRejects(X500_YAML_PATH));
+}
+
+TEST(GyroHistoryConfigTest, LoadsTheGyroHistoryAndRefusesMissingOrBadValues)
+{
+  // Fixture values, not platform values.
+  const auto config = loadGyroHistoryConfig(
+    writeYaml("gyro_valid", "gyro_history:\n  depth: 64\n  max_bracket_gap_ms: 10\n"));
+  EXPECT_EQ(config.depth, 64U);
+  EXPECT_EQ(config.max_bracket_gap_ns, 10'000'000U);
+  const auto refused = [](const std::string & name, const std::string & text) {
+      try {
+        static_cast<void>(loadGyroHistoryConfig(writeYaml(name, text)));
+      }
+      catch (const std::invalid_argument &) {
+        return true;
+      }
+      return false;
+    };
+  EXPECT_TRUE(refused("gyro_missing", "pose_history:\n  depth: 64\n  max_bracket_gap_ms: 10\n"));
+  EXPECT_TRUE(refused("gyro_null", "gyro_history:\n  depth: null\n  max_bracket_gap_ms: 10\n"));
+  EXPECT_TRUE(refused("gyro_depth", "gyro_history:\n  depth: 1\n  max_bracket_gap_ms: 10\n"));
+  EXPECT_TRUE(refused("gyro_gap", "gyro_history:\n  depth: 64\n  max_bracket_gap_ms: 0\n"));
+  EXPECT_TRUE(refused("gyro_empty", std::string{}));
+  EXPECT_THROW(static_cast<void>(loadGyroHistoryConfig(X500_YAML_PATH)), std::invalid_argument);  // TBD
 }

@@ -16,18 +16,20 @@ namespace livox_ray_source
 /// the earliest ray time (the map timestamp). A ray the leveler drops (breaksFrameContinuity)
 /// is removed and the frame becomes discontinuous. When there is no reference pose, every ray is
 /// removed and the frame is discontinuous, so no sector of it becomes clear.
-/// `poses` must outlive the source.
+/// The FMU pose is used at the reference time and the gyro inside the frame (ADR 0023); `gyro` may be null
+/// for a source whose rays of one frame share one time. `poses` and `gyro` must outlive the source.
 class LevelingRaySource : public RaySource
 {
 public:
   /// Throws std::invalid_argument when `inner` is null or `config` is not valid.
   LevelingRaySource(
-    std::unique_ptr<RaySource> inner, const PoseHistory & poses, const LevelingConfig & config);
+    std::unique_ptr<RaySource> inner, const PoseHistory & poses, const LevelingConfig & config,
+    const GyroTrack * gyro = nullptr);
 
   [[nodiscard]] std::optional<RayFrame> nextFrame() override;
 
   /// Rays removed so far because the leveler dropped them (no pose, reset, ...); a frame with no reference pose
-  /// counts all its rays. It is what ADR 0022 decision 2 asks to measure before a wait for a newer pose is added.
+  /// counts all its rays.
   /// Not thread safe: read it from the thread that calls nextFrame().
   [[nodiscard]] uint64_t raysDropped() const {return _rays_dropped;}
 

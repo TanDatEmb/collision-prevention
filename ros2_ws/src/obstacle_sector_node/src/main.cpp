@@ -26,8 +26,10 @@
 // Leveling (ADR 0020 D1, ADR 0022, issue #137): the sources ring_cloud and livox are leveled with the
 // calibrated mount and the pose chain of the FMU, `/fmu/out/vehicle_odometry` (best-effort, as PX4
 // publishes it). The platform YAML must then also hold `sensor.mount_pose_in_base_link` and
-// `pose_history.*` (no defaults). A pose with no time or ahead of the node clock is not stored. The source
-// laser_scan, a planar bench scan, is not leveled: a plane makes no leveling claim (ADR 0022 decision 4).
+// `pose_history.*` (no defaults). A pose with no time or ahead of the node clock is not stored. The FMU pose
+// is used at the reference time of a frame; the rotation inside the frame comes from the Livox gyro (ADR 0023),
+// so the source livox also needs `gyro_history.*`. The source laser_scan, a planar bench scan, is not leveled:
+// a plane makes no leveling claim (ADR 0022 decision 4).
 #include <algorithm>
 #include <atomic>
 #include <chrono>
@@ -42,6 +44,7 @@
 #include <utility>
 
 #include "livox_ray_source/frame_segmenter.hpp"
+#include "livox_ray_source/gyro_track.hpp"
 #include "livox_ray_source/leveling_ray_source.hpp"
 #include "livox_ray_source/livox_sdk_sample_source.hpp"
 #include "livox_ray_source/pose_history.hpp"
@@ -210,12 +213,19 @@ int main(int argc, char ** argv)
     // history must outlive the node, so it is declared here.
     const bool leveled = source_kind != "laser_scan";
     std::shared_ptr<livox_ray_source::PoseHistory> poses;
+    // The Livox gyro gives the rotation inside a frame (ADR 0023); the Gazebo cloud stamps all rays of a frame
+    // with one time and needs none.
+    std::shared_ptr<livox_ray_source::GyroTrack> gyro;
     livox_ray_source::LevelingRaySource * leveling_source = nullptr;
     if (leveled) {
       const auto settings = obstacle_sector_node::loadLevelingSettings(platform_config);
       poses = std::make_shared<livox_ray_source::PoseHistory>(settings.history);
+      if (source_kind == "livox") {
+        gyro = std::make_shared<livox_ray_source::GyroTrack>(
+          obstacle_sector_node::loadGyroHistoryConfig(platform_config));
+      }
       auto leveling = std::make_unique<livox_ray_source::LevelingRaySource>(
-        std::move(source), *poses, settings.leveling);
+        std::move(source), *poses, settings.leveling, gyro.get());
       leveling_source = leveling.get();
       source = std::move(leveling);
     }
@@ -278,18 +288,20 @@ int main(int argc, char ** argv)
         },
         configure_point_type,
         [logger](const std::string & text) { RCLCPP_INFO(logger, "%s", text.c_str()); });
+      livox->setGyroSink([gyro](const livox_ray_source::GyroSample & sample) { gyro->push(sample); });
       auto * livox_source = livox.get();
       livox_stats_timer = node->create_wall_timer(std::chrono::seconds(5), [node, livox_source]() {
         const auto stats = livox_source->stats();
         RCLCPP_INFO(
           node->get_logger(),
           "livox packets %lu, decoded %lu, rejected %lu, not spherical %lu, unsynchronized %lu, "
-          "continuity breaks %lu, rays dropped for no time %lu; frames %lu, messages %lu, encode "
-          "failures %lu",
+          "continuity breaks %lu, rays dropped for no time %lu, imu packets %lu, imu unusable %lu; "
+          "frames %lu, messages %lu, encode failures %lu",
           asUnsigned(stats.packets), asUnsigned(stats.decoded_packets),
           asUnsigned(stats.rejected_packets), asUnsigned(stats.not_spherical_packets),
           asUnsigned(stats.unsynchronized_packets), asUnsigned(stats.continuity_breaks),
-          asUnsigned(stats.dropped_rays), asUnsigned(node->stats().frames),
+          asUnsigned(stats.dropped_rays), asUnsigned(stats.imu_packets), asUnsigned(stats.imu_unusable),
+          asUnsigned(node->stats().frames),
           asUnsigned(node->stats().messages), asUnsigned(node->stats().encode_failures));
       });
       if (!livox->start()) {

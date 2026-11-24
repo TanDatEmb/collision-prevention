@@ -31,6 +31,12 @@ struct PoseSample
   std::array<double, 3> position_ned_m{
     std::numeric_limits<double>::quiet_NaN(), std::numeric_limits<double>::quiet_NaN(),
     std::numeric_limits<double>::quiet_NaN()};
+  /// Velocity of the body origin in the same local NED frame, m/s (`VehicleOdometry.velocity` when its
+  /// frame is NED). NaN when unknown; not part of isValid(): the leveler needs it only for a ray whose
+  /// time differs from the reference time (ADR 0023 decision 3).
+  std::array<double, 3> velocity_ned_m_s{
+    std::numeric_limits<double>::quiet_NaN(), std::numeric_limits<double>::quiet_NaN(),
+    std::numeric_limits<double>::quiet_NaN()};
   uint8_t reset_counter{0U};  ///< compared for inequality only; the counter wraps
 
   /// Valid: a non-zero time, a finite position and a finite quaternion of non-zero norm

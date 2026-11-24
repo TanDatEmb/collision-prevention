@@ -2,6 +2,7 @@
 
 #include <cmath>
 #include <cstdint>
+#include <array>
 #include <cstring>
 #include <string>
 #include <vector>
@@ -364,3 +365,57 @@ TEST(PacketSamplerTest, AStreamWithoutTimeBuffersNothingInTheSegmenter)
 }
 
 }  // namespace
+
+namespace
+{
+
+// A Livox IMU packet: the 36 byte header with data type 0, then gyro x, y, z (rad/s) and acceleration x, y,
+// z (g) as float32.
+std::vector<uint8_t> makeImuPacket(
+  const std::array<float, 6> & values, uint8_t time_type = 1U, uint64_t timestamp_ns = kPtpTimeNs,
+  std::size_t extra_bytes = 0U)
+{
+  std::vector<uint8_t> bytes(36U + 24U + extra_bytes, 0U);
+  put<uint16_t>(bytes, 1U, static_cast<uint16_t>(bytes.size()));
+  bytes[10] = 0U;
+  bytes[11] = time_type;
+  put<uint64_t>(bytes, 28U, timestamp_ns);
+  for (std::size_t i = 0U; i < 6U; ++i) {
+    put<float>(bytes, 36U + 4U * i, values[i]);
+  }
+  return bytes;
+}
+
+}  // namespace
+
+TEST(DecodeImuPacketTest, GyroRatesAndThePtpTimeAreRead)
+{
+  const auto bytes = makeImuPacket({0.1F, -0.2F, 0.3F, 0.0F, 0.0F, 1.0F});
+  const auto packet = livox_ray_source::decodeImuPacket(bytes.data(), bytes.size());
+  ASSERT_TRUE(packet.layout_ok);
+  EXPECT_EQ(packet.time_type, 1U);
+  ASSERT_TRUE(packet.gyro.isValid());
+  EXPECT_EQ(packet.gyro.timestamp_ns, kPtpTimeNs);
+  EXPECT_DOUBLE_EQ(packet.gyro.rate_flu_rad_s[0], static_cast<double>(0.1F));
+  EXPECT_DOUBLE_EQ(packet.gyro.rate_flu_rad_s[1], static_cast<double>(-0.2F));
+  EXPECT_DOUBLE_EQ(packet.gyro.rate_flu_rad_s[2], static_cast<double>(0.3F));
+}
+
+TEST(DecodeImuPacketTest, NoPtpTimeOrAnotherLayoutGivesNoSample)
+{
+  const std::array<float, 6> values{0.1F, 0.2F, 0.3F, 0.0F, 0.0F, 1.0F};
+  const auto unsynchronized = makeImuPacket(values, 0U);
+  auto packet = livox_ray_source::decodeImuPacket(unsynchronized.data(), unsynchronized.size());
+  EXPECT_TRUE(packet.layout_ok);
+  EXPECT_FALSE(packet.gyro.isValid());
+  const auto zero_time = makeImuPacket(values, 1U, 0U);
+  EXPECT_FALSE(livox_ray_source::decodeImuPacket(zero_time.data(), zero_time.size()).gyro.isValid());
+  const auto too_long = makeImuPacket(values, 1U, kPtpTimeNs, 4U);
+  packet = livox_ray_source::decodeImuPacket(too_long.data(), too_long.size());
+  EXPECT_FALSE(packet.layout_ok);
+  EXPECT_FALSE(packet.gyro.isValid());
+  auto point_type = makeImuPacket(values);
+  point_type[10] = 3U;
+  EXPECT_FALSE(livox_ray_source::decodeImuPacket(point_type.data(), point_type.size()).layout_ok);
+  EXPECT_FALSE(livox_ray_source::decodeImuPacket(nullptr, 60U).layout_ok);
+}
