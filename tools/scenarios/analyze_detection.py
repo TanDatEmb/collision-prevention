@@ -1,8 +1,12 @@
 #!/usr/bin/env python3
 """Per-frame detection of a test object in the published ObstacleDistance of a ULog (bench tool, VM-56).
 
-usage: analyze_detection.py --object <name> <log.ulg> [--band-up 0.25] [--band-down 0.60] [--tolerance 0.5]
+usage: analyze_detection.py --object <name> <log.ulg> --tolerance T [--band-up 0.25] [--band-down 0.60]
                             [--certified 40.0] [--corridor 2.0] [--min-approach-speed 1.0]
+
+--tolerance is how much farther than the true distance a reported distance may be and still count as detected. It
+moves frames between 'detected' and 'over-claim', so it is an acceptance threshold: TBD (owner), no default. 0 is
+the strict reading (any overstatement is an over-claim); report the value used with every result.
 
 The object is one of `detection_objects.py` (same frame and position). Only the part of the object within --corridor
 of the leg (the line North = 0 flown East from the takeoff origin; give CPB_MARGIN) counts: that is the part the
@@ -12,7 +16,7 @@ distance to the nearest such point inside the height band (lidar height - band_d
 the platform file) whose bearing falls in the sector (sectors are centred on 5 i degrees clockwise from the heading,
 ICD-CP-03), within the certified range. A frame is
 - detected: a sector that holds the object reports a confirmed distance (below the certified range) no farther than
-  truth + tolerance;
+  truth + --tolerance;
 - unknown: not detected, and a sector that holds the object is unknown (`UINT16_MAX`): its cap is 0 (fail closed);
 - over-claim: neither, so every sector that holds the object reports free space past it.
 Only frames while the vehicle flies faster than --min-approach-speed are counted. The output (one JSON object) gives
@@ -136,7 +140,7 @@ def analyze(path, name, band_up_m, band_down_m, tolerance_m, certified_m, corrid
         if c is not None:
             ranges.append(float(truth[np.isfinite(truth)].min()))
             classes.append(c)
-    result = {'log': os.path.basename(path), 'object': name, 'frames': len(classes)}
+    result = {'log': os.path.basename(path), 'object': name, 'tolerance_m': tolerance_m, 'frames': len(classes)}
     if classes:
         result.update(summarize(ranges, classes))
     every = detection_objects.surface_points(name, z_range_m=(-1.0, 40.0))
@@ -155,7 +159,8 @@ def main():
     ap.add_argument('log')
     ap.add_argument('--band-up', type=float, default=0.25, help='height_up_m of the platform file [m]')
     ap.add_argument('--band-down', type=float, default=0.60, help='height_down_m of the platform file [m]')
-    ap.add_argument('--tolerance', type=float, default=0.5, help='reported distance allowed past the truth [m]')
+    ap.add_argument('--tolerance', type=float, required=True,
+                    help='reported distance allowed past the truth [m]: an acceptance threshold, TBD (owner); 0 = strict')
     ap.add_argument('--certified', type=float, default=40.0, help='certified_range_m of the run [m]')
     ap.add_argument('--corridor', type=float, default=2.0, help='half-width around the leg that counts, CPB_MARGIN [m]')
     ap.add_argument('--min-approach-speed', type=float, default=1.0, help='frames counted above this speed [m/s]')

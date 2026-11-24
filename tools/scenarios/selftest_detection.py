@@ -35,6 +35,8 @@ def main():
     checks.append(('a confirmed distance at the truth is detected', c(frame({0: 20.1}), truth({0: 20.0}), 40, 0.5) == 'detected'))
     checks.append(('nearer than the truth (another return) is detected', c(frame({0: 12.0}), truth({0: 20.0}), 40, 0.5) == 'detected'))
     checks.append(('past the truth by more than the tolerance is not', c(frame({0: 21.0}), truth({0: 20.0}), 40, 0.5) == 'overclaim'))
+    checks.append(('strict tolerance 0: 1 cm past the truth is an over-claim', c(frame({0: 20.01}), truth({0: 20.0}), 40, 0.0) == 'overclaim'))
+    checks.append(('strict tolerance 0: at the truth is detected', c(frame({0: 20.0}), truth({0: 20.0}), 40, 0.0) == 'detected'))
     checks.append(('the certified range is free space, not a detection',
                    c(frame({0: 40.0}), truth({0: 39.8}), 40, 0.5) == 'overclaim'))
     checks.append(('an unknown sector holding the object is unknown', c(frame({0: np.nan}), truth({0: 20.0}), 40, 0.5) == 'unknown'))
