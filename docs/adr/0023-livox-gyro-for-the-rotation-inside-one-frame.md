@@ -1,7 +1,7 @@
 # 0023. The Livox gyro for the rotation inside one frame
 
-Status: Proposed. The owner chose this direction in chat on 2026-11-24 after the analysis below; this
-record is for approval (issue #183). It amends ADR 0018 (deskew pose per ray), ADR 0019 (the Livox IMU is
+Status: Accepted. The owner chose this direction in chat on 2026-11-24 after the analysis below and
+approved this record in chat on 2026-11-24 (issues #183 and #185). It amends ADR 0018 (deskew pose per ray), ADR 0019 (the Livox IMU is
 not read) and ADR 0022 decision 2 (bounded wait for a pose). Values marked TBD stay TBD.
 
 ## Context

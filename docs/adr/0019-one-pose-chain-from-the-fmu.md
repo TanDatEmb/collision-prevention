@@ -1,5 +1,9 @@
 # 0019. One pose chain from the FMU for heading and deskew
 
+Amended by ADR 0023 (approved 2026-11-24): `livox_ray_source` reads the Livox IMU for the rotation inside
+one frame only, under the reconsideration clause below; it is never a heading or attitude source. The FMU
+stays the one pose chain at the reference time and for the heading of `cp_brake`.
+
 ## Context
 ADR 0018 takes the deskew pose from `VehicleOdometry`. `cp_brake` also needs the heading at the
 sample time of a map (ICD-CP-04, issue #94). Heading error is the yaw rate times the timing error,

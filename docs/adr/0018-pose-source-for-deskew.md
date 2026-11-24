@@ -1,5 +1,9 @@
 # 0018. Deskew pose comes from VehicleOdometry
 
+Amended by ADR 0023 (approved 2026-11-24): the rotation inside a frame comes from the Livox gyro and the
+position from the FMU velocity at the reference time; `VehicleOdometry` is looked up only at the reference
+time, and the reset check moves there.
+
 ## Context
 ADR 0015 deskews rays in `livox_ray_source` and needs a vehicle pose at each ray time. In the pinned
 PX4 (`uxrce_dds_client/dds_topics.yaml`), `/fmu/out/vehicle_local_position` is rate limited to 50 Hz

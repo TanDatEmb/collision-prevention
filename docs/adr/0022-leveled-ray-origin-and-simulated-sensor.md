@@ -192,6 +192,10 @@ Consequences:
   `LevelingRaySource`. The real direction of a return stays the chord form (item c, never above the true exit).
 
 ### 2. Missing pose: wait for a bounded time, do not hold the last pose
+Withdrawn by ADR 0023 (approved 2026-11-24): the FMU pose is looked up only at the reference time, which
+has arrived before a real frame ends, and the rotation inside the frame comes from the Livox gyro, so no
+wait is built. The text below is kept as the record of the rejected options (hold the last pose).
+
 The leveler returns `kNoPose` for a ray with no pose, and `breaksFrameContinuity` tells the caller to
 drop it and mark the frame discontinuous (ICD-CP-06; the node wiring is #137, not merged). One missing
 pose then makes no sector clearable: a step to zero, the 0.3 s dwell, and the 2 m/s^2 rise (about
