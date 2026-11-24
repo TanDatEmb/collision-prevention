@@ -38,7 +38,8 @@ object at least `r tan(g_h)` wide. No certification rule can claim more without 
    SITL runs of ADR 0022 item i), `H = height_up_m + height_down_m` and `n_obstacle` the confirming returns:
    - height: `r_h = (h_obj - dz) / tan(g_v + dtheta_b)`;
    - width: the largest `r` with `ceil(n_obstacle / k(r)) * r * tan(g_h) <= w_obj`, where
-     `k(r) = floor(H / (r tan g_v))` is the number of rings that cross the band at `r` (at least 1);
+     `k(r) = floor(min(h_obj - dz, H) / (r tan g_v))` is the number of rings that cross the smallest object in
+     the band at `r` (at least 1 below `r_h`);
    - `certified_range_m = min(r_h, r_w, 40 m)`.
    `g_v` and `g_h` are properties of the sensor in one frame: for the SITL grid its steps; for the Mid-360S they
    are measured from real frames (OPEN-023), as the non-repetitive pattern is not a grid.

@@ -7,7 +7,8 @@ usage: certified_range.py --h-obj 1.0 --w-obj 1.5 --allowance-deg 0.9 [--gap-v-d
 
 `certified_range_m = min(r_h, r_w, range cap)` with
   r_h = (h_obj - dz) / tan(gap_v + allowance)                        smallest height crossed by a ray
-  r_w = largest r with ceil(n_obstacle / k(r)) * r * tan(gap_h) <= w_obj, k(r) = floor(band / (r tan gap_v))
+  r_w = largest r with ceil(n_obstacle / k(r)) * r * tan(gap_h) <= w_obj,
+        k(r) = floor(min(h_obj - dz, band) / (r tan gap_v)): the rings that cross the smallest object in the band
 the speed is the cp_brake stopping model: v * t_lat + braking distance with jerk + margin <= range. The output is a
 design aid: the values it prints are not approved; the owner chooses h_obj, w_obj and the allowance, and the gaps
 are measured on the real sensor (OPEN-023). --table prints the trade-off of the allowance and the object size.
@@ -20,10 +21,12 @@ def r_height(h_obj, dz, gap_v_deg, allowance_deg):
     return (h_obj - dz) / math.tan(math.radians(gap_v_deg + allowance_deg))
 
 
-def r_width(w_obj, gap_v_deg, gap_h_deg, band, n_obstacle, cap):
+def r_width(w_obj, h_obj, dz, gap_v_deg, gap_h_deg, band, n_obstacle, cap):
+    # Only the rings that cross the smallest object count as its returns; at least one is guaranteed below r_h.
+    overlap = min(h_obj - dz, band)
     r = cap
     while r > 0.1:
-        rings = max(1, math.floor(band / (r * math.tan(math.radians(gap_v_deg)))))
+        rings = max(1, math.floor(overlap / (r * math.tan(math.radians(gap_v_deg)))))
         if math.ceil(n_obstacle / rings) * r * math.tan(math.radians(gap_h_deg)) <= w_obj:
             return r
         r -= 0.05
@@ -47,7 +50,7 @@ def speed_for(range_m, t_lat, a, j, margin, v_max=30.0):
 
 def evaluate(a):
     rh = r_height(a.h_obj, a.dz, a.gap_v_deg, a.allowance_deg)
-    rw = r_width(a.w_obj, a.gap_v_deg, a.gap_h_deg, a.band, a.n_obstacle, a.range_cap)
+    rw = r_width(a.w_obj, a.h_obj, a.dz, a.gap_v_deg, a.gap_h_deg, a.band, a.n_obstacle, a.range_cap)
     certified = max(0.0, min(rh, rw, a.range_cap))
     return rh, rw, certified, speed_for(certified, a.t_lat, a.a_brake, a.jerk, a.margin)
 
@@ -68,6 +71,9 @@ def selftest():
     ]
     a.allowance_deg, a.w_obj = 0.2, 2.5
     checks.append(('allowance 0.2 deg and 2.5 m reach the cap', abs(evaluate(a)[2] - 40.0) < 1e-9))
+    # A 0.5 m x 0.3 m object at 12 m crosses only two rings and one column: three returns are not guaranteed there.
+    a.allowance_deg, a.h_obj, a.w_obj = 0.9, 0.5, 0.3
+    checks.append(('a small object limits the range by the rings it crosses', evaluate(a)[2] < 12.0))
     for name, ok in checks:
         print('%s: %s' % ('PASS' if ok else 'FAIL', name))
     return all(ok for _, ok in checks)
