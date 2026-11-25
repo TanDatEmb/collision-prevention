@@ -44,6 +44,21 @@ def case_sparse_hook_messages():
     assert not mask[t > 5.01].any()
 
 
-for case in (case_hold_in_the_middle, case_ground_between_flights, case_sparse_hook_messages):
+def case_episode_open_at_the_end():
+    # stopped while still held against an obstacle: the last episode runs to the end of the log
+    eps = flight_check.episodes([False, True, True, True, True], [0.0, 1.0, 2.0, 3.0, 4.0], 0.8)
+    assert eps == [(1.0, 3.0)], eps
+
+
+def case_window_after_the_last_sample():
+    # a sector drop at or after the last attitude sample leaves an empty window: no crash, no value
+    t = np.array([0.0, 1.0, 2.0])
+    v = np.array([5.0, 10.0, 15.0])
+    assert flight_check.window_max(t, v, 1.5, 3.0) == 15.0
+    assert np.isnan(flight_check.window_max(t, v, 2.5, 4.0))
+
+
+for case in (case_hold_in_the_middle, case_ground_between_flights, case_sparse_hook_messages, case_episode_open_at_the_end,
+             case_window_after_the_last_sample):
     case()
     print("PASS", case.__name__)

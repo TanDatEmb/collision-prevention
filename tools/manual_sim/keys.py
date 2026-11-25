@@ -75,6 +75,7 @@ class Stick:
         self.x = self.y = self.r = self.t = 0
         self.busy = False
         self.land_asked = 0.0
+        self.mode_requests = 0  # counts the operator's mode requests, so a takeoff never overrides a newer one
         self.message = "press t to take off"
         self.view = {"mode": "?", "speed": 0.0, "height": 0.0, "state": "?", "near": "-", "hook": ""}
         self.running = True
@@ -100,15 +101,18 @@ def takeoff(stick):
         stick.busy = False
         return
     stick.message = "arming and taking off..."
+    requests = stick.mode_requests
     px4("commander", "arm", "-f")
     time.sleep(1)
     px4("commander", "takeoff")
     for _ in range(60):
-        if -num(listen("vehicle_local_position"), "z", 0) > 3.0:
+        if -num(listen("vehicle_local_position"), "z", 0) > 3.0 or stick.mode_requests != requests:
             break
         time.sleep(0.5)
-    time.sleep(3)
-    position(stick)
+    if stick.mode_requests == requests:
+        time.sleep(3)
+    if stick.mode_requests == requests:  # Hold or Land asked meanwhile: keep it, never switch back to Position
+        position(stick)
     stick.busy = False
 
 
@@ -140,12 +144,14 @@ def press(stick, key):
     elif key == "t" and not stick.busy:
         threading.Thread(target=takeoff, args=(stick,), daemon=True).start()
     elif key == "p" and not stick.busy:
+        stick.mode_requests += 1
         stick.center()
         threading.Thread(target=position, args=(stick,), daemon=True).start()
     elif key == "u" and not stick.busy:
         threading.Thread(target=unlatch, args=(stick,), daemon=True).start()
     elif key == "l":
         if time.time() - stick.land_asked < 3:
+            stick.mode_requests += 1
             stick.center()
             threading.Thread(target=px4, args=("commander", "land"), daemon=True).start()
             stick.message = "landing"
@@ -153,6 +159,7 @@ def press(stick, key):
             stick.land_asked = time.time()
             stick.message = "press l again to land (away from obstacles)"
     elif key == "h":
+        stick.mode_requests += 1
         threading.Thread(target=px4, args=("commander", "mode", "auto:loiter"), daemon=True).start()
         stick.message = "Hold"
     elif key == "x":

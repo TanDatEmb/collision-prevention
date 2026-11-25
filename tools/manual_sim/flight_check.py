@@ -42,7 +42,15 @@ def episodes(mask, t, min_s):
             if t[k] - start >= min_s:
                 out.append((start, t[k] - start))
             start = None
+    if start is not None and t[-1] - start >= min_s:  # still held when the log ends
+        out.append((start, t[-1] - start))
     return out
+
+
+def window_max(t, v, t0, t1):
+    """Largest v with t0 < t < t1, or NaN when no sample falls in the window (topics have their own clocks)."""
+    w = (t > t0) & (t < t1)
+    return float(np.max(v[w])) if w.any() else float("nan")
 
 
 def check(path):
@@ -98,7 +106,8 @@ def check(path):
             fwd = [s for s in np.where((caps[k - 2] > 3.0) & (caps[k] < 0.05))[0] if s <= 9 or s >= 63]
             if fwd and (not drops or tc[k] - drops[-1] > 1.0):
                 drops.append(tc[k])
-    after = [tilt[(ta > t) & (ta < t + 1.5)].max() for t in drops]
+    after = [window_max(ta, tilt, t, t + 1.5) for t in drops]
+    after = [a for a in after if np.isfinite(a)]
     print("%s: %.1f min airborne with cp_brake enforcing, max altitude %.1f m, max speed %.1f m/s" % (
         path.split("/")[-1], minutes, alt.max(), speed[air].max()))
     print("  stick held but no motion (>= 0.8 s): %d episodes, %.1f s per minute" % (len(stuck), sum(e[1] for e in stuck) / minutes))
