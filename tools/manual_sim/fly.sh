@@ -91,11 +91,14 @@ start node.log bash -c "source /opt/ros/jazzy/setup.bash; source '$REPO/ros2_ws/
   python3 '$HERE/relay_one_frame.py' &
   exec ros2 run obstacle_sector_node obstacle_sector_node --ros-args --params-file '$HERE/layout.yaml' \
     -p use_sim_time:=true -p platform_config:='$REPO/config/platforms/x500.yaml' -p cloud_topic:=points"
+# ready only once the node has published obstacle messages: its statistics line is printed even when the bridge,
+# the relay or the clouds are missing, with every counter at 0
+published() { grep -qE "ring cloud: .* messages [1-9][0-9]*," "$LOG/node.log" 2>/dev/null; }
 for _ in $(seq 1 40); do
   sleep 1
-  grep -q "ring cloud: clouds" "$LOG/node.log" 2>/dev/null && break
+  published && break
 done
-grep -q "ring cloud: clouds" "$LOG/node.log" || { echo "obstacle_sector_node is not running, see $LOG/node.log"; exit 1; }
+published || { echo "obstacle_sector_node publishes no obstacle message, see $LOG/node.log"; exit 1; }
 echo "ready."
 
 cat <<'MAP'

@@ -10,7 +10,8 @@ if [ -n "$k" ]; then
   sleep 8
 fi
 
-SIM='^ *[0-9]+ +gz sim|bin/px4 |MicroXRCEAgent udp4|ros_gz_bridge|parameter_bridge|lib/obstacle_sector_node/obstacle_sector_node|ros2 run obstacle_sector_node|relay_one_frame\.py|make px4_sitl|manual_sim/fly\.sh'
+# keys.py too: started without job control it ignores SIGINT, and it holds the MAVLink port and the keyboard stick
+SIM='^ *[0-9]+ +gz sim|bin/px4 |MicroXRCEAgent udp4|ros_gz_bridge|parameter_bridge|lib/obstacle_sector_node/obstacle_sector_node|ros2 run obstacle_sector_node|relay_one_frame\.py|make px4_sitl|manual_sim/fly\.sh|manual_sim/keys\.py'
 p=$(pids "$SIM")
 [ -n "$p" ] && kill $p 2>/dev/null && sleep 3
 p=$(pids "$SIM")

@@ -19,6 +19,20 @@ def tilt_deg(D, key):
     return np.degrees(np.arccos(np.clip(1 - 2 * (q[:, 1] ** 2 + q[:, 2] ** 2), -1, 1)))
 
 
+def hold_last(t_src, v_src, t):
+    """The last value of a sampled series at the times t (topics publish at a rate and on change)."""
+    i = np.clip(np.searchsorted(t_src, t, side="right") - 1, 0, len(v_src) - 1)
+    return v_src[i]
+
+
+def active_mask(t, hook_t, hook_action, lp_t, altitude_m):
+    """True where the vehicle is airborne (above 1 m) and the hook enforces (action >= 2), sample by sample, so
+    Hold, other modes and time on the ground between flights do not count."""
+    enforcing = hold_last(hook_t, np.asarray(hook_action), t) >= 2
+    airborne = hold_last(lp_t, np.asarray(altitude_m), t) > 1.0
+    return enforcing & airborne
+
+
 def episodes(mask, t, min_s):
     out, start = [], None
     for k, m in enumerate(mask):
@@ -37,51 +51,58 @@ def check(path):
                                                  "vehicle_attitude_setpoint", "vehicle_angular_velocity",
                                                  "manual_control_setpoint", "cp_brake_constraints"))
     th = h["timestamp"] / 1e6
-    on = th[h["action"] >= 2]
-    flying = lp["timestamp"][-lp["z"] > 1.0] / 1e6  # airborne only: the hook also publishes on the ground
-    t0, t1 = max(on.min(), flying.min()), min(on.max(), flying.max())
-    minutes = (t1 - t0) / 60
     tl = lp["timestamp"] / 1e6
+    alt = -lp["z"]
+
+    def active(t):
+        return active_mask(t, th, h["action"], tl, alt)
+
+    air = active(tl)
+    minutes = np.sum(np.diff(tl) * air[:-1]) / 60
+    if minutes <= 0:
+        print("%s: no time airborne with cp_brake enforcing" % path.split("/")[-1])
+        return
     speed = np.hypot(lp["vx"], lp["vy"])
     tm = mc["timestamp"] / 1e6
     stick = np.interp(tl, tm, np.hypot(mc["pitch"], mc["roll"]))
-    air = (tl >= t0) & (tl <= t1)
     stuck = episodes(air & (stick > 0.25) & (speed < 0.3), tl, 0.8)
     ta = att["timestamp"] / 1e6
     tilt = tilt_deg(att, "q")
+    on_att = active(ta)
     big = []
-    for k in np.where((tilt > 20) & (ta >= t0) & (ta <= t1))[0]:
+    for k in np.where((tilt > 20) & on_att)[0]:
         if not big or ta[k] - big[-1] > 2.0:
             big.append(ta[k])
     tts = ats["timestamp"] / 1e6
     cmd = tilt_deg(ats, "q_d")
-    w = (tts >= t0) & (tts <= t1)
-    steps = int(((np.abs(np.diff(cmd)) > 10) & w[1:]).sum())
+    steps = int(((np.abs(np.diff(cmd)) > 10) & active(tts)[1:]).sum())
     tav = av["timestamp"] / 1e6
     rate = np.hypot(av["xyz[0]"], av["xyz[1]"])
     n = max(int(0.3 / np.median(np.diff(tav))), 1)
     jitter = np.degrees(np.abs(rate - np.convolve(rate, np.ones(n) / n, mode="same")))
     lim = (h["action"] >= 3).astype(int)
+    on_hook = active(th)
     tog = []
-    for s in np.arange(t0, t1 - 0.5, 0.5):
-        m = (th >= s) & (th < s + 0.5)
+    for s in np.arange(tl[air].min(), tl[air].max() - 0.5, 0.5):
+        m = (th >= s) & (th < s + 0.5) & on_hook
         if m.sum() > 1 and np.abs(np.diff(lim[m])).sum() >= 2:
             k = (tav >= s) & (tav < s + 0.5)
             tog.append(jitter[k].mean())
-    ff = np.nan_to_num(np.hypot(h["acc_sp_in[0]"], h["acc_sp_in[1]"]))[(h["action"] >= 3) & (th >= t0)]
+    ff = np.nan_to_num(np.hypot(h["acc_sp_in[0]"], h["acc_sp_in[1]"]))[(h["action"] >= 3) & on_hook]
     tc = c["timestamp"] / 1e6
+    on_c = active(tc)
     caps = np.vstack([c["caps_m_s[%d]" % s] for s in range(72)]).T
     drops = []
     for k in range(2, len(tc)):
-        if t0 < tc[k] < t1:
+        if on_c[k]:
             fwd = [s for s in np.where((caps[k - 2] > 3.0) & (caps[k] < 0.05))[0] if s <= 9 or s >= 63]
             if fwd and (not drops or tc[k] - drops[-1] > 1.0):
                 drops.append(tc[k])
     after = [tilt[(ta > t) & (ta < t + 1.5)].max() for t in drops]
-    print("%s: %.1f min with cp_brake on, max altitude %.1f m, max speed %.1f m/s" % (
-        path.split("/")[-1], minutes, (-lp["z"]).max(), speed[air].max()))
+    print("%s: %.1f min airborne with cp_brake enforcing, max altitude %.1f m, max speed %.1f m/s" % (
+        path.split("/")[-1], minutes, alt.max(), speed[air].max()))
     print("  stick held but no motion (>= 0.8 s): %d episodes, %.1f s per minute" % (len(stuck), sum(e[1] for e in stuck) / minutes))
-    print("  tilt above 20 deg: %.1f events per minute, max %.0f deg" % (len(big) / minutes, tilt[(ta >= t0) & (ta <= t1)].max()))
+    print("  tilt above 20 deg: %.1f events per minute, max %.0f deg" % (len(big) / minutes, tilt[on_att].max()))
     print("  tilt command steps above 10 deg: %.1f per minute" % (steps / minutes))
     print("  hook switching windows: %d, body-rate jitter in them %.1f deg/s" % (len(tog), np.mean(tog) if tog else 0.0))
     print("  feed-forward cleared while limiting: median %.2f, 90%% %.2f m/s^2" % (np.median(ff) if len(ff) else 0, np.percentile(ff, 90) if len(ff) else 0))
