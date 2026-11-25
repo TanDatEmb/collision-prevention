@@ -546,14 +546,14 @@ No record below has been run by this change and no value below is approved: a va
 
 **Frame and direction.** Body FRD: x forward (the nose), y right, z down. The bearing of a direction is measured clockwise from the nose seen from above. Sector `k` of `ObstacleDistance` is centred on bearing `5k` degrees (SYS-CP-002, ICD-CP-03 `angle_offset=0`; the bridge maps FLU index `i` to `(72 - i) % 72`, the builder rounds to the nearest centre, so sector 0 spans -2.5 to +2.5 degrees). The program is tuned for body +x, so D1 is the priority direction; every direction is its own record, a verdict is never shared between directions.
 
-| Dir | Direction relative to the nose | Bearing | Sector | Class (ADR 0020 D3) |
+| Dir | Direction relative to the nose | Bearing | Sector | Class (SYS-CP-028, 031) |
 | --- | --- | --- | --- | --- |
 | D1 | +x, forward (priority) | 0 | 0 | Forward |
-| D2 | -x, rear | 180 | 36 | Rear |
-| D3 | +y, lateral right | 90 | 18 | Lateral |
-| D4 | -y, lateral left | 270 | 54 | Lateral |
-| D5, D6 | +x+y, +x-y, forward diagonals | 45, 315 | 9, 63 | On the 45 degree class boundary: class TBD [P1] |
-| D7, D8 | -x+y, -x-y, rear diagonals | 135, 225 | 27, 45 | On the 135 degree class boundary: class TBD [P1] |
+| D2 | -x, rear | 180 | 36 | Side, unclaimed bearing |
+| D3 | +y, lateral right | 90 | 18 | Side |
+| D4 | -y, lateral left | 270 | 54 | Side |
+| D5, D6 | +x+y, +x-y, forward diagonals | 45, 315 | 9, 63 | Forward (the 45 degree bound is part of the class) |
+| D7, D8 | -x+y, -x-y, rear diagonals | 135, 225 | 27, 45 | Side, unclaimed bearing (beyond 134.6 degrees) |
 
 Heading rule: for D1 the nose is set along the leg (mission waypoint heading equal to the leg course) and held. For D2 to D8 the nose is held fixed at the leg course minus the bearing (mission waypoint heading, no yaw during the leg), so the leg is flown at the stated bearing. The heading is logged during every run, and the bearing of the velocity to the nose at approach start is computed from the log; a bearing more than [P2] away from the record's bearing makes the record INVALID. Class: N normal, E edge, S stress.
 
@@ -582,7 +582,7 @@ Suite column: the smallest suite holding the GZ and RPL records of the row; UT r
 | VM-01 | N | Perpendicular tall wall at 5 m/s in D1 and 3 m/s in D2 to D8 [P3]: a Mission, b Position (stick profile). Expected a to c. Known probe (issue #132): a lateral leg 1.79 m against 2.0 m | GZ 1-8 | 2 | OS-01, 12; SYS-CP-001, 005, 012; FEAT-08, 12, 15 | S (D1 a), R |
 | VM-02 | N | Control: the same legs with `CPB_EN` 0. Expected: the vehicle reaches the wall, so the leg would collide | GZ 1-8 | 1 | OS-01; SYS-CP-001, 006; FEAT-15 | R |
 | VM-03 | N | D1 speed sweep, Mission: a 1, b 3, c 8, d 10, e 12 m/s (PERF-01). Expected a to c at every speed | GZ 1 | 5 | OS-01; SYS-CP-001, 027; FEAT-12 | R |
-| VM-04 | N | D2 to D8: a 1 m/s, b the direction-class maximum (TBD, ADR 0020 D3). Blocked until D3 exists | GZ 2-8 | 2 | OS-34; SYS-CP-018, 027; FEAT-12 | R |
+| VM-04 | N | D2 to D8: a 1 m/s, b the direction-class maximum (`CPB_MAX_V` in D5 and D6, the speed lock `CPB_V_SIDE` in the others: SYS-CP-028, 031) | GZ 2-8 | 2 | OS-34; SYS-CP-018, 027; FEAT-12 | R |
 | VM-05 | S | Pilot holds full stick toward the wall in Position mode, `MPC_XY_VEL_MAX` at its largest allowed value. Expected a to c, M5 reported | GZ 1-8 | 1 | OS-32; SYS-CP-001, 005; FEAT-12, 15 | R |
 | VM-06 | E | Oblique wall yawed a 30, b 60 degrees to the leg [P7]; M2 required. Expected a to c on M2 (GZ); UT: each sector holds the nearest return of the wall | GZ 1-4; UT 1-8 | 2 | OS-02; SYS-CP-010, 012; FEAT-08, 12 | R |
 | VM-07 | E | a Inside corner, b outside corner. Expected: an empty feasible set gives zero horizontal output | GZ 1-4; UT 1-8 | 2 | OS-02; SYS-CP-012; FEAT-08, 12 | R |
@@ -647,7 +647,7 @@ Coverage: every OS row with a UT, GZ, RPL, HIL or FLT lane is in a record; none 
 
 | Proposal for the owner | Value |
 | --- | --- |
-| P1 | Class of D5 to D8: the lower-speed class of the two neighbours, until measured |
+| P1 | Withdrawn: SYS-CP-028 (2026-11-23) decides the class of D5 to D8 |
 | P2 | Bearing tolerance of a leg: 2.5 degrees (half a sector) |
 | P3 | Reference speeds 5 m/s (D1) and 3 m/s (D2 to D8) until the class maxima exist |
 | P4 | Criterion a on M2 for non-wall obstacles; criterion c per approach |
