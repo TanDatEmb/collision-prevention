@@ -37,9 +37,6 @@ ros2_ws/src/px4_obstacle_bridge   ObstacleDistance encoder
 ros2_ws/src/px4_msgs              PX4 ROS 2 messages (submodule, pinned)
 ros2_ws/third_party/Livox-SDK2    Livox SDK2 (submodule, pinned; used by `livox_ray_source_sdk`)
 tools/check_msg_parity.sh      checks PX4 and px4_msgs message definitions match
-tools/manual_sim/              manual-flight Gazebo SITL with obstacles (bench values), run with `make sim`
-tools/scenarios/               scripted SITL scenarios and their analysis
-Makefile                       developer entry points (`make` lists them)
 .agents/skills/                commit and pr skills (symlinked from .claude/skills/)
 .github/workflows/ci.yml       PR title check, format check, build and test
 ```
@@ -74,16 +71,6 @@ PX4 firmware (from `firmware/PX4-Autopilot`; needs the PX4 toolchain):
 ```bash
 MAKEFLAGS=-j2 make px4_fmu-v6x_multicopter
 MAKEFLAGS=-j2 make px4_sitl_default
-```
-
-Manual-flight SITL (Gazebo with obstacles, PX4 in Position mode with cp_brake on, bench values; needs Gazebo
-Harmonic, MicroXRCEAgent and QGroundControl for the virtual joystick):
-
-```bash
-make px4-sitl ros     # once, and after a firmware or workspace change
-make sim              # fly with the QGroundControl virtual joystick (make sim-keys: keyboard)
-make sim-stop         # from another terminal, if needed
-make flight-check     # feel metrics of the latest flight
 ```
 
 A green build and unit test is not SITL, HIL, flight testing or qualification.
