@@ -9,6 +9,12 @@ this direction for both Position and Mission ("A: cả hai chế độ"), issue 
 - Fork PR #13 is closed.
 - The mode-change checks of #209 are part of the acceptance.
 
+A builder review raised three more questions, which the owner answered the same day:
+- Stops made by the hook alone are left to the Brake mode. They are not part of the #209 acceptance here.
+- When braking sideways or backward, the generators use `CPB_A_SIDE`, the same model the side caps use.
+- A throwaway Mission spike measures the main risk, how the position correction meets the hook, before this
+  record is approved.
+
 This record amends ADR 0014 on where limiting first happens. It leaves the hook of ADR 0014, ADR 0020, ADR 0021
 and ADR 0025 unchanged. Values marked TBD stay TBD.
 
@@ -64,8 +70,17 @@ acceleration level instead.
    - the Mission trajectory does not run ahead;
    - the feed-forward it sends matches its velocity.
 
-   When the bound falls, the generator brakes with at most `CPB_A_BRK` and `CPB_JERK` (owner). Speeding up keeps
-   the PX4 limits of each mode.
+   When the bound falls, the generator brakes with the stopping model of the binding sector's class (owner):
+   - `CPB_A_BRK` in the forward class;
+   - `CPB_A_SIDE` in the side and rear classes;
+   - `CPB_JERK` in both.
+
+   Only braking caused by the bound uses this model. Speeding up, and braking when the pilot releases the stick,
+   keep the PX4 limits of each mode.
+
+   A constraint that the limiter turns into a safe stop gives a bound of 0, so the generator brakes as well.
+   Examples are a stale constraint, a missing heading, or SAFE_STOP. (Builder's call: fail closed, like the
+   hook.)
 3. **The hook is the backstop, unchanged.** The hook still limits every cycle with the rule of ADR 0025 and the
    feed-forward rule of ADR 0020. In normal flight its input is already within the caps, so it does not act. It
    acts when the generator cannot follow:
@@ -74,13 +89,24 @@ acceleration level instead.
 
    This role is interim, until a Brake mode (separate ADR) takes these cases.
 4. **Removed.** The Position anti-windup of fork PR #13 (closed) is not needed. Nor is any per-mode handover patch
-   for #209: a mode change hands over a state within the caps. This must be shown in SITL (Verification).
+   for #209: after a stop the generator made itself, a mode change hands over a state within the caps. This must
+   be shown in SITL (Verification).
+
+   After a stop that only the hook made, the generator may still be braking behind and lie ahead of the vehicle.
+   That part of #209 stays open for the Brake mode (owner).
 
 **Safety argument.** The hook output stays within the caps every cycle, as before. The stopping proof (ADR 0021,
 `CPB_T_LAT`) therefore depends on nothing this record adds: the generators only make the hook's input already
 compliant. The stopping evidence is repeated as a regression, not derived again.
 
 ## What stays open for the specification of the fork work
+- **The position correction (main risk; spike before approval).**
+  - The hook limits `v_ff + K_p (p_sp - p)`, constrained to `MPC_XY_VEL_MAX` (`PositionControl::_positionControl`).
+  - In Mission the trajectory always sets a position, so any tracking lag adds to a feed-forward that sits at
+    the bound. Position has the same issue once the position lock engages.
+  - If the hook then cuts that excess, it clears the feed-forward again.
+  - A throwaway SITL spike, with Mission and the bound only, measures how often and by how much this happens.
+    This record is revised from that data.
 - **The edge between generator and hook.**
   - The two run in different modules and can use different constraint messages: a new map about every 50 ms
     lowers a cap between the task and the hook.
@@ -91,8 +117,12 @@ compliant. The stopping evidence is repeated as a regression, not derived again.
     is TBD (owner).
 - **Position at the bound.** The stick acceleration beyond the bound is dropped along the commanded direction.
   Release and the brake boost stay as in PX4.
-- **Inputs of the tasks.** The tasks need `cp_brake_constraints`, the heading, and `CPB_V_SIDE`, `CPB_REAR_ANG` and
-  `CPB_CSTR_AGE`. The new names are counted in each fork PR.
+- **One limit for both directions in Mission.** `PositionSmoothing` uses one acceleration and one jerk for speeding
+  up and slowing down (`MPC_ACC_HOR`, `MPC_JERK_AUTO`). The choice is between splitting them, which changes
+  `VelocitySmoothing` and costs flash, and a configuration check against `CPB_A_BRK` / `CPB_JERK`. The spike
+  informs it.
+- **Inputs of the tasks.** The tasks need `cp_brake_constraints`, the heading, and these parameters:
+  `CPB_A_BRK`, `CPB_A_SIDE`, `CPB_JERK`, `CPB_V_SIDE`, `CPB_REAR_ANG` and `CPB_CSTR_AGE`. The new names are counted in each fork PR.
 - **Scope unchanged.** The hook enforces only in Position and Mission (ADR 0020 D6). Hold, Land and RTL are not
   limited, and the RTL gap noted in #209 stays.
 - **Not addressed.** The hard stops from the coverage rule (forward-class sectors unknown while tilted) stay
