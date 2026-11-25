@@ -150,6 +150,16 @@ degrees): a stated non-claim at propeller level and below the lidar. The per-bea
 and a wind term, proposed on 2026-11-22, is withdrawn: the vertical coverage rule of the builder (PR #167) makes
 a sector unknown when the tilt takes the horizon out of view.
 
+*Amendment 2026-11-25 (owner, #123).* The upper half of the band alone is required beyond the forward class
+(45 degrees), not only beyond 134.6 degrees (`rear_start_rad` 0.7854). The lower edge of the field of view is about
+`-(7 + 10 cos(bearing))` degrees, so at 134.6 degrees one degree of roll took the side-rear sectors out of view, and
+the 1.2 m/s^2 side braking itself (7 degrees of tilt) took every sector from 95 to 135 degrees. A sector unknown
+there has cap 0, the corridor of ADR 0025 counts it for any motion within 90 degrees, and SITL lateral and rear
+flight stopped and restarted with up to 39 degrees of tilt. Beyond 45 degrees an obstacle below the lidar is not
+seen while the tilt takes the lower half of that bearing out of view (about 14 degrees at 45, 7 at 90, 2 at 120,
+less than 1 at 130), and the sector can then read free: a stated non-claim. Returns inside the band are still
+obstacle evidence wherever the field of view reaches.
+
 ### D4. Distance moved since the sample (FEAT-11; SYS-CP-026; #115)
 The travelled distance toward sector `i` is the present velocity toward it times the age of the map,
 plus an allowance for a vehicle that slowed down during that age:

@@ -227,8 +227,8 @@ SectorMap SectorMapBuilder::finalize() const
     // filled by a wall. The sector is then unknown, cap 0, even when an obstacle is confirmed farther
     // away: with no evidence in a half the map must not let the cap rise on the data it still has.
     // A frame without packet continuity keeps the old rule (credible obstacle returns stay occupied).
-    // Rear class (issue #141): behind the vehicle the lidar never sees below its own height, so the upper half
-    // alone is required and certifies; obstacles below the lidar behind the vehicle are a stated non-claim.
+    // Rear class (issue #141): beyond rear_start_rad the upper half alone is required and certifies; obstacles
+    // below the lidar there are not seen when the lower half is out of view, a stated non-claim (ADR 0020 D3).
     const bool rear = sectorIsRear(index, _config.rear_start_rad);
     const bool both_halves_seen = accumulator.up_ray_count >= _config.free_min_rays &&
                                   (rear || accumulator.down_ray_count >= _config.free_min_rays);
