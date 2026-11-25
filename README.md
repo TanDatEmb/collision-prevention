@@ -8,7 +8,8 @@ Pre-alpha. G1 (requirements) and G2 (architecture) are approved by the owner, wh
 safety approver; G1 has one open exception (HZ-CP-009). Built and unit-tested: the sector map with the
 certified range (ADR 0024), leveling with the FMU pose and the Livox gyro (ADR 0023), the `ObstacleDistance`
 encoder, the ROS 2 node with a Gazebo multi-ring source and the Livox SDK2 source, and the PX4 brake module
-`cp_brake` in the fork. Evidence so far is Gazebo SITL with bench values only; the platform values are TBD,
+`cp_brake` in the fork. In Position mode the stick generator plans within the caps and the hook is the backstop
+(ADR 0026); Mission still relies on the hook alone. Evidence so far is Gazebo SITL with bench values only; the platform values are TBD,
 and there is no bench, HIL or flight evidence. No safety claim is made.
 
 ## How it works
@@ -37,6 +38,9 @@ ros2_ws/src/px4_obstacle_bridge   ObstacleDistance encoder
 ros2_ws/src/px4_msgs              PX4 ROS 2 messages (submodule, pinned)
 ros2_ws/third_party/Livox-SDK2    Livox SDK2 (submodule, pinned; used by `livox_ray_source_sdk`)
 tools/check_msg_parity.sh      checks PX4 and px4_msgs message definitions match
+tools/manual_sim/              manual-flight Gazebo SITL with obstacles (bench values), run with `make sim`
+tools/scenarios/               scripted SITL scenarios and their analysis
+Makefile                       developer entry points (`make` lists them)
 .agents/skills/                commit and pr skills (symlinked from .claude/skills/)
 .github/workflows/ci.yml       PR title check, format check, build and test
 ```
@@ -71,6 +75,16 @@ PX4 firmware (from `firmware/PX4-Autopilot`; needs the PX4 toolchain):
 ```bash
 MAKEFLAGS=-j2 make px4_fmu-v6x_multicopter
 MAKEFLAGS=-j2 make px4_sitl_default
+```
+
+Manual-flight SITL (Gazebo with obstacles, PX4 in Position mode with cp_brake on, bench values; needs Gazebo
+Harmonic, MicroXRCEAgent and QGroundControl for the virtual joystick):
+
+```bash
+make px4-sitl ros     # once, and after a firmware or workspace change
+make sim              # fly with the QGroundControl virtual joystick (make sim-keys: keyboard)
+make sim-stop         # from another terminal, if needed
+make flight-check     # feel metrics of the latest flight
 ```
 
 A green build and unit test is not SITL, HIL, flight testing or qualification.
