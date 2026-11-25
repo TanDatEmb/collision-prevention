@@ -57,6 +57,30 @@ acceleration level instead.
 - `PositionSmoothing` already plans the speed toward a stop point within its acceleration and jerk
   (`computeXYSpeedFromWaypoints`). Its velocity and position trajectory stay consistent while it slows.
 
+**Spike (throwaway, local branch, never pushed).** The spike bounds the `PositionSmoothing` cruise speed in Mission
+by what the limiter lets through along the leg.
+
+Setup: Gazebo SITL with bench `CPB_*`, the Mid-360S-density model and the cloud 100 ms late. One run per case,
+against the same runs on `a814a95391`:
+
+| Case | Hook cut (median / max) | Hook still limiting | Feed-forward lost while limiting (median) | Max tilt | Body-rate jitter | Closest to the wall |
+| --- | --- | --- | --- | --- | --- | --- |
+| Forward 5 m/s, wall 40 m | 5.84 / 6.91 -> 0.29 / 0.50 m/s | 52 -> 19 % | 0.0 -> 1.5 m/s^2 | 19 -> 19 deg | 0.6 -> 1.1 deg/s | 2.15 -> 2.29 m |
+| Forward 12 m/s (cap about 7), wall 90 m | 5.30 / 12.0 -> 0.09 / 0.52 | 88 -> 52 % | 1.3 -> 0.3 | 20 -> 19 | 1.9 -> 2.0 | 2.30 -> 2.47 |
+| Sideways 5 m/s (lock 5), wall 60 m | 0.14 / 6.91 -> 0.08 / 0.21 | 64 -> 48 % | 0.0 -> 0.0 | 38 -> 19 | 2.3 -> 0.8 | 2.11 -> 2.21 |
+
+- The large cuts are gone: the generator no longer runs ahead of the hook, the 38 deg tilt of the sideways run
+  went down to 19 deg, and `CPB_MARGIN` (2 m) was kept in every run.
+- The hook still limits, but by small amounts, for two reasons:
+  - **At constant speed on the bound** (12 m/s, sideways), the cut is the position correction: a median of 0.08
+    to 0.11 m/s, with the generator velocity at or below the output. The hook switches 170 to 180 times per run,
+    as it already did before (117 in the sideways run). The feed-forward there is near zero, so nothing reaches
+    the vehicle: jitter does not rise.
+  - **While braking** (5 m/s run), the generator lags the falling bound by a median of 0.37 m/s. The hook then
+    clears a braking feed-forward of 1.5 m/s^2. That is the remaining step.
+- So "how often the hook limits" mostly measures tracking error. What reaches the vehicle is the feed-forward
+  lost while limiting, the tilt and the jitter.
+
 ## Decision
 1. **One rule, applied where the motion is planned.** Each generator bounds its own horizontal velocity by the
    speed that the `cp_brake` limiter would let through in the generator's own commanded direction. The bound
@@ -100,21 +124,27 @@ acceleration level instead.
 compliant. The stopping evidence is repeated as a regression, not derived again.
 
 ## What stays open for the specification of the fork work
-- **The position correction (main risk; spike before approval).**
+- **The position correction (measured by the spike).**
   - The hook limits `v_ff + K_p (p_sp - p)`, constrained to `MPC_XY_VEL_MAX` (`PositionControl::_positionControl`).
-  - In Mission the trajectory always sets a position, so any tracking lag adds to a feed-forward that sits at
-    the bound. Position has the same issue once the position lock engages.
-  - If the hook then cuts that excess, it clears the feed-forward again.
-  - A throwaway SITL spike, with Mission and the bound only, measures how often and by how much this happens.
-    This record is revised from that data.
-- **The edge between generator and hook.**
-  - The two run in different modules and can use different constraint messages: a new map about every 50 ms
-    lowers a cap between the task and the hook.
-  - Following a falling bound from zero deceleration within `CPB_JERK` lags it unless the generator plans
-    ahead, as `PositionSmoothing` does for a waypoint.
-  - The option chosen, either planning to the stop point of the binding sector or bounding the speed, is decided
-    by measurement: how often the hook still limits in a normal approach, and by how much. The acceptance value
-    is TBD (owner).
+    Any tracking lag therefore lifts the hook input 0.1 to 0.3 m/s above a generator that sits on the bound.
+  - At constant speed the feed-forward is near zero, so the cut is harmless (spike). It is accepted, not
+    patched: no margin and no new value.
+  - Position has the same effect once the position lock engages. The Position fork PR measures it.
+- **The edge while braking (measured by the spike).**
+  - Bounding the cruise speed makes the generator lag the falling bound by a median of 0.37 m/s, and the hook
+    clears a 1.5 m/s^2 braking feed-forward.
+  - The fork work therefore plans to the stop point of the binding sector, the way `PositionSmoothing` already
+    stops at a waypoint within its acceleration and jerk, instead of only bounding the speed.
+  - Shown by measurement in the Mission fork PR.
+- **Acceptance measures** (values TBD, owner), per approach:
+  - the feed-forward lost while the hook limits;
+  - the maximum tilt;
+  - the body-rate jitter;
+  - the closest approach (`CPB_MARGIN`).
+
+  How often the hook limits is reported, but it is not a criterion: it mostly measures tracking error (spike).
+- **Different constraint messages.** The task and the hook run in different modules, so a new map, about every
+  50 ms, can lower a cap between them. This is covered by the same measures.
 - **Position at the bound.** The stick acceleration beyond the bound is dropped along the commanded direction.
   Release and the brake boost stay as in PX4.
 - **One limit for both directions in Mission.** `PositionSmoothing` uses one acceleration and one jerk for speeding
@@ -152,8 +182,8 @@ compliant. The stopping evidence is repeated as a regression, not derived again.
   - Unit tests of the bound: `StickAccelerationXY` already has a functional test; `PositionSmoothing` has unit
     tests.
   - Gazebo SITL at bench values, approaching a wall, a pole and a gate in Position and in Mission. Measured:
-    - how often the hook still limits, and by how much;
-    - body-rate jitter and the closest approach (`CPB_MARGIN`);
+    - the acceptance measures above, against the same runs on the release branch;
+    - how often the hook limits and by how much (reported, not a criterion);
     - the stick response when pulling away.
   - The #209 checks: stop in Mission and in Position, switch to Land, Hold, RTL and Position, trigger a
     failsafe, remove the obstacle; watch 60 s after each stop.
