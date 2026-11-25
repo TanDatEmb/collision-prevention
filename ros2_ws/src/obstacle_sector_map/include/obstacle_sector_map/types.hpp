@@ -87,7 +87,7 @@ struct SectorMapConfig
   float attitude_allowance_rad;
   // Rear class (ADR 0020 D3 option B, issue #141): a sector whose centre is more than this angle from the front
   // uses the upper half of the band only. Default pi: no sector is rear, every sector needs both halves, which is
-  // the conservative case. The X500 value is 134.6 degrees, where the horizon leaves the field of view at level.
+  // the conservative case. The X500 value is 45 degrees, the forward class (ADR 0020 D3 amendment 2026-11-25).
   float rear_start_rad{3.14159265358979323846F};
 
   [[nodiscard]] bool isValid() const
