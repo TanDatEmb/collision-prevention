@@ -1,6 +1,9 @@
 # 0026. The trajectory generators plan within the caps; the hook stays as the backstop
 
-Status: Proposed. In chat on 2026-11-25 the owner asked for the root cause rather than another fix, then chose
+Status: Accepted. The owner approved this record, spike results included, in chat on 2026-11-25 ("Duyệt ADR").
+Approving it does not approve any value: values marked TBD stay TBD.
+
+History: in chat on 2026-11-25 the owner asked for the root cause rather than another fix, then chose
 this direction for both Position and Mission ("A: cả hai chế độ"), issue #217. Their answers:
 
 - The emergency case, where an obstacle appears too close for the generator to follow, will later go to a
@@ -12,8 +15,8 @@ this direction for both Position and Mission ("A: cả hai chế độ"), issue 
 A builder review raised three more questions, which the owner answered the same day:
 - Stops made by the hook alone are left to the Brake mode. They are not part of the #209 acceptance here.
 - When braking sideways or backward, the generators use `CPB_A_SIDE`, the same model the side caps use.
-- A throwaway Mission spike measures the main risk, how the position correction meets the hook, before this
-  record is approved.
+- A throwaway Mission spike measured the main risk, how the position correction meets the hook, before this
+  record was approved (Context).
 
 This record amends ADR 0014 on where limiting first happens. It leaves the hook of ADR 0014, ADR 0020, ADR 0021
 and ADR 0025 unchanged. Values marked TBD stay TBD.
