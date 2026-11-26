@@ -12,6 +12,7 @@ ptp_log=${runtime_dir}/ptp4l.log
 
 command -v ip >/dev/null || { echo "livox-up: ip command is required" >&2; exit 2; }
 command -v ptp4l >/dev/null || { echo "livox-up: ptp4l is required" >&2; exit 2; }
+[[ -f "$ptp_config" ]] || { echo "livox-up: PTP config not found: $ptp_config" >&2; exit 2; }
 ip link show "$iface" >/dev/null 2>&1 || { echo "livox-up: interface not found: $iface" >&2; exit 2; }
 mkdir -p "$runtime_dir"
 

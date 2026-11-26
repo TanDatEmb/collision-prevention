@@ -18,7 +18,12 @@ if [[ -f /opt/ros/jazzy/setup.bash ]]; then
 fi
 command -v ip >/dev/null || { echo "livox-check: ip command is required" >&2; exit 2; }
 command -v ros2 >/dev/null || { echo "livox-check: ROS 2 Jazzy is not installed" >&2; exit 2; }
+command -v python3 >/dev/null || { echo "livox-check: python3 is required to validate JSON" >&2; exit 2; }
 [[ -f "$config" ]] || { echo "livox-check: SDK2 config not found: $config" >&2; exit 2; }
+if ! python3 -m json.tool "$config" >/dev/null 2>&1; then
+  echo "livox-check: SDK2 config is not valid JSON: $config" >&2
+  exit 2
+fi
 ip link show "$iface" >/dev/null 2>&1 || { echo "livox-check: interface not found: $iface" >&2; exit 2; }
 if ! ip -4 -o addr show dev "$iface" | grep -Fq " ${host_ip}/"; then
   echo "livox-check: ${host_ip} is not assigned to ${iface}; run 'make livox-up'" >&2
