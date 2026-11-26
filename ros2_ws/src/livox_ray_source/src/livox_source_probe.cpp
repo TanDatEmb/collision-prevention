@@ -122,10 +122,22 @@ int main(int argc, char ** argv)
       throw std::runtime_error("Livox SDK did not start");
     }
     std::this_thread::sleep_for(std::chrono::duration<double>(options.duration_s));
-    source.stop();
-
     const auto stats = source.stats();
     const auto health = source.health();
+    const auto primary = source.primaryLidar();
+    bool primary_fresh = false;
+    if (primary.has_value()) {
+      for (const auto & device : health) {
+        if (device.device.handle == primary->handle &&
+            device.state == livox_ray_source::LivoxHealthState::kConnected) {
+          primary_fresh = true;
+          break;
+        }
+      }
+    }
+    // Capture freshness before teardown: cumulative counters alone cannot distinguish a live
+    // stream from one that stopped after producing an initial burst.
+    source.stop();
     // The raw point/IMU sinks intentionally reject unsynchronized timestamps. In source-only
     // debug mode, decoded packet counters prove that the sensor is producing data without
     // weakening the safety stream's PTP requirement.
@@ -137,7 +149,8 @@ int main(int argc, char ** argv)
       stats.rejected_packets == 0U &&
       stats.not_spherical_packets == 0U && stats.continuity_breaks == 0U &&
       stats.dropped_rays == 0U && stats.imu_unusable == 0U && stats.imu_accel_unusable == 0U &&
-      (!options.require_ptp || stats.unsynchronized_packets == 0U) && !source.multipleLidarFault();
+      (!options.require_ptp || stats.unsynchronized_packets == 0U) && !source.multipleLidarFault() &&
+      primary_fresh;
 
     std::ostringstream output;
     output << '{';
@@ -150,6 +163,7 @@ int main(int argc, char ** argv)
     add(output, "point_samples", point_samples.load(), first);
     add(output, "imu_samples", imu_samples.load(), first);
     add(output, "primary_gyro_samples", primary_gyro_samples.load(), first);
+    output << ',' << jsonString("primary_fresh") << ':' << (primary_fresh ? "true" : "false");
     add(output, "packets", stats.packets, first);
     add(output, "decoded_packets", stats.decoded_packets, first);
     add(output, "rejected_packets", stats.rejected_packets, first);
