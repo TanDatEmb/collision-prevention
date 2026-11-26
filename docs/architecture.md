@@ -211,10 +211,15 @@ flowchart LR
   end
   Lidar[Mid-360S] --> Src
   Br -->|/fmu/in/obstacle_distance| DDS[uXRCE-DDS]
-  subgraph FMU[PX4 fork, f65ddce]
+  subgraph FMU[PX4 fork, pinned submodule]
     DDS --> Cons[cp_brake]
     Cons --> Hook[horizontal limiter hook]
   end
+  Mon[CP Monitor, read-only]
+  Map -.->|vertical coverage| Mon
+  Br -.->|obstacle_distance| Mon
+  Cons -.->|caps| Mon
+  Hook -.->|hook record| Mon
 ```
 
 | Component | Status | Owns | Does not own | Reqs |
@@ -223,8 +228,9 @@ flowchart LR
 | `obstacle_sector_map` (pure C++) | Reference impl | Validation, masked/return-kind handling, sector classification, nearest projected range; no ROS or PX4 types | Frames, units, safety policy, sensor tags | SYS-CP-004, 011, 015 |
 | `px4_obstacle_bridge` | Reference impl | FLU/CCW to BODY_FRD/CW, cm conversion, fail-closed encoding | Filtering to improve results | SYS-CP-002, NFR-CP-002 |
 | Orin node (`obstacle_sector_node`) | Pipeline, platform config loader, ROS node class and an executable with a planar-scan source (Gazebo) and a Livox source (SDK2) | One process composing source, map, bridge; publishes `/fmu/in/obstacle_distance` | Safety policy | SYS-CP-016, NFR-CP-003 |
-| `cp_brake` (PX4 module) | Fork PRs #1 to #6: checks, caps, limiter, state machine; no heading history and no hook yet, ADR 0014 | Input validation, freshness, stopping model, sector caps, state machine | Planning, attitude, sensor filtering | SYS-CP-001, 003, 007, 008, 012, 013, 014 |
+| `cp_brake` (PX4 module) | Fork PRs #1 to #6: checks, caps, limiter, state machine; heading history (fork PR #7); the hook is the row below, ADR 0014 | Input validation, freshness, stopping model, sector caps, state machine | Planning, attitude, sensor filtering | SYS-CP-001, 003, 007, 008, 012, 013, 014 |
 | Horizontal limiter hook (PX4) | Implemented in `mc_pos_control` (fork PR #8, merged 2026-11-21), bench proof only | Apply caps to the final horizontal setpoint | Sensor, DDS, mode logic | SYS-CP-005, 006, 012 |
+| CP Monitor (`tools/dashboard`) | Exists, Gazebo SITL only (#228, #232) | Read-only view of the sector map, PX4 caps, limiter hook, pose, vertical coverage and source freshness | Any command, parameter or safety decision | SYS-CP-009, NFR-CP-003 |
 | Existing PX4 modes and failsafes | Existing | Mode and failsafe handling | CP-owned mode logic | SYS-CP-008 |
 
 ### Feature decomposition (approved by the owner, 2026-11-20)
@@ -255,6 +261,7 @@ flowchart LR
 | FEAT-22 | Two direction classes: the cap law ahead, braking 1.2 m/s^2 and the 5 m/s lock elsewhere | `cp_brake` (fork), `obstacle_sector_map` for the rear class | Built: fork PR `TanDatEmb/PX4-Autopilot#12` (#123), rear class #176 (#141), from 45 degrees (#123). SITL bench, one run per case: the measured speed reaches 5.19 m/s against the 5 m/s lock, 12 m/s forward is not reachable with the 20 m certified range, VM-21 not run | SYS-CP-028, 031 |
 | FEAT-23 | Self-mask in the body frame with the mount rotation and lever arm, applied to every ray source of the node before leveling | `livox_ray_source`, `obstacle_sector_node` | Built (#206). The mask uses the mount rotation that the leveler uses (`mountRotation`). The node reports the rejected rays (`rejected_rays`, self-masked rays included). VM-55 GZ, bench model with visual propeller discs, hover at 2.5 m, 300 frames per run (records outside the repository): without discs 0 rays masked per frame; discs with the mask off give 28 disc returns per frame and a 27 to 29 cm obstacle in every frame; with the mask on all 28 are masked (`rejected_rays` 28 per frame) and the map equals the run without discs; with the mount sign inverted the 28 returns are not masked (and 1740 other rays are); a pole 0.55 m from the lidar behind the tip rays is reported at 51 to 58 cm in every frame with 0 rays masked; mount 10.5 degrees with the config at 10.0: 70 of 70 disc returns masked; mount 9.5 degrees: no disc return. At 12 m height the mask also removes 315 no-return rays per frame that cross the cylinders (no unknown sector). Not run: HIL, bench, flight, spinning propellers | SYS-CP-015, 032 |
 | FEAT-24 | Generator bound: the trajectory generator plans within the caps, braking with the class model | `lib/cp_brake` GeneratorBound, flight-task utility | Position exists (ADR 0026, fork PR #14, merged, pinned by #222); SITL with bench values: no large hook cut in normal approaches, pull away in 0.2-0.35 s, closest approach 2.01-2.14 m; owner's manual flights; Mission not started | SYS-CP-012 |
+| FEAT-25 | Live monitor, read-only | `obstacle_sector_node` coverage topic (`ring_cloud` source), PX4 uXRCE-DDS export of `cp_brake_constraints` and `cp_brake_hook`, `collision_prevention_msgs`, `tools/dashboard` | Exists (#228, TanDatEmb/PX4-Autopilot#15, #232); unit tests and headless Gazebo SITL only. Not shown: ray pairs before and after leveling, confirmed hits apart from certified free range (#225) | SYS-CP-009, NFR-CP-003 |
 
 The "Today" column was checked in the sources on 2026-11-20: no attitude or gravity input exists in
 `livox_ray_source`, `obstacle_sector_map`, `obstacle_sector_node` or `px4_obstacle_bridge`;

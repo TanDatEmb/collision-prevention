@@ -34,7 +34,9 @@ class and an executable for a planar scan (the Gazebo 2D lidar) or a Livox Mid-3
 SITL telemetry. `make sim-dashboard` starts the dashboard with the manual Gazebo SITL flow and
 opens the page. The browser reads the 72-bin map, vehicle pose/status, PX4 speed caps and limiter
 hook. Selecting a radar bin only changes the inspection readout; it does not alter leveling. The
-leveling plots show `No ray pairs` until an explicit debug ray-pair stream is exported by the node.
+leveling panel shows pitch and roll and, per bin, the rays in the upper and lower half of the collision
+band, from `/collision_prevention/leveling_coverage` (published for the `ring_cloud` source only). It does
+not show ray pairs before and after leveling.
 
 ## Usage
 ```cpp
