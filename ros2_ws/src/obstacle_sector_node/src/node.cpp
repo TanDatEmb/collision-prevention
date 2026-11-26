@@ -27,6 +27,17 @@ diagnostic_msgs::msg::KeyValue keyValue(const std::string & key, uint64_t value)
 
 }  // namespace
 
+bool LevelingCoverageConfig::isValid() const
+{
+  if (!enabled) {
+    return true;
+  }
+  return std::isfinite(mount_roll_rad) && std::isfinite(mount_pitch_down_rad) &&
+         std::isfinite(mount_yaw_left_rad) && std::isfinite(sensor_elevation_min_rad) &&
+         std::isfinite(sensor_elevation_max_rad) && sensor_elevation_min_rad < sensor_elevation_max_rad &&
+         required_rays > 0U;
+}
+
 rclcpp::QoS obstacleDistanceQos()
 {
   return rclcpp::QoS(rclcpp::KeepLast(2)).best_effort().durability_volatile();
@@ -65,18 +76,27 @@ uint8_t diagnosticLevel(
 
 ObstacleSectorNode::ObstacleSectorNode(
   std::unique_ptr<livox_ray_source::RaySource> source,
-  const obstacle_sector_map::SectorMapConfig & config, const rclcpp::NodeOptions & options)
+  const obstacle_sector_map::SectorMapConfig & config, const rclcpp::NodeOptions & options,
+  const LevelingCoverageConfig & coverage)
 : rclcpp::Node("obstacle_sector_node", options),
-  _pipeline(std::make_unique<SectorMapPipeline>(std::move(source), config))
+  _pipeline(std::make_unique<SectorMapPipeline>(std::move(source), config)),
+  _coverage_config(coverage)
 {
   const double rate_hz = declare_parameter("sector_map_rate_hz", kDefaultRateHz);
 
   if (!std::isfinite(rate_hz) || rate_hz <= 0.0) {
     throw std::invalid_argument("sector_map_rate_hz must be positive and finite");
   }
+  if (!_coverage_config.isValid()) {
+    throw std::invalid_argument("leveling coverage geometry is not valid");
+  }
 
   _distance_pub = create_publisher<px4_msgs::msg::ObstacleDistance>(
     "/fmu/in/obstacle_distance", obstacleDistanceQos());
+  if (_coverage_config.enabled) {
+    _coverage_pub = create_publisher<collision_prevention_msgs::msg::CpLevelingCoverage>(
+      "/collision_prevention/leveling_coverage", obstacleDistanceQos());
+  }
   _diagnostics_pub = create_publisher<diagnostic_msgs::msg::DiagnosticArray>("status", 10);
 
   _map_timer = create_wall_timer(
@@ -108,6 +128,31 @@ void ObstacleSectorNode::publishNext()
 
   _latest_sample_us = result.message->timestamp;
   _distance_pub->publish(*result.message);
+  if (_coverage_pub && _pipeline->latestMap().has_value()) {
+    publishLevelingCoverage(*_pipeline->latestMap());
+  }
+}
+
+void ObstacleSectorNode::publishLevelingCoverage(const obstacle_sector_map::SectorMap & map)
+{
+  collision_prevention_msgs::msg::CpLevelingCoverage message;
+  message.timestamp = static_cast<uint64_t>(now().nanoseconds() / 1'000);
+  message.sample_timestamp = map.sample_timestamp_ns / 1'000U;
+  message.mount_roll_rad = static_cast<float>(_coverage_config.mount_roll_rad);
+  message.mount_pitch_down_rad = static_cast<float>(_coverage_config.mount_pitch_down_rad);
+  message.mount_yaw_left_rad = static_cast<float>(_coverage_config.mount_yaw_left_rad);
+  message.sensor_elevation_min_rad = static_cast<float>(_coverage_config.sensor_elevation_min_rad);
+  message.sensor_elevation_max_rad = static_cast<float>(_coverage_config.sensor_elevation_max_rad);
+  message.required_rays = _coverage_config.required_rays;
+  message.packet_continuity_valid = map.packet_continuity_valid;
+  for (std::size_t index = 0U; index < obstacle_sector_map::kSectorCount; ++index) {
+    const auto & sector = map.sectors[index];
+    message.up_ray_count[index] = sector.up_ray_count;
+    message.down_ray_count[index] = sector.down_ray_count;
+    message.rear_only[index] = sector.rear_only;
+    message.coverage_ok[index] = sector.coverage_ok;
+  }
+  _coverage_pub->publish(message);
 }
 
 void ObstacleSectorNode::publishDiagnostics()

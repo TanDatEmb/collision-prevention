@@ -38,6 +38,7 @@
 #include <limits>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <thread>
@@ -206,6 +207,10 @@ int main(int argc, char ** argv)
     }
 
     const auto config = obstacle_sector_node::loadSectorMapConfig(platform_config);
+    std::optional<obstacle_sector_node::RingCloudLayout> ring_layout;
+    if (source_kind == "ring_cloud") {
+      ring_layout = declareRingLayout(*options_node);
+    }
     auto queue = std::make_shared<obstacle_sector_node::LatestFrameQueue>();
     std::unique_ptr<livox_ray_source::RaySource> source =
       std::make_unique<obstacle_sector_node::QueuedRaySource>(
@@ -214,13 +219,15 @@ int main(int argc, char ** argv)
     // Leveling for the 3-D sources: the decorator reads the pose history that the odometry thread fills. The
     // history must outlive the node, so it is declared here.
     const bool leveled = source_kind != "laser_scan";
+    std::optional<obstacle_sector_node::LevelingSettings> leveling_settings;
     std::shared_ptr<livox_ray_source::PoseHistory> poses;
     // The Livox gyro gives the rotation inside a frame (ADR 0023); the Gazebo cloud stamps all rays of a frame
     // with one time and needs none.
     std::shared_ptr<livox_ray_source::GyroTrack> gyro;
     livox_ray_source::LevelingRaySource * leveling_source = nullptr;
     if (leveled) {
-      const auto settings = obstacle_sector_node::loadLevelingSettings(platform_config);
+      leveling_settings = obstacle_sector_node::loadLevelingSettings(platform_config);
+      const auto & settings = *leveling_settings;
       // The self-mask first, on the sensor-frame rays, with the same mount as the leveler (FEAT-23, #206): a ray
       // that meets the airframe is marked masked and never counts as obstacle or free evidence.
       source = std::make_unique<livox_ray_source::MaskingRaySource>(
@@ -236,8 +243,22 @@ int main(int argc, char ** argv)
       leveling_source = leveling.get();
       source = std::move(leveling);
     }
+    obstacle_sector_node::LevelingCoverageConfig coverage_config;
+    if (source_kind == "ring_cloud") {
+      const auto & settings = *leveling_settings;
+      coverage_config.enabled = true;
+      coverage_config.mount_roll_rad = settings.leveling.roll_rad;
+      coverage_config.mount_pitch_down_rad = settings.leveling.pitch_down_rad;
+      coverage_config.mount_yaw_left_rad = settings.leveling.yaw_left_rad;
+      coverage_config.sensor_elevation_min_rad = ring_layout->elevation_min_rad;
+      coverage_config.sensor_elevation_max_rad =
+        ring_layout->elevation_min_rad +
+        static_cast<double>(ring_layout->ring_count - 1U) * ring_layout->elevation_step_rad;
+      coverage_config.required_rays = config.free_min_rays;
+    }
     auto node =
-      std::make_shared<obstacle_sector_node::ObstacleSectorNode>(std::move(source), config);
+      std::make_shared<obstacle_sector_node::ObstacleSectorNode>(
+      std::move(source), config, rclcpp::NodeOptions(), coverage_config);
 
     // Planar scan: the scan callback runs on its own thread; the node thread waits for frames
     // inside nextFrame().
@@ -262,9 +283,8 @@ int main(int argc, char ** argv)
       feeder_thread = std::thread([&feeder_executor]() { feeder_executor.spin(); });
     }
     else if (source_kind == "ring_cloud") {
-      const auto layout = declareRingLayout(*options_node);
       feeder = std::make_shared<rclcpp::Node>("ring_cloud_feeder");
-      cloud_subscription = subscribeToRingClouds(*feeder, cloud_topic, queue, layout, cloud_counters);
+      cloud_subscription = subscribeToRingClouds(*feeder, cloud_topic, queue, *ring_layout, cloud_counters);
       feeder_executor.add_node(feeder);
       feeder_thread = std::thread([&feeder_executor]() { feeder_executor.spin(); });
       cloud_stats_timer = node->create_wall_timer(std::chrono::seconds(5), [node, cloud_counters]() {
