@@ -22,6 +22,12 @@ class and an executable for a planar scan (the Gazebo 2D lidar) or a Livox Mid-3
   `negative_age_drops`; `messages` counts the maps the pipeline built, held back or not. A sample
   time that does not fit in int64 nanoseconds counts as ahead of the clock. No limit on a large
   age is applied (OPEN-033).
+- The wire map uses 72 clockwise 5-degree bins in BODY_FRD, starting at the nose. A finite
+  distance in the normal range is the smaller of the confirmed obstacle distance and the
+  certified free range when both exist (ADR 0024). The message carries a single distance per bin,
+  so consumers need separate evidence to locate confirmed obstacle returns. PX4 publishes the
+  speed caps in its internal `cp_brake_constraints` uORB topic. The pinned DDS configuration
+  currently leaves `cp_brake_constraints` and `cp_brake_hook` internal to PX4.
 
 ## Usage
 ```cpp
@@ -87,8 +93,11 @@ a frame with no rays. A range at or beyond `ring_layout.range_max_m` or `+inf` i
 no-return only when `range_max_m` is at least 40 m, as for the planar scan; `-inf` (nearer than the
 minimum) and NaN are invalid.
 
-The node has no mount and no leveling yet (#137): the rays are in the sensor frame, so a sector map
-from this source is not leveled and is not valid evidence on the vehicle's pitch.
+The incoming cloud is in the sensor frame. The node applies the configured mount and uses the FMU
+pose from `/fmu/out/vehicle_odometry` to level the rays at the map reference time (#179, ADR 0023).
+The sector builder receives rays in the gravity-aligned, yaw-only frame. If the reference pose is
+unavailable, the leveler drops the rays and marks the frame discontinuous. The live ROS topics
+expose the input cloud and the resulting map. The individual leveled rays stay in the node.
 
 ```bash
 source /opt/ros/jazzy/setup.bash && source ros2_ws/install/setup.bash
