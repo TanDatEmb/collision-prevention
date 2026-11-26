@@ -35,6 +35,8 @@ bool LevelingCoverageConfig::isValid() const
   return std::isfinite(mount_roll_rad) && std::isfinite(mount_pitch_down_rad) &&
          std::isfinite(mount_yaw_left_rad) && std::isfinite(sensor_elevation_min_rad) &&
          std::isfinite(sensor_elevation_max_rad) && sensor_elevation_min_rad < sensor_elevation_max_rad &&
+         std::isfinite(height_up_m) && height_up_m > 0.0 && std::isfinite(height_down_m) &&
+         height_down_m > 0.0 && std::isfinite(attitude_allowance_rad) && attitude_allowance_rad >= 0.0 &&
          required_rays > 0U;
 }
 
@@ -143,6 +145,9 @@ void ObstacleSectorNode::publishLevelingCoverage(const obstacle_sector_map::Sect
   message.mount_yaw_left_rad = static_cast<float>(_coverage_config.mount_yaw_left_rad);
   message.sensor_elevation_min_rad = static_cast<float>(_coverage_config.sensor_elevation_min_rad);
   message.sensor_elevation_max_rad = static_cast<float>(_coverage_config.sensor_elevation_max_rad);
+  message.height_up_m = static_cast<float>(_coverage_config.height_up_m);
+  message.height_down_m = static_cast<float>(_coverage_config.height_down_m);
+  message.attitude_allowance_rad = static_cast<float>(_coverage_config.attitude_allowance_rad);
   message.required_rays = _coverage_config.required_rays;
   message.packet_continuity_valid = map.packet_continuity_valid;
   for (std::size_t index = 0U; index < obstacle_sector_map::kSectorCount; ++index) {

@@ -254,6 +254,9 @@ int main(int argc, char ** argv)
       coverage_config.sensor_elevation_max_rad =
         ring_layout->elevation_min_rad +
         static_cast<double>(ring_layout->ring_count - 1U) * ring_layout->elevation_step_rad;
+      coverage_config.height_up_m = config.height_up_m;
+      coverage_config.height_down_m = config.height_down_m;
+      coverage_config.attitude_allowance_rad = config.attitude_allowance_rad;
       coverage_config.required_rays = config.free_min_rays;
     }
     auto node =

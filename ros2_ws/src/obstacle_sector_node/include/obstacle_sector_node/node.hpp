@@ -23,6 +23,9 @@ struct LevelingCoverageConfig
   double mount_yaw_left_rad{0.0};
   double sensor_elevation_min_rad{0.0};
   double sensor_elevation_max_rad{0.0};
+  double height_up_m{0.0};
+  double height_down_m{0.0};
+  double attitude_allowance_rad{0.0};
   uint32_t required_rays{0U};
 
   [[nodiscard]] bool isValid() const;

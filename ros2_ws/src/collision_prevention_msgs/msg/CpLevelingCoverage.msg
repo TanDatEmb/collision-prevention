@@ -7,6 +7,9 @@ float32 mount_pitch_down_rad  # [rad] positive boresight-down mount pitch
 float32 mount_yaw_left_rad    # [rad] positive boresight-left mount yaw
 float32 sensor_elevation_min_rad  # [rad] lowest ring in the sensor frame
 float32 sensor_elevation_max_rad  # [rad] highest ring in the sensor frame
+float32 height_up_m             # [m] upper edge of the collision band
+float32 height_down_m           # [m] lower edge of the collision band
+float32 attitude_allowance_rad  # [rad] band-test attitude allowance
 
 uint32 required_rays           # rays required in each vertical half
 bool packet_continuity_valid   # false means free-space certification is unavailable

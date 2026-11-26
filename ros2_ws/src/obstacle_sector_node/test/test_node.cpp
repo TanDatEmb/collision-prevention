@@ -157,6 +157,9 @@ TEST_F(NodeTest, PublishesLevelingCoverageWithGeometryAndPerBinCounts)
   coverage.mount_yaw_left_rad = 0.0;
   coverage.sensor_elevation_min_rad = -7.0 * 3.14159265358979323846 / 180.0;
   coverage.sensor_elevation_max_rad = 52.0 * 3.14159265358979323846 / 180.0;
+  coverage.height_up_m = 0.25;
+  coverage.height_down_m = 0.60;
+  coverage.attitude_allowance_rad = 0.0157;
   coverage.required_rays = kConfig.free_min_rays;
 
   rclcpp::NodeOptions options;
@@ -184,6 +187,9 @@ TEST_F(NodeTest, PublishesLevelingCoverageWithGeometryAndPerBinCounts)
   EXPECT_EQ(message.required_rays, 2U);
   EXPECT_NEAR(message.mount_pitch_down_rad, coverage.mount_pitch_down_rad, 1.0e-6);
   EXPECT_NEAR(message.sensor_elevation_min_rad, coverage.sensor_elevation_min_rad, 1.0e-6);
+  EXPECT_NEAR(message.height_up_m, coverage.height_up_m, 1.0e-6);
+  EXPECT_NEAR(message.height_down_m, coverage.height_down_m, 1.0e-6);
+  EXPECT_NEAR(message.attitude_allowance_rad, coverage.attitude_allowance_rad, 1.0e-6);
   EXPECT_EQ(message.up_ray_count[0], 2U);
   EXPECT_EQ(message.down_ray_count[0], 2U);
   EXPECT_TRUE(message.coverage_ok[0]);
