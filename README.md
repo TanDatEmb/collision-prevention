@@ -34,7 +34,6 @@ firmware/PX4-Autopilot         PX4 fork (submodule, pinned)
 ros2_ws/src/livox_ray_source     ray source interface, frame segmentation, replay source
 ros2_ws/src/obstacle_sector_map   platform-neutral sector map library
 ros2_ws/src/obstacle_sector_node pipeline, config loader and ROS node class
-ros2_ws/src/collision_prevention_msgs  PX4 collision-prevention monitor message mirrors
 ros2_ws/src/px4_obstacle_bridge   ObstacleDistance encoder
 ros2_ws/src/px4_msgs              PX4 ROS 2 messages (submodule, pinned)
 ros2_ws/third_party/Livox-SDK2    Livox SDK2 (submodule, pinned; used by `livox_ray_source_sdk`)
@@ -66,8 +65,8 @@ source /opt/ros/jazzy/setup.bash
 ./tools/check_msg_parity.sh
 cd ros2_ws
 colcon build --parallel-workers 2
-colcon test --parallel-workers 2 --packages-select collision_prevention_msgs obstacle_sector_map \
-  px4_obstacle_bridge livox_ray_source obstacle_sector_node
+colcon test --parallel-workers 2 --packages-select obstacle_sector_map px4_obstacle_bridge \
+  livox_ray_source obstacle_sector_node
 colcon test-result --verbose
 ```
 
@@ -84,8 +83,6 @@ Harmonic, MicroXRCEAgent and QGroundControl for the virtual joystick):
 ```bash
 make px4-sitl ros     # once, and after a firmware or workspace change
 make sim              # fly with the QGroundControl virtual joystick (make sim-keys: keyboard)
-make dashboard        # serve the live CP Monitor at http://127.0.0.1:8765
-make sim-dashboard    # start SITL and CP Monitor together
 make sim-stop         # from another terminal, if needed
 make flight-check     # feel metrics of the latest flight
 ```
