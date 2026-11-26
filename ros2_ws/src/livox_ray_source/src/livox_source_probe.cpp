@@ -126,11 +126,14 @@ int main(int argc, char ** argv)
     const auto health = source.health();
     const auto primary = source.primaryLidar();
     bool primary_fresh = false;
+    bool primary_ready = false;
     if (primary.has_value()) {
       for (const auto & device : health) {
-        if (device.device.handle == primary->handle &&
-            device.state == livox_ray_source::LivoxHealthState::kConnected) {
+        if (
+          device.device.handle == primary->handle &&
+          device.state == livox_ray_source::LivoxHealthState::kConnected) {
           primary_fresh = true;
+          primary_ready = device.configuration == livox_ray_source::LivoxConfigurationState::kReady;
           break;
         }
       }
@@ -146,11 +149,12 @@ int main(int argc, char ** argv)
     const bool qualified =
       stats.packets > 0U && stats.decoded_packets > 0U && stream_samples > 0U &&
       point_samples > 0U && imu_samples > 0U && primary_gyro_samples > 0U &&
-      stats.rejected_packets == 0U &&
-      stats.not_spherical_packets == 0U && stats.continuity_breaks == 0U &&
-      stats.dropped_rays == 0U && stats.imu_unusable == 0U && stats.imu_accel_unusable == 0U &&
-      (!options.require_ptp || stats.unsynchronized_packets == 0U) && !source.multipleLidarFault() &&
-      primary_fresh;
+      stats.rejected_packets == 0U && stats.not_spherical_packets == 0U &&
+      stats.continuity_breaks == 0U && stats.dropped_rays == 0U && stats.imu_unusable == 0U &&
+      stats.imu_accel_unusable == 0U && stats.unsupported_packets == 0U &&
+      stats.wrong_data_type_packets == 0U && stats.configuration_failures == 0U && primary_ready &&
+      (!options.require_ptp || stats.unsynchronized_packets == 0U) &&
+      !source.multipleLidarFault() && primary_fresh;
 
     std::ostringstream output;
     output << '{';
@@ -164,6 +168,8 @@ int main(int argc, char ** argv)
     add(output, "imu_samples", imu_samples.load(), first);
     add(output, "primary_gyro_samples", primary_gyro_samples.load(), first);
     output << ',' << jsonString("primary_fresh") << ':' << (primary_fresh ? "true" : "false");
+    output << ',' << jsonString("primary_configuration_ready") << ':'
+           << (primary_ready ? "true" : "false");
     add(output, "packets", stats.packets, first);
     add(output, "decoded_packets", stats.decoded_packets, first);
     add(output, "rejected_packets", stats.rejected_packets, first);
@@ -177,6 +183,10 @@ int main(int argc, char ** argv)
     add(output, "imu_accel_unusable", stats.imu_accel_unusable, first);
     add(output, "device_events", stats.device_events, first);
     add(output, "non_primary_samples", stats.non_primary_samples, first);
+    add(output, "unsupported_packets", stats.unsupported_packets, first);
+    add(output, "wrong_data_type_packets", stats.wrong_data_type_packets, first);
+    add(output, "configuration_retries", stats.configuration_retries, first);
+    add(output, "configuration_failures", stats.configuration_failures, first);
     add(output, "device_count", health.size(), first);
     output << ',' << jsonString("multiple_lidar_fault") << ':'
            << (source.multipleLidarFault() ? "true" : "false");

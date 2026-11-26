@@ -15,7 +15,11 @@ using obstacle_sector_map::RaySample;
 
 constexpr std::size_t kHeaderBytes{36U};
 constexpr std::size_t kPointBytes{10U};
+constexpr std::size_t kCartesianHighPointBytes{14U};
+constexpr std::size_t kCartesianLowPointBytes{8U};
 constexpr uint8_t kSphericalDataType{3U};
+constexpr uint8_t kCartesianHighDataType{1U};
+constexpr uint8_t kCartesianLowDataType{2U};
 constexpr uint8_t kImuDataType{0U};
 constexpr std::size_t kImuSampleBytes{24U};  // six float32
 constexpr uint8_t kPtpTimeType{1U};
@@ -80,6 +84,7 @@ DecodedPacket decodeSphericalPacket(const uint8_t * data, std::size_t size)
   packet.udp_cnt = readLe<uint16_t>(data + 7);
   const uint8_t data_type = data[10];
   packet.time_type = data[11];
+  packet.data_type = data_type;
   const uint64_t packet_time_ns = readLe<uint64_t>(data + 28);
 
   if (data_type != kSphericalDataType) {
@@ -134,10 +139,128 @@ DecodedPacket decodeSphericalPacket(const uint8_t * data, std::size_t size)
       time_usable ? packet_time_ns + (dot_num > 1U ? (index * interval_ns) / (dot_num - 1U) : 0U)
                   : 0U;
     packet.rays.push_back(ray);
-    packet.point_metadata.push_back(PointMetadata{reflectivity, tag});
+    packet.point_metadata.push_back(
+      PointMetadata{reflectivity, tag, static_cast<uint8_t>(index % 4U)});
   }
   packet.status = DecodeStatus::kOk;
   return packet;
+}
+
+namespace
+{
+
+template <typename CoordinateReader>
+DecodedPacket decodeCartesianPacket(
+  const uint8_t * data, std::size_t size, uint8_t expected_type, std::size_t point_bytes,
+  CoordinateReader read_coordinates)
+{
+  DecodedPacket packet;
+  if (data == nullptr || size < kHeaderBytes) {
+    packet.status = DecodeStatus::kTooShort;
+    return packet;
+  }
+
+  const uint16_t time_interval = readLe<uint16_t>(data + 3U);
+  const uint16_t dot_num = readLe<uint16_t>(data + 5U);
+  packet.udp_cnt = readLe<uint16_t>(data + 7U);
+  packet.data_type = data[10];
+  packet.time_type = data[11];
+  const uint64_t packet_time_ns = readLe<uint64_t>(data + 28U);
+  if (packet.data_type != expected_type) {
+    packet.status = DecodeStatus::kNotSpherical;
+    return packet;
+  }
+  if (size != kHeaderBytes + static_cast<std::size_t>(dot_num) * point_bytes) {
+    packet.status = DecodeStatus::kLengthMismatch;
+    return packet;
+  }
+  if (dot_num == 0U) {
+    packet.status = DecodeStatus::kNoPoints;
+    return packet;
+  }
+
+  const bool time_usable = packet.time_type == kPtpTimeType && packet_time_ns != 0U;
+  const uint64_t interval_ns =
+    static_cast<uint64_t>(time_interval) * kNanosecondsPerTenthMicrosecond;
+  packet.rays.reserve(dot_num);
+  packet.point_metadata.reserve(dot_num);
+  for (std::size_t index = 0U; index < dot_num; ++index) {
+    const uint8_t * point = data + kHeaderBytes + index * point_bytes;
+    double x_m = 0.0;
+    double y_m = 0.0;
+    double z_m = 0.0;
+    uint8_t reflectivity = 0U;
+    uint8_t tag = 0U;
+    read_coordinates(point, x_m, y_m, z_m, reflectivity, tag);
+
+    const double horizontal_m = std::hypot(x_m, y_m);
+    const double range_m = std::hypot(horizontal_m, z_m);
+    const bool has_direction = range_m > 0.0 && std::isfinite(range_m);
+    RaySample ray;
+    ray.timestamp_ns =
+      time_usable ? packet_time_ns + (dot_num > 1U ? (index * interval_ns) / (dot_num - 1U) : 0U)
+                  : 0U;
+    ray.masked = false;
+    ray.range_m =
+      has_direction ? static_cast<float>(range_m) : std::numeric_limits<float>::quiet_NaN();
+    ray.azimuth_rad = has_direction ? static_cast<float>(std::atan2(y_m, x_m)) : 0.0F;
+    ray.elevation_rad = has_direction ? static_cast<float>(std::atan2(z_m, horizontal_m)) : 0.0F;
+    ray.return_kind = has_direction ? RayReturnKind::kReturn : RayReturnKind::kInvalid;
+    packet.rays.push_back(ray);
+    packet.point_metadata.push_back(
+      PointMetadata{reflectivity, tag, static_cast<uint8_t>(index % 4U)});
+  }
+  packet.status = DecodeStatus::kOk;
+  return packet;
+}
+
+}  // namespace
+
+DecodedPacket decodeCartesianHighPacket(const uint8_t * data, std::size_t size)
+{
+  return decodeCartesianPacket(
+    data, size, kCartesianHighDataType, kCartesianHighPointBytes,
+    [](
+      const uint8_t * point, double & x_m, double & y_m, double & z_m, uint8_t & reflectivity,
+      uint8_t & tag) {
+      x_m = static_cast<double>(readLe<int32_t>(point)) / 1000.0;
+      y_m = static_cast<double>(readLe<int32_t>(point + 4U)) / 1000.0;
+      z_m = static_cast<double>(readLe<int32_t>(point + 8U)) / 1000.0;
+      reflectivity = point[12U];
+      tag = point[13U];
+    });
+}
+
+DecodedPacket decodeCartesianLowPacket(const uint8_t * data, std::size_t size)
+{
+  return decodeCartesianPacket(
+    data, size, kCartesianLowDataType, kCartesianLowPointBytes,
+    [](
+      const uint8_t * point, double & x_m, double & y_m, double & z_m, uint8_t & reflectivity,
+      uint8_t & tag) {
+      x_m = static_cast<double>(readLe<int16_t>(point)) / 100.0;
+      y_m = static_cast<double>(readLe<int16_t>(point + 2U)) / 100.0;
+      z_m = static_cast<double>(readLe<int16_t>(point + 4U)) / 100.0;
+      reflectivity = point[6U];
+      tag = point[7U];
+    });
+}
+
+DecodedPacket decodePointPacket(const uint8_t * data, std::size_t size)
+{
+  if (data == nullptr || size < kHeaderBytes) {
+    return decodeSphericalPacket(data, size);
+  }
+  switch (data[10U]) {
+    case kCartesianHighDataType:
+      return decodeCartesianHighPacket(data, size);
+    case kCartesianLowDataType:
+      return decodeCartesianLowPacket(data, size);
+    case kSphericalDataType:
+      return decodeSphericalPacket(data, size);
+    default:
+      return decodeSphericalPacket(data, size);
+  }
 }
 
 bool UdpContinuityTracker::update(uint16_t udp_cnt)

@@ -1,5 +1,6 @@
 #include "livox_ray_source/livox_sdk_sample_source.hpp"
 
+#include <array>
 #include <chrono>
 #include <cstring>
 #include <map>
@@ -31,7 +32,12 @@ struct DeviceState
   LivoxDeviceIdentity identity;
   UdpContinuityTracker tracker;
   PacketSampler sampler;
-  std::atomic<bool> detection_handled{false};
+  std::mutex configuration_mutex;
+  std::atomic<LivoxConfigurationState> configuration{LivoxConfigurationState::kUnknown};
+  std::atomic<bool> safety_ready{false};
+  uint32_t configuration_pending{0U};
+  std::array<uint8_t, 9U> configuration_attempts{};
+  std::string configuration_error;
   std::atomic<uint64_t> point_packets{0U};
   std::atomic<uint64_t> imu_packets{0U};
   std::atomic<uint64_t> decoded_points{0U};
@@ -41,7 +47,11 @@ struct DeviceState
   std::atomic<uint64_t> dropped_rays{0U};
   std::atomic<uint64_t> imu_unusable{0U};
   std::atomic<uint64_t> imu_accel_unusable{0U};
+  std::atomic<uint64_t> unsupported_packets{0U};
+  std::atomic<uint64_t> wrong_data_type_packets{0U};
+  std::atomic<uint64_t> configuration_retries{0U};
   std::atomic<uint8_t> last_point_time_type{0U};
+  std::atomic<uint8_t> last_point_data_type{0U};
   std::atomic<uint8_t> last_imu_time_type{0U};
   std::atomic<uint64_t> last_point_timestamp_ns{0U};
   std::atomic<uint64_t> last_imu_timestamp_ns{0U};
@@ -76,6 +86,11 @@ struct SdkSourceState
   std::atomic<uint64_t> imu_accel_unusable{0U};
   std::atomic<uint64_t> device_events{0U};
   std::atomic<uint64_t> non_primary_samples{0U};
+  std::atomic<uint64_t> unsupported_packets{0U};
+  std::atomic<uint64_t> wrong_data_type_packets{0U};
+  std::atomic<uint64_t> configuration_retries{0U};
+  std::atomic<uint64_t> configuration_failures{0U};
+  Mid360SConfig configuration;
 
   std::shared_ptr<DeviceState> device(uint32_t handle)
   {
@@ -103,6 +118,108 @@ namespace
 
 using Impl = detail::SdkSourceState;
 
+constexpr uint8_t kLivoxMid360SDeviceType{35U};
+constexpr uint32_t kMaxConfigurationAttempts{3U};
+
+enum ConfigurationBit : uint32_t
+{
+  kConfigurePointType = 1U << 0U,
+  kConfigureScanPattern = 1U << 1U,
+  kConfigureBlindSpot = 1U << 2U,
+  kConfigureDualEmit = 1U << 3U,
+  kConfigurePpsSync = 1U << 4U,
+  kConfigureImuRange = 1U << 5U,
+  kConfigureInstallAttitude = 1U << 6U,
+  kConfigureWorkMode = 1U << 7U,
+  kConfigureImu = 1U << 8U,
+};
+
+bool isMid360S(uint8_t device_type) { return device_type == kLivoxMid360SDeviceType; }
+
+uint8_t pointTypeValue(Mid360SPointDataType value)
+{
+  switch (value) {
+    case Mid360SPointDataType::kSpherical:
+      return kLivoxLidarSphericalCoordinateData;
+    case Mid360SPointDataType::kCartesianHigh:
+      return kLivoxLidarCartesianCoordinateHighData;
+    case Mid360SPointDataType::kCartesianLow:
+      return kLivoxLidarCartesianCoordinateLowData;
+  }
+  return kLivoxLidarSphericalCoordinateData;
+}
+
+LivoxLidarScanPattern scanPatternValue(Mid360SScanPattern value)
+{
+  switch (value) {
+    case Mid360SScanPattern::kNonRepetitive:
+      return kLivoxLidarScanPatternNoneRepetive;
+    case Mid360SScanPattern::kRepetitive:
+      return kLivoxLidarScanPatternRepetive;
+    case Mid360SScanPattern::kRepetitiveLowFrameRate:
+      return kLivoxLidarScanPatternRepetiveLowFrameRate;
+  }
+  return kLivoxLidarScanPatternNoneRepetive;
+}
+
+LivoxLidarPpsSyncMode ppsSyncValue(Mid360SPpsSyncMode value)
+{
+  return value == Mid360SPpsSyncMode::kSpecial ? kLivoxPpsSyncSpec : kLivoxPpsSyncNormal;
+}
+
+LivoxLidarImuOutRate imuRateValue(Mid360SImuRate value)
+{
+  switch (value) {
+    case Mid360SImuRate::k200Hz:
+      return kLivoxLidarImuOutRate200Hz;
+    case Mid360SImuRate::k500Hz:
+      return kLivoxLidarImuOutRate500Hz;
+    case Mid360SImuRate::k100Hz:
+      return kLivoxLidarImuOutRate100Hz;
+    case Mid360SImuRate::k50Hz:
+      return kLivoxLidarImuOutRate50Hz;
+  }
+  return kLivoxLidarImuOutRate200Hz;
+}
+
+LivoxLidarAccelRange accelRangeValue(Mid360SAccelRange value)
+{
+  switch (value) {
+    case Mid360SAccelRange::k4G:
+      return kLivoxLidarAccelRange4G;
+    case Mid360SAccelRange::k8G:
+      return kLivoxLidarAccelRange8G;
+    case Mid360SAccelRange::k16G:
+      return kLivoxLidarAccelRange16G;
+    case Mid360SAccelRange::k32G:
+      return kLivoxLidarAccelRange32G;
+  }
+  return kLivoxLidarAccelRange4G;
+}
+
+LivoxLidarGyroRange gyroRangeValue(Mid360SGyroRange value)
+{
+  switch (value) {
+    case Mid360SGyroRange::k2000Dps:
+      return kLivoxLidarGyroRange2000Dps;
+    case Mid360SGyroRange::k1000Dps:
+      return kLivoxLidarGyroRange1000Dps;
+    case Mid360SGyroRange::k500Dps:
+      return kLivoxLidarGyroRange500Dps;
+    case Mid360SGyroRange::k250Dps:
+      return kLivoxLidarGyroRange250Dps;
+    case Mid360SGyroRange::k125Dps:
+      return kLivoxLidarGyroRange125Dps;
+    case Mid360SGyroRange::k62_5Dps:
+      return kLivoxLidarGyroRange62_5Dps;
+    case Mid360SGyroRange::k31_25Dps:
+      return kLivoxLidarGyroRange31_25Dps;
+    case Mid360SGyroRange::k15_625Dps:
+      return kLivoxLidarGyroRange15_625Dps;
+  }
+  return kLivoxLidarGyroRange2000Dps;
+}
+
 uint64_t steadyNowNs()
 {
   return static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(
@@ -121,7 +238,7 @@ LivoxDeviceIdentity identityOf(const std::shared_ptr<detail::DeviceState> & stat
 }
 
 void onPointCloud(
-  uint32_t handle, const uint8_t, LivoxLidarEthernetPacket * packet, void * client_data)
+  uint32_t handle, const uint8_t dev_type, LivoxLidarEthernetPacket * packet, void * client_data)
 {
   if (packet == nullptr || client_data == nullptr) {
     return;
@@ -130,13 +247,29 @@ void onPointCloud(
   const auto state = impl->device(handle);
   ++impl->packets;
   ++state->point_packets;
+  if (!isMid360S(dev_type)) {
+    ++impl->unsupported_packets;
+    ++state->unsupported_packets;
+    state->configuration = LivoxConfigurationState::kUnsupported;
+    state->safety_ready = false;
+    return;
+  }
   // `length` is the size of the whole UDP payload (checked on a real Mid-360S: it equals the
   // datagram size for every packet).
   const DecodedPacket decoded =
-    decodeSphericalPacket(reinterpret_cast<const uint8_t *>(packet), packet->length);
+    decodePointPacket(reinterpret_cast<const uint8_t *>(packet), packet->length);
+  state->last_point_data_type = decoded.data_type;
   if (decoded.status == DecodeStatus::kNotSpherical) {
     ++impl->not_spherical_packets;
+    ++impl->unsupported_packets;
     ++state->rejected_packets;
+    state->safety_ready = false;
+    {
+      const std::lock_guard<std::mutex> lock(state->configuration_mutex);
+      state->configuration = LivoxConfigurationState::kFailed;
+      state->configuration_pending = 0U;
+      state->configuration_error = "unsupported point data type";
+    }
     return;
   }
   if (decoded.status != DecodeStatus::kOk) {
@@ -152,8 +285,17 @@ void onPointCloud(
     ++state->unsynchronized_packets;
   }
   state->last_point_time_type = decoded.time_type;
+  state->last_point_data_type = decoded.data_type;
   state->last_point_timestamp_ns = decoded.rays.empty() ? 0U : decoded.rays.front().timestamp_ns;
   state->last_point_host_ns = steadyNowNs();
+
+  const bool configured_type_matches =
+    !impl->configure_point_type ||
+    decoded.data_type == pointTypeValue(impl->configuration.point_data_type);
+  if (!configured_type_matches) {
+    ++impl->wrong_data_type_packets;
+    ++state->wrong_data_type_packets;
+  }
 
   std::vector<StreamSample> samples;
   std::vector<PointMetadata> metadata;
@@ -179,7 +321,7 @@ void onPointCloud(
     if (impl->point_sink) {
       impl->point_sink(LivoxPointSample{identity, samples[index], point_metadata});
     }
-    if (impl->registry.accepts(handle)) {
+    if (impl->registry.accepts(handle) && state->safety_ready.load() && configured_type_matches) {
       impl->sink(samples[index]);
     }
     else {
@@ -189,7 +331,8 @@ void onPointCloud(
 }
 
 void onImu(
-  const uint32_t handle, const uint8_t, LivoxLidarEthernetPacket * packet, void * client_data)
+  const uint32_t handle, const uint8_t dev_type, LivoxLidarEthernetPacket * packet,
+  void * client_data)
 {
   if (packet == nullptr || client_data == nullptr) {
     return;
@@ -198,6 +341,13 @@ void onImu(
   const auto state = impl->device(handle);
   ++impl->imu_packets;
   ++state->imu_packets;
+  if (!isMid360S(dev_type)) {
+    ++impl->unsupported_packets;
+    ++state->unsupported_packets;
+    state->configuration = LivoxConfigurationState::kUnsupported;
+    state->safety_ready = false;
+    return;
+  }
   const DecodedImuPacket decoded =
     decodeImuPacket(reinterpret_cast<const uint8_t *>(packet), packet->length);
   if (!decoded.gyro.isValid()) {
@@ -222,91 +372,488 @@ void onImu(
   }
 }
 
-int pointTypeOf(const LivoxLidarDiagInternalInfoResponse & response)
+std::shared_ptr<detail::DeviceState> deviceState(Impl * impl, uint32_t handle)
 {
-  uint16_t offset = 0U;
-  for (uint16_t index = 0U; index < response.param_num; ++index) {
-    const auto * pair = reinterpret_cast<const LivoxLidarKeyValueParam *>(&response.data[offset]);
-    if (pair->key == kKeyPclDataType && pair->length >= 1U) {
-      return pair->value[0];
-    }
-    offset = static_cast<uint16_t>(offset + sizeof(uint16_t) * 2U + pair->length);
+  return impl == nullptr ? nullptr : impl->device(handle);
+}
+
+std::size_t configurationAttemptIndex(uint32_t bit)
+{
+  switch (bit) {
+    case kConfigurePointType:
+      return 0U;
+    case kConfigureScanPattern:
+      return 1U;
+    case kConfigureBlindSpot:
+      return 2U;
+    case kConfigureDualEmit:
+      return 3U;
+    case kConfigurePpsSync:
+      return 4U;
+    case kConfigureImuRange:
+      return 5U;
+    case kConfigureInstallAttitude:
+      return 6U;
+    case kConfigureWorkMode:
+      return 7U;
+    case kConfigureImu:
+      return 8U;
+    default:
+      return 0U;
   }
-  return -1;
+}
+
+bool beginConfigurationAttempt(
+  const std::shared_ptr<detail::DeviceState> & state, uint32_t bit, Impl * impl, uint32_t handle)
+{
+  if (!state) {
+    return false;
+  }
+  const std::lock_guard<std::mutex> lock(state->configuration_mutex);
+  if ((state->configuration_pending & bit) == 0U) {
+    return false;
+  }
+  auto & attempts = state->configuration_attempts[configurationAttemptIndex(bit)];
+  if (attempts >= kMaxConfigurationAttempts) {
+    return false;
+  }
+  ++attempts;
+  if (attempts > 1U) {
+    ++state->configuration_retries;
+    if (impl != nullptr) {
+      ++impl->configuration_retries;
+    }
+  }
+  static_cast<void>(handle);
+  return true;
+}
+
+bool canRetryConfiguration(const std::shared_ptr<detail::DeviceState> & state, uint32_t bit)
+{
+  if (!state) {
+    return false;
+  }
+  const std::lock_guard<std::mutex> lock(state->configuration_mutex);
+  return state->configuration_attempts[configurationAttemptIndex(bit)] < kMaxConfigurationAttempts;
+}
+
+void failConfiguration(
+  const std::shared_ptr<detail::DeviceState> & state, uint32_t bit, Impl * impl,
+  const std::string & reason)
+{
+  if (!state) {
+    return;
+  }
+  bool report = false;
+  {
+    const std::lock_guard<std::mutex> lock(state->configuration_mutex);
+    if ((state->configuration_pending & bit) == 0U) {
+      return;
+    }
+    state->configuration_pending = 0U;
+    state->configuration = LivoxConfigurationState::kFailed;
+    state->safety_ready = false;
+    state->configuration_error = reason;
+    if (state->configuration_attempts[configurationAttemptIndex(bit)] > 0U) {
+      report = true;
+      state->configuration_attempts[configurationAttemptIndex(bit)] = 0U;
+    }
+  }
+  if (report && impl != nullptr) {
+    ++impl->configuration_failures;
+  }
+}
+
+void completeConfiguration(
+  const std::shared_ptr<detail::DeviceState> & state, uint32_t bit, Impl * impl, uint32_t handle)
+{
+  if (!state) {
+    return;
+  }
+  bool ready = false;
+  {
+    const std::lock_guard<std::mutex> lock(state->configuration_mutex);
+    if ((state->configuration_pending & bit) == 0U) {
+      return;
+    }
+    state->configuration_pending &= ~bit;
+    ready = state->configuration_pending == 0U;
+    if (ready) {
+      state->configuration = LivoxConfigurationState::kReady;
+      state->safety_ready = true;
+      state->configuration_error.clear();
+    }
+  }
+  if (ready && impl != nullptr) {
+    impl->say("livox: Mid-360S " + std::to_string(handle) + " configuration is ready");
+  }
+}
+
+bool responseOk(livox_status status, const LivoxLidarAsyncControlResponse * response)
+{
+  return status == kLivoxLidarStatusSuccess && response != nullptr && response->ret_code == 0U;
 }
 
 void onPointTypeSet(
-  livox_status status, uint32_t, LivoxLidarAsyncControlResponse * response, void * client_data)
+  livox_status status, uint32_t handle, LivoxLidarAsyncControlResponse * response,
+  void * client_data);
+void onScanPatternSet(
+  livox_status status, uint32_t handle, LivoxLidarAsyncControlResponse * response,
+  void * client_data);
+void onBlindSpotSet(
+  livox_status status, uint32_t handle, LivoxLidarAsyncControlResponse * response,
+  void * client_data);
+void onDualEmitSet(
+  livox_status status, uint32_t handle, LivoxLidarAsyncControlResponse * response,
+  void * client_data);
+void onPpsSyncSet(
+  livox_status status, uint32_t handle, LivoxLidarAsyncControlResponse * response,
+  void * client_data);
+void onImuRangeSet(
+  livox_status status, uint32_t handle, LivoxLidarAsyncControlResponse * response,
+  void * client_data);
+void onInstallAttitudeSet(
+  livox_status status, uint32_t handle, LivoxLidarAsyncControlResponse * response,
+  void * client_data);
+void onWorkModeSet(
+  livox_status status, uint32_t handle, LivoxLidarAsyncControlResponse * response,
+  void * client_data);
+void onImuEnable(
+  livox_status status, uint32_t handle, LivoxLidarAsyncControlResponse * response,
+  void * client_data);
+
+void sendPointType(Impl * impl, uint32_t handle)
 {
-  auto * impl = static_cast<Impl *>(client_data);
-  if (response == nullptr) {
-    impl->say("livox: setting the point type got no response, status " + std::to_string(status));
+  const auto state = deviceState(impl, handle);
+  if (!beginConfigurationAttempt(state, kConfigurePointType, impl, handle)) {
     return;
   }
-  impl->say(
-    "livox: point type set to spherical, status " + std::to_string(status) + ", ret_code " +
-    std::to_string(response->ret_code));
+  const auto status = SetLivoxLidarPclDataType(
+    handle,
+    static_cast<LivoxLidarPointDataType>(pointTypeValue(impl->configuration.point_data_type)),
+    onPointTypeSet, impl);
+  if (status != kLivoxLidarStatusSuccess) {
+    if (status == kLivoxLidarStatusTimeout && canRetryConfiguration(state, kConfigurePointType)) {
+      sendPointType(impl, handle);
+    }
+    else {
+      failConfiguration(
+        state, kConfigurePointType, impl, "point type command failed: " + std::to_string(status));
+    }
+  }
+}
+
+void sendScanPattern(Impl * impl, uint32_t handle)
+{
+  const auto state = deviceState(impl, handle);
+  if (
+    !beginConfigurationAttempt(state, kConfigureScanPattern, impl, handle) ||
+    !impl->configuration.scan_pattern.has_value()) {
+    return;
+  }
+  const auto status = SetLivoxLidarScanPattern(
+    handle, scanPatternValue(*impl->configuration.scan_pattern), onScanPatternSet, impl);
+  if (status != kLivoxLidarStatusSuccess) {
+    if (status == kLivoxLidarStatusTimeout && canRetryConfiguration(state, kConfigureScanPattern)) {
+      sendScanPattern(impl, handle);
+    }
+    else {
+      failConfiguration(
+        state, kConfigureScanPattern, impl,
+        "scan pattern command failed: " + std::to_string(status));
+    }
+  }
+}
+
+void sendBlindSpot(Impl * impl, uint32_t handle)
+{
+  const auto state = deviceState(impl, handle);
+  if (
+    !beginConfigurationAttempt(state, kConfigureBlindSpot, impl, handle) ||
+    !impl->configuration.blind_spot_mm.has_value()) {
+    return;
+  }
+  const auto status =
+    SetLivoxLidarBlindSpot(handle, *impl->configuration.blind_spot_mm, onBlindSpotSet, impl);
+  if (status != kLivoxLidarStatusSuccess) {
+    if (status == kLivoxLidarStatusTimeout && canRetryConfiguration(state, kConfigureBlindSpot)) {
+      sendBlindSpot(impl, handle);
+    }
+    else {
+      failConfiguration(
+        state, kConfigureBlindSpot, impl, "blind spot command failed: " + std::to_string(status));
+    }
+  }
+}
+
+void sendDualEmit(Impl * impl, uint32_t handle)
+{
+  const auto state = deviceState(impl, handle);
+  if (
+    !beginConfigurationAttempt(state, kConfigureDualEmit, impl, handle) ||
+    !impl->configuration.dual_emit.has_value()) {
+    return;
+  }
+  const auto status =
+    SetLivoxLidarDualEmit(handle, *impl->configuration.dual_emit, onDualEmitSet, impl);
+  if (status != kLivoxLidarStatusSuccess) {
+    if (status == kLivoxLidarStatusTimeout && canRetryConfiguration(state, kConfigureDualEmit)) {
+      sendDualEmit(impl, handle);
+    }
+    else {
+      failConfiguration(
+        state, kConfigureDualEmit, impl, "dual emit command failed: " + std::to_string(status));
+    }
+  }
+}
+
+void sendPpsSync(Impl * impl, uint32_t handle)
+{
+  const auto state = deviceState(impl, handle);
+  if (
+    !beginConfigurationAttempt(state, kConfigurePpsSync, impl, handle) ||
+    !impl->configuration.pps_sync_mode.has_value()) {
+    return;
+  }
+  const auto status = SetLivoxLidarPpsSyncMode(
+    handle, ppsSyncValue(*impl->configuration.pps_sync_mode), onPpsSyncSet, impl);
+  if (status != kLivoxLidarStatusSuccess) {
+    if (status == kLivoxLidarStatusTimeout && canRetryConfiguration(state, kConfigurePpsSync)) {
+      sendPpsSync(impl, handle);
+    }
+    else {
+      failConfiguration(
+        state, kConfigurePpsSync, impl, "PPS sync command failed: " + std::to_string(status));
+    }
+  }
+}
+
+void sendImuRange(Impl * impl, uint32_t handle)
+{
+  const auto state = deviceState(impl, handle);
+  if (
+    !beginConfigurationAttempt(state, kConfigureImuRange, impl, handle) ||
+    !impl->configuration.imu_range.has_value()) {
+    return;
+  }
+  const auto & range = *impl->configuration.imu_range;
+  const auto status = SetLivoxLidarImuRange(
+    handle, imuRateValue(range.output_rate), accelRangeValue(range.accel_range),
+    gyroRangeValue(range.gyro_range), onImuRangeSet, impl);
+  if (status != kLivoxLidarStatusSuccess) {
+    if (status == kLivoxLidarStatusTimeout && canRetryConfiguration(state, kConfigureImuRange)) {
+      sendImuRange(impl, handle);
+    }
+    else {
+      failConfiguration(
+        state, kConfigureImuRange, impl, "IMU range command failed: " + std::to_string(status));
+    }
+  }
+}
+
+void sendInstallAttitude(Impl * impl, uint32_t handle)
+{
+  const auto state = deviceState(impl, handle);
+  if (
+    !impl->configuration.install_attitude.has_value() ||
+    !beginConfigurationAttempt(state, kConfigureInstallAttitude, impl, handle)) {
+    return;
+  }
+  const auto & configured = *impl->configuration.install_attitude;
+  LivoxLidarInstallAttitude attitude{configured.roll_deg, configured.pitch_deg, configured.yaw_deg,
+                                     configured.x_mm,     configured.y_mm,      configured.z_mm};
+  const auto status = SetLivoxLidarInstallAttitude(handle, &attitude, onInstallAttitudeSet, impl);
+  if (status != kLivoxLidarStatusSuccess) {
+    if (
+      status == kLivoxLidarStatusTimeout &&
+      canRetryConfiguration(state, kConfigureInstallAttitude)) {
+      sendInstallAttitude(impl, handle);
+    }
+    else {
+      failConfiguration(
+        state, kConfigureInstallAttitude, impl,
+        "install attitude command failed: " + std::to_string(status));
+    }
+  }
+}
+
+void sendWorkMode(Impl * impl, uint32_t handle)
+{
+  const auto state = deviceState(impl, handle);
+  if (!beginConfigurationAttempt(state, kConfigureWorkMode, impl, handle)) {
+    return;
+  }
+  const auto status = SetLivoxLidarWorkMode(handle, kLivoxLidarNormal, onWorkModeSet, impl);
+  if (status != kLivoxLidarStatusSuccess) {
+    if (status == kLivoxLidarStatusTimeout && canRetryConfiguration(state, kConfigureWorkMode)) {
+      sendWorkMode(impl, handle);
+    }
+    else {
+      failConfiguration(
+        state, kConfigureWorkMode, impl,
+        "normal work-mode command failed: " + std::to_string(status));
+    }
+  }
+}
+
+void sendImuEnable(Impl * impl, uint32_t handle)
+{
+  const auto state = deviceState(impl, handle);
+  if (!beginConfigurationAttempt(state, kConfigureImu, impl, handle)) {
+    return;
+  }
+  const auto status = EnableLivoxLidarImuData(handle, onImuEnable, impl);
+  if (status != kLivoxLidarStatusSuccess) {
+    if (status == kLivoxLidarStatusTimeout && canRetryConfiguration(state, kConfigureImu)) {
+      sendImuEnable(impl, handle);
+    }
+    else {
+      failConfiguration(
+        state, kConfigureImu, impl, "IMU enable command failed: " + std::to_string(status));
+    }
+  }
+}
+
+void onConfigurationResponse(
+  livox_status status, uint32_t handle, LivoxLidarAsyncControlResponse * response,
+  void * client_data, uint32_t bit, const char * name, void (*retry)(Impl *, uint32_t))
+{
+  auto * impl = static_cast<Impl *>(client_data);
+  const auto state = deviceState(impl, handle);
+  if (responseOk(status, response)) {
+    completeConfiguration(state, bit, impl, handle);
+    return;
+  }
+  if (status == kLivoxLidarStatusTimeout && canRetryConfiguration(state, bit)) {
+    retry(impl, handle);
+    return;
+  }
+  const uint32_t ret_code = response == nullptr ? 0xFFFFFFFFU : response->ret_code;
+  failConfiguration(
+    state, bit, impl,
+    std::string(name) + " command failed: status " + std::to_string(status) + ", ret_code " +
+      std::to_string(ret_code));
+}
+
+void onPointTypeSet(
+  livox_status status, uint32_t handle, LivoxLidarAsyncControlResponse * response,
+  void * client_data)
+{
+  onConfigurationResponse(
+    status, handle, response, client_data, kConfigurePointType, "point type", sendPointType);
+}
+
+void onScanPatternSet(
+  livox_status status, uint32_t handle, LivoxLidarAsyncControlResponse * response,
+  void * client_data)
+{
+  onConfigurationResponse(
+    status, handle, response, client_data, kConfigureScanPattern, "scan pattern", sendScanPattern);
+}
+
+void onBlindSpotSet(
+  livox_status status, uint32_t handle, LivoxLidarAsyncControlResponse * response,
+  void * client_data)
+{
+  onConfigurationResponse(
+    status, handle, response, client_data, kConfigureBlindSpot, "blind spot", sendBlindSpot);
+}
+
+void onDualEmitSet(
+  livox_status status, uint32_t handle, LivoxLidarAsyncControlResponse * response,
+  void * client_data)
+{
+  onConfigurationResponse(
+    status, handle, response, client_data, kConfigureDualEmit, "dual emit", sendDualEmit);
+}
+
+void onPpsSyncSet(
+  livox_status status, uint32_t handle, LivoxLidarAsyncControlResponse * response,
+  void * client_data)
+{
+  onConfigurationResponse(
+    status, handle, response, client_data, kConfigurePpsSync, "PPS sync", sendPpsSync);
+}
+
+void onImuRangeSet(
+  livox_status status, uint32_t handle, LivoxLidarAsyncControlResponse * response,
+  void * client_data)
+{
+  onConfigurationResponse(
+    status, handle, response, client_data, kConfigureImuRange, "IMU range", sendImuRange);
+}
+
+void onInstallAttitudeSet(
+  livox_status status, uint32_t handle, LivoxLidarAsyncControlResponse * response,
+  void * client_data)
+{
+  onConfigurationResponse(
+    status, handle, response, client_data, kConfigureInstallAttitude, "install attitude",
+    sendInstallAttitude);
 }
 
 void onWorkModeSet(
   livox_status status, uint32_t handle, LivoxLidarAsyncControlResponse * response,
   void * client_data)
 {
-  auto * impl = static_cast<Impl *>(client_data);
-  if (impl == nullptr) {
-    return;
-  }
-  const uint32_t ret_code = response == nullptr ? 0xFFFFFFFFU : response->ret_code;
-  if (status == kLivoxLidarStatusSuccess && ret_code == 0U) {
-    impl->say("livox: lidar " + std::to_string(handle) + " is in normal work mode");
-  }
-  else {
-    impl->say(
-      "livox: could not set lidar " + std::to_string(handle) +
-      " to normal work mode, status " + std::to_string(status) + ", ret_code " +
-      std::to_string(ret_code));
-  }
+  onConfigurationResponse(
+    status, handle, response, client_data, kConfigureWorkMode, "normal work mode", sendWorkMode);
 }
 
 void onImuEnable(
   livox_status status, uint32_t handle, LivoxLidarAsyncControlResponse * response,
   void * client_data)
 {
-  auto * impl = static_cast<Impl *>(client_data);
-  if (impl == nullptr) {
-    return;
-  }
-  const uint32_t ret_code = response == nullptr ? 0xFFFFFFFFU : response->ret_code;
-  if (status == kLivoxLidarStatusSuccess && ret_code == 0U) {
-    impl->say("livox: IMU data enabled for lidar " + std::to_string(handle));
-  }
-  else {
-    impl->say(
-      "livox: could not enable IMU data for lidar " + std::to_string(handle) + ", status " +
-      std::to_string(status) + ", ret_code " + std::to_string(ret_code));
-  }
+  onConfigurationResponse(
+    status, handle, response, client_data, kConfigureImu, "IMU enable", sendImuEnable);
 }
 
-void onInternalInfo(
-  livox_status status, uint32_t handle, LivoxLidarDiagInternalInfoResponse * response,
-  void * client_data)
+void startConfiguration(
+  Impl * impl, uint32_t handle, const std::shared_ptr<detail::DeviceState> & state)
 {
-  auto * impl = static_cast<Impl *>(client_data);
-  if (status != kLivoxLidarStatusSuccess || response == nullptr) {
-    impl->say("livox: could not read the lidar settings, nothing was changed");
-    return;
+  uint32_t pending = kConfigureWorkMode;
+  if (impl->configure_point_type) {
+    pending |= kConfigurePointType;
   }
-  const int point_type = pointTypeOf(*response);
-  if (point_type == static_cast<int>(kLivoxLidarSphericalCoordinateData)) {
-    impl->say("livox: the lidar already sends spherical points");
-    return;
+  if (impl->configuration.scan_pattern.has_value()) {
+    pending |= kConfigureScanPattern;
   }
-  if (point_type < 0) {
-    impl->say("livox: the lidar did not report its point type, nothing was changed");
-    return;
+  if (impl->configuration.blind_spot_mm.has_value()) {
+    pending |= kConfigureBlindSpot;
   }
-  impl->say("livox: point type is " + std::to_string(point_type) + ", asking for spherical (3)");
-  SetLivoxLidarPclDataType(handle, kLivoxLidarSphericalCoordinateData, onPointTypeSet, impl);
+  if (impl->configuration.dual_emit.has_value()) {
+    pending |= kConfigureDualEmit;
+  }
+  if (impl->configuration.pps_sync_mode.has_value()) {
+    pending |= kConfigurePpsSync;
+  }
+  if (impl->configuration.imu_range.has_value()) {
+    pending |= kConfigureImuRange;
+  }
+  if (impl->configuration.install_attitude.has_value()) {
+    pending |= kConfigureInstallAttitude;
+  }
+  if (impl->gyro_sink || impl->imu_sink) {
+    pending |= kConfigureImu;
+  }
+  {
+    const std::lock_guard<std::mutex> lock(state->configuration_mutex);
+    state->configuration_pending = pending;
+    state->configuration_attempts.fill(0U);
+    state->configuration_error.clear();
+    state->configuration = LivoxConfigurationState::kConfiguring;
+    state->safety_ready = false;
+  }
+
+  if (impl->configure_point_type) sendPointType(impl, handle);
+  if (impl->configuration.scan_pattern.has_value()) sendScanPattern(impl, handle);
+  if (impl->configuration.blind_spot_mm.has_value()) sendBlindSpot(impl, handle);
+  if (impl->configuration.dual_emit.has_value()) sendDualEmit(impl, handle);
+  if (impl->configuration.pps_sync_mode.has_value()) sendPpsSync(impl, handle);
+  if (impl->configuration.imu_range.has_value()) sendImuRange(impl, handle);
+  if (impl->configuration.install_attitude.has_value()) sendInstallAttitude(impl, handle);
+  sendWorkMode(impl, handle);
+  if (impl->gyro_sink || impl->imu_sink) sendImuEnable(impl, handle);
 }
 
 void onLidarInfoChange(const uint32_t handle, const LivoxLidarInfo * info, void * client_data)
@@ -325,34 +872,21 @@ void onLidarInfoChange(const uint32_t handle, const LivoxLidarInfo * info, void 
     const std::lock_guard<std::mutex> lock(state->mutex);
     state->identity = identity;
   }
-  impl->registry.observe(identity);
   ++impl->device_events;
   impl->say(std::string("livox: detected lidar ") + identity.serial + " at " + identity.lidar_ip);
-  bool expected = false;
-  // The lifecycle commands below are idempotent and are repeated on a reconnect. The point type
-  // query/write is the only command kept to one request per detection epoch.
-  if (impl->configure_point_type && state->detection_handled.compare_exchange_strong(expected, true)) {
-    QueryLivoxLidarInternalInfo(handle, onInternalInfo, impl);
+  if (!isMid360S(identity.device_type)) {
+    state->configuration = LivoxConfigurationState::kUnsupported;
+    state->safety_ready = false;
+    impl->say("livox: ignoring unsupported device type " + std::to_string(identity.device_type));
+    return;
   }
-
-  // The SDK callback is delivered when a device is detected, but the reference driver still
-  // explicitly starts normal sampling and enables the optional IMU stream. Do the same here;
-  // these commands are safe to repeat after a reconnect.
-  const livox_status work_mode_status =
-    SetLivoxLidarWorkMode(handle, kLivoxLidarNormal, onWorkModeSet, impl);
-  if (work_mode_status != kLivoxLidarStatusSuccess) {
-    impl->say(
-      "livox: normal work-mode request failed immediately, status " +
-      std::to_string(work_mode_status));
+  impl->registry.observe(identity);
+  {
+    const std::lock_guard<std::mutex> lock(state->mutex);
+    state->tracker = UdpContinuityTracker{};
+    state->sampler = PacketSampler{};
   }
-  if (impl->gyro_sink || impl->imu_sink) {
-    const livox_status imu_status = EnableLivoxLidarImuData(handle, onImuEnable, impl);
-    if (imu_status != kLivoxLidarStatusSuccess) {
-      impl->say(
-        "livox: IMU enable request failed immediately, status " +
-        std::to_string(imu_status));
-    }
-  }
+  startConfiguration(impl, handle, state);
 }
 
 void onLidarInfo(const uint32_t handle, const uint8_t, const char * info, void * client_data)
@@ -418,6 +952,13 @@ bool LivoxSdkSampleSource::start()
   if (_impl->started) {
     return true;
   }
+  try {
+    _impl->configuration = loadMid360SConfig(_impl->config_path);
+  }
+  catch (const std::exception & error) {
+    _impl->say(std::string("livox: invalid Mid-360S adapter configuration: ") + error.what());
+    return false;
+  }
   {
     const std::lock_guard<std::mutex> lock(_impl->devices_mutex);
     _impl->devices.clear();
@@ -436,6 +977,10 @@ bool LivoxSdkSampleSource::start()
   _impl->imu_accel_unusable = 0U;
   _impl->device_events = 0U;
   _impl->non_primary_samples = 0U;
+  _impl->unsupported_packets = 0U;
+  _impl->wrong_data_type_packets = 0U;
+  _impl->configuration_retries = 0U;
+  _impl->configuration_failures = 0U;
   bool expected = false;
   if (!g_instance_running.compare_exchange_strong(expected, true)) {
     _impl->say("livox: another instance of the SDK source is running");
@@ -483,6 +1028,10 @@ SdkSourceStats LivoxSdkSampleSource::stats() const
   result.imu_accel_unusable = _impl->imu_accel_unusable;
   result.device_events = _impl->device_events;
   result.non_primary_samples = _impl->non_primary_samples;
+  result.unsupported_packets = _impl->unsupported_packets;
+  result.wrong_data_type_packets = _impl->wrong_data_type_packets;
+  result.configuration_retries = _impl->configuration_retries;
+  result.configuration_failures = _impl->configuration_failures;
   return result;
 }
 
@@ -514,6 +1063,15 @@ std::vector<LivoxDeviceHealth> LivoxSdkSampleSource::health() const
     snapshot.dropped_rays = state->dropped_rays.load();
     snapshot.imu_unusable = state->imu_unusable.load();
     snapshot.imu_accel_unusable = state->imu_accel_unusable.load();
+    snapshot.configuration = state->configuration.load();
+    snapshot.unsupported_packets = state->unsupported_packets.load();
+    snapshot.wrong_data_type_packets = state->wrong_data_type_packets.load();
+    snapshot.configuration_retries = state->configuration_retries.load();
+    snapshot.last_point_data_type = state->last_point_data_type.load();
+    {
+      const std::lock_guard<std::mutex> lock(state->configuration_mutex);
+      snapshot.configuration_error = state->configuration_error;
+    }
     snapshot.last_point_time_type = state->last_point_time_type.load();
     snapshot.last_imu_time_type = state->last_imu_time_type.load();
     snapshot.last_point_timestamp_ns = state->last_point_timestamp_ns.load();
@@ -524,12 +1082,14 @@ std::vector<LivoxDeviceHealth> LivoxSdkSampleSource::health() const
       point_host_ns == 0U || now_ns < point_host_ns ? 0U : (now_ns - point_host_ns) / 1'000'000U;
     snapshot.last_imu_age_ms =
       imu_host_ns == 0U || now_ns < imu_host_ns ? 0U : (now_ns - imu_host_ns) / 1'000'000U;
-    const bool imu_expected = static_cast<bool>(_impl->gyro_sink) || static_cast<bool>(_impl->imu_sink);
+    const bool imu_expected =
+      static_cast<bool>(_impl->gyro_sink) || static_cast<bool>(_impl->imu_sink);
     const bool point_seen = point_host_ns != 0U;
     const bool imu_seen = imu_host_ns != 0U;
     const bool point_stale =
       !point_seen || (now_ns >= point_host_ns && now_ns - point_host_ns > kLivoxHealthStaleAfterNs);
-    const bool imu_stale = imu_expected &&
+    const bool imu_stale =
+      imu_expected &&
       (!imu_seen || (now_ns >= imu_host_ns && now_ns - imu_host_ns > kLivoxHealthStaleAfterNs));
     if (!point_seen && (!imu_expected || !imu_seen)) {
       snapshot.state = LivoxHealthState::kUnknown;
@@ -554,5 +1114,7 @@ bool LivoxSdkSampleSource::multipleLidarFault() const
 {
   return _impl->registry.multipleDeviceFault();
 }
+
+const Mid360SConfig & LivoxSdkSampleSource::configuration() const { return _impl->configuration; }
 
 }  // namespace livox_ray_source

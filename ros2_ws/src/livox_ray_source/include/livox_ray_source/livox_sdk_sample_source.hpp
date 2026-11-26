@@ -10,6 +10,7 @@
 #include <string>
 #include <vector>
 
+#include "livox_ray_source/mid360s_config.hpp"
 #include "livox_ray_source/ray_source.hpp"
 #include "livox_ray_source/spherical_packet.hpp"
 
@@ -54,6 +55,15 @@ enum class LivoxHealthState : uint8_t
   kStale,
 };
 
+enum class LivoxConfigurationState : uint8_t
+{
+  kUnknown,
+  kConfiguring,
+  kReady,
+  kFailed,
+  kUnsupported,
+};
+
 /// Snapshot for diagnostics and a live probe. `kStale` means the required point stream, or an
 /// enabled IMU stream, has had no valid sample for the approved 0.5 s health window; this is a
 /// diagnostic indication, not a new safety gate. Rates are measured by the adapter; no health
@@ -62,6 +72,8 @@ struct LivoxDeviceHealth
 {
   LivoxDeviceIdentity device;
   LivoxHealthState state{LivoxHealthState::kUnknown};
+  LivoxConfigurationState configuration{LivoxConfigurationState::kUnknown};
+  std::string configuration_error;
   uint64_t point_packets{0U};
   uint64_t imu_packets{0U};
   uint64_t decoded_points{0U};
@@ -71,7 +83,11 @@ struct LivoxDeviceHealth
   uint64_t dropped_rays{0U};
   uint64_t imu_unusable{0U};
   uint64_t imu_accel_unusable{0U};
+  uint64_t unsupported_packets{0U};
+  uint64_t wrong_data_type_packets{0U};
+  uint64_t configuration_retries{0U};
   uint8_t last_point_time_type{0U};
+  uint8_t last_point_data_type{0U};
   uint8_t last_imu_time_type{0U};
   uint64_t last_point_timestamp_ns{0U};
   uint64_t last_imu_timestamp_ns{0U};
@@ -109,7 +125,7 @@ struct SdkSourceStats
   uint64_t packets{0U};
   uint64_t decoded_packets{0U};
   uint64_t rejected_packets{0U};        ///< too short, wrong length or no points
-  uint64_t not_spherical_packets{0U};   ///< the lidar still sends another point type
+  uint64_t not_spherical_packets{0U};   ///< packets with an unsupported point layout
   uint64_t unsynchronized_packets{0U};  ///< time type is not PTP: rays carry time 0
   uint64_t continuity_breaks{0U};
   uint64_t dropped_rays{0U};            ///< rays without a usable time, not handed on
@@ -120,22 +136,25 @@ struct SdkSourceStats
   uint64_t imu_accel_unusable{0U};   ///< valid gyro packets with a non-finite accelerometer axis
   uint64_t device_events{0U};        ///< device identity callbacks
   uint64_t non_primary_samples{0U};  ///< rays withheld from the safety sink
+  uint64_t unsupported_packets{0U};  ///< packets from a non-Mid-360S device or layout
+  uint64_t wrong_data_type_packets{0U};
+  uint64_t configuration_retries{0U};
+  uint64_t configuration_failures{0U};
 };
 
-/// Spherical samples of a Livox Mid-360(S) through the Livox SDK2, as a stream of StreamSample.
+/// Point samples from a Livox Mid-360S through the Livox SDK2, as a stream of StreamSample.
 ///
 /// Each point packet that the SDK delivers is decoded by `decodeSphericalPacket` and its rays are
 /// given to `sink`, in order, from the SDK's thread (so the sink must be thread safe). A ray without
 /// a usable time (the lidar is not PTP synchronized) is not given to the sink (`PacketSampler`);
 /// the next ray that is, and the first ray after a gap in `udp_cnt`, carries `continuity_break`.
 ///
-/// When `configure_point_type` is true and the lidar sends another point type, this source asks
-/// the lidar for spherical points once per detection: one read, and one write (the point data
-/// type, key 0x0000) only if the type differs. It writes nothing else. Like every start of the SDK,
-/// the SDK itself also sends the host IP and ports from the config file to the lidar (state, point
-/// and IMU destinations). The IMU callback is set when either sink is given before start; PTP gyro
-/// samples from the selected primary lidar go to `GyroSink`, and complete samples from every lidar
-/// go to `ImuSink`, from the SDK's thread (ADR 0023).
+/// When `configure_point_type` is true, the configured Mid-360S point layout is written during the
+/// device configuration handshake. Optional scan, blind-spot, dual-emission, PPS, IMU-range and
+/// device-install-attitude settings are written only when present in the adapter configuration.
+/// PTP gyro samples from the selected primary lidar go to `GyroSink`, and complete samples from
+/// every lidar go to `ImuSink`, from the SDK's thread (ADR 0023). The SDK has one global state, so
+/// only one instance can run at a time.
 ///
 /// The SDK has one global state, so only one instance can run at a time.
 class LivoxSdkSampleSource
@@ -180,6 +199,9 @@ public:
   [[nodiscard]] std::vector<LivoxDeviceHealth> health() const;
   [[nodiscard]] std::optional<LivoxDeviceIdentity> primaryLidar() const;
   [[nodiscard]] bool multipleLidarFault() const;
+
+  /// The parsed Mid-360S adapter settings used for device configuration.
+  [[nodiscard]] const Mid360SConfig & configuration() const;
 
 private:
   std::unique_ptr<detail::SdkSourceState> _impl;

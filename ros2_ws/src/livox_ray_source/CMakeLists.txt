@@ -12,7 +12,7 @@ find_package(yaml-cpp REQUIRED)
 
 add_library(livox_ray_source src/frame_segmenter.cpp src/replay_ray_source.cpp src/self_mask.cpp
   src/masking_ray_source.cpp src/spherical_packet.cpp src/livox_source_contract.cpp src/pose_history.cpp
-  src/ray_leveling.cpp src/leveling_ray_source.cpp src/gyro_track.cpp)
+  src/ray_leveling.cpp src/leveling_ray_source.cpp src/gyro_track.cpp src/mid360s_config.cpp)
 target_include_directories(livox_ray_source PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
   $<INSTALL_INTERFACE:include>)
