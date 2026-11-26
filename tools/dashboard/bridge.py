@@ -186,9 +186,16 @@ def sse_event(event: str, payload: Any) -> str:
 class SnapshotStore:
     """Thread-safe latest-value store shared by ROS, PX4 polling and HTTP clients."""
 
-    def __init__(self, clock: Callable[[], float] = time.monotonic, source_timeout_s: float = 2.0):
+    def __init__(
+        self,
+        clock: Callable[[], float] = time.monotonic,
+        source_timeout_s: float = 2.0,
+        event_interval_s: float = 1.0 / 30.0,
+    ):
         self._clock = clock
         self._source_timeout_s = float(source_timeout_s)
+        self._event_interval_s = max(0.0, float(event_interval_s))
+        self._last_event_at: float | None = None
         self._lock = threading.RLock()
         self._subscribers: set[queue.Queue[dict[str, str]]] = set()
         self._received: dict[str, float] = {}
@@ -218,6 +225,10 @@ class SnapshotStore:
         self._received[source] = self._clock()
 
     def _notify_locked(self) -> None:
+        now = self._clock()
+        if self._last_event_at is not None and now - self._last_event_at < self._event_interval_s:
+            return
+        self._last_event_at = now
         event = {
             "event": "snapshot",
             "data": json.dumps(self._snapshot_locked(), ensure_ascii=False, separators=(",", ":")),
@@ -284,6 +295,8 @@ class SnapshotStore:
                     "roll_deg": roll,
                 }
             )
+            if self._leveling["status"] == "no_ray_pairs":
+                self._leveling["status"] = "pose_only"
             self._update_locked("odometry")
 
     def update_status(self, payload: Mapping[str, Any]) -> None:
@@ -351,9 +364,12 @@ class SnapshotStore:
 
         with self._lock:
             pairs = payload.get("pairs")
+            has_pose = any(
+                _number(self._leveling.get(name)) is not None for name in ("pitch_deg", "roll_deg")
+            )
             self._leveling.update(
                 {
-                    "status": "live" if pairs else "no_ray_pairs",
+                    "status": "live" if pairs else ("pose_only" if has_pose else "no_ray_pairs"),
                     "reference_time_us": _integer(payload.get("reference_time_us")),
                     "pitch_deg": _number(payload.get("pitch_deg")),
                     "roll_deg": _number(payload.get("roll_deg")),
@@ -451,7 +467,10 @@ class Px4Listener:
             return None
         if getattr(result, "returncode", 1) != 0:
             return None
-        return parse_listener_output(getattr(result, "stdout", ""))
+        parsed = parse_listener_output(getattr(result, "stdout", ""))
+        # px4-listener exits with status 0 for a topic-size error and still prints a ``TOPIC``
+        # header. Do not turn that metadata into a zero-filled dashboard sample.
+        return parsed if "timestamp" in parsed else None
 
 
 class ListenerPoller(threading.Thread):

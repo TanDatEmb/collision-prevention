@@ -3,9 +3,10 @@
 
 import json
 import queue
+import types
 import unittest
 
-from bridge import SnapshotStore, _diagnostics_payload, parse_listener_output, sse_event
+from bridge import Px4Listener, SnapshotStore, _diagnostics_payload, parse_listener_output, sse_event
 
 
 class ListenerParserTests(unittest.TestCase):
@@ -40,6 +41,20 @@ class ListenerParserTests(unittest.TestCase):
         self.assertEqual(parsed["acc_sp_in"][0], "nan")
         self.assertEqual(parsed["acc_sp_in"][1], 0.25)
 
+    def test_listener_rejects_metadata_only_error_output(self):
+        def runner(*_args, **_kwargs):
+            return types.SimpleNamespace(
+                returncode=0,
+                stdout=(
+                    "TOPIC: cp_brake_constraints\n"
+                    "ERROR [listener] topic cp_brake_constraints too large (608 > 512)\n"
+                ),
+            )
+
+        listener = Px4Listener(binary=__file__, runner=runner)
+
+        self.assertIsNone(listener.poll("cp_brake_constraints"))
+
 
 class SnapshotStoreTests(unittest.TestCase):
     def test_snapshot_reports_ros_connection_without_inventing_caps(self):
@@ -72,7 +87,7 @@ class SnapshotStoreTests(unittest.TestCase):
         self.assertIsNone(snapshot["caps"])
         self.assertAlmostEqual(snapshot["aircraft"]["speed_m_s"], 2.0)
         self.assertAlmostEqual(snapshot["aircraft"]["height_m"], 4.0)
-        self.assertEqual(snapshot["leveling"]["status"], "no_ray_pairs")
+        self.assertEqual(snapshot["leveling"]["status"], "pose_only")
 
     def test_source_ages_make_stale_connection_explicit(self):
         now = [100.0]
@@ -98,6 +113,26 @@ class SnapshotStoreTests(unittest.TestCase):
         store.unsubscribe(subscriber)
         with self.assertRaises(queue.Empty):
             subscriber.get_nowait()
+
+    def test_subscriber_coalesces_high_rate_updates(self):
+        now = [100.0]
+        store = SnapshotStore(clock=lambda: now[0], event_interval_s=0.05)
+        subscriber = store.subscribe()
+        store.update_hook({"timestamp": 1, "action": 3, "active_sector": 0})
+        first = json.loads(subscriber.get(timeout=0.2)["data"])
+
+        now[0] = 100.01
+        store.update_hook({"timestamp": 2, "action": 4, "active_sector": 1})
+        with self.assertRaises(queue.Empty):
+            subscriber.get_nowait()
+
+        now[0] = 100.06
+        store.update_hook({"timestamp": 3, "action": 2, "active_sector": 2})
+        latest = json.loads(subscriber.get(timeout=0.2)["data"])
+
+        self.assertEqual(first["hook"]["timestamp_us"], 1)
+        self.assertEqual(latest["hook"]["timestamp_us"], 3)
+        store.unsubscribe(subscriber)
 
 
 class SseTests(unittest.TestCase):
