@@ -39,20 +39,27 @@ class DdsContractTests(unittest.TestCase):
         self.assertIn("sim-dashboard:", makefile)
         self.assertIn("tools/dashboard/bridge.py", makefile)
 
-    def test_browser_contract_keeps_live_controls_and_explicit_pair_empty_state(self):
+    def test_browser_contract_keeps_live_controls_and_leveling_coverage_view(self):
         html = DASHBOARD_HTML.read_text()
         for text in (
             "Connect",
             "Disconnect",
             'EventSource("/events")',
-            "No ray pairs",
-            "Pose live",
+            "Vertical coverage",
+            "Sensor FOV",
+            "Current view",
+            "Horizon",
+            "Band",
+            "Coverage unavailable",
+            "Up",
+            "Down",
             "speedUnit",
             "hook-age",
             "Limit",
             "Far / clear",
         ):
             self.assertIn(text, html)
+        self.assertNotIn("No ray pairs", html)
 
 
 if __name__ == "__main__":

@@ -575,7 +575,7 @@ class SnapshotStore:
     def _snapshot_locked(self) -> dict[str, Any]:
         now = self._clock()
         sources: dict[str, Any] = {}
-        for source in ("map", "odometry", "status", "caps", "hook", "diagnostics"):
+        for source in ("map", "odometry", "leveling", "status", "caps", "hook", "diagnostics"):
             received = self._received.get(source)
             age = None if received is None else max(0.0, now - received)
             sources[source] = {
@@ -583,7 +583,7 @@ class SnapshotStore:
                 "age_s": age,
             }
         seen = [entry["age_s"] is not None for entry in sources.values()]
-        fresh_ros = any(sources[name]["state"] == "live" for name in ("map", "odometry", "status"))
+        fresh_ros = any(sources[name]["state"] == "live" for name in ("map", "odometry", "leveling", "status"))
         map_and_odo = all(sources[name]["state"] == "live" for name in ("map", "odometry"))
         if not any(seen):
             connection = "waiting"

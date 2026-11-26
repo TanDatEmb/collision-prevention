@@ -78,12 +78,14 @@
     .teal { color:var(--teal); }
     .muted { color:var(--muted); }
     .divider { margin-top:11px; padding-top:10px; border-top:1px solid var(--border); }
-    .leveling { display:grid; grid-template-rows:auto auto repeat(2, minmax(0, 1fr)); gap:8px; }
+    .leveling { display:grid; grid-template-rows:auto auto minmax(0, 1fr); gap:8px; }
     .leveling-meta { display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:5px 12px; }
     .pose { display:flex; flex-wrap:wrap; gap:6px 12px; color:var(--muted); font-size:12px; }
     .pose b { color:var(--blue); }
-    .slice { display:flex; flex-direction:column; gap:4px; min-height:0; }
-    .rays { flex:1; min-height:132px; }
+    .coverage-wrap { display:flex; flex-direction:column; gap:6px; min-height:0; }
+    .coverage-readout, .coverage-meta { display:flex; align-items:center; flex-wrap:wrap; gap:5px 14px; color:var(--muted); font-size:11px; font-variant-numeric:tabular-nums; }
+    .coverage-readout b, .coverage-meta b { color:var(--text); }
+    .coverage { flex:1; min-height:190px; }
     .hook-values { display:flex; align-items:center; gap:16px; margin-top:8px; }
     .hook-values div { display:grid; gap:2px; }
     .hook-values dt { color:var(--muted); font-size:10px; }
@@ -135,9 +137,12 @@
       <div class="side">
         <section class="panel leveling" aria-labelledby="leveling-title">
           <div class="panel-top"><h2 class="title" id="leveling-title"><span class="glyph" aria-hidden="true">⌁</span>Leveling</h2><span class="subtle" id="leveling-state">Waiting for pose</span><span class="subtle" id="pose-time">t₀ —</span></div>
-          <div class="leveling-meta"><div class="pose"><span>Pitch <b id="pitch">—</b></span><span>Roll <b id="roll">—</b></span></div><div class="legend"><span><i class="key amber" aria-hidden="true" style="border-top:2px dashed currentColor;height:0"></i>Body</span><span><i class="key teal" aria-hidden="true"></i>Leveled</span></div></div>
-          <div class="slice"><h3>x–z <span class="subtle">(x forward · z up)</span></h3><svg class="rays" id="rays-xz" data-axis="xz" role="img" aria-label="Body and leveled X-Z ray pairs"></svg></div>
-          <div class="slice"><h3>y–z <span class="subtle">(y left · z up)</span></h3><svg class="rays" id="rays-yz" data-axis="yz" role="img" aria-label="Body and leveled Y-Z ray pairs"></svg></div>
+          <div class="leveling-meta"><div class="pose"><span>Pitch <b id="pitch">—</b></span><span>Roll <b id="roll">—</b></span></div><div class="legend"><span><i class="key muted" aria-hidden="true"></i>Sensor FOV</span><span><i class="key teal" aria-hidden="true"></i>Current view</span><span>Horizon</span></div></div>
+          <div class="coverage-wrap">
+            <div class="coverage-readout"><span>Sensor FOV <b id="fov-range">—</b></span><span>Current view <b id="view-range">—</b></span><span>Bin <b id="coverage-bin">—</b></span></div>
+            <svg class="coverage" id="coverage" role="img" aria-label="Vertical coverage: sensor FOV and selected bin"></svg>
+            <div class="coverage-meta"><span>Band <b id="coverage-band">—</b></span><span id="coverage-up">Up —</span><span id="coverage-down">Down —</span><span id="coverage-reason">Coverage unavailable</span></div>
+          </div>
         </section>
 
         <section class="panel" aria-labelledby="hook-title">
@@ -231,22 +236,34 @@
         [[0,"0°","start"],[18,"90°","middle"],[36,"180°","middle"],[54,"270°","middle"],[72,"360°","end"]].forEach(([index,value,anchor])=>text(svg,left+index*step,height-5,value,{"text-anchor":anchor}));
       }
 
-      function drawSlice(svg, pairs, dimension, label) {
-        const {width,height}=clearSvg(svg, `${label} view of paired body and leveled rays`); const top=8,bottom=height-24,origin=(width+18)/2,horizon=(top+bottom)/2,scale=Math.min((width-52)/22,(bottom-top)/6.8), x=(value)=>origin+value*scale, y=(value)=>horizon-value*scale, left=x(-11),right=x(11);
-        tag(svg,"rect",{x:0,y:0,width,height:height-1,rx:6,fill:"var(--plot)"}); [-3,0,3].forEach((level)=>{line(svg,left,y(level),right,y(level),{stroke:level===0?"var(--muted)":"var(--grid)","stroke-width":1,"stroke-dasharray":level===0?"3 3":"none"}); text(svg,left-5,y(level)+3,level===-3?"−3":String(level),{"text-anchor":"end"});}); [-10,-5,0,5,10].forEach((distance)=>{line(svg,x(distance),top,x(distance),bottom,{stroke:"var(--grid)","stroke-width":1}); text(svg,x(distance),height-8,distance<0?`−${-distance}`:String(distance),{"text-anchor":"middle"});}); text(svg,width-7,top+8,label+" (m)",{"text-anchor":"end"});
-        if (!Array.isArray(pairs) || !pairs.length) { text(svg,origin,horizon-7,"No ray pairs",{"text-anchor":"middle",fill:"var(--text)"}); return; }
-        pairs.forEach((pair)=>{ const body=pair[0], leveled=pair[1]; if(!body||!leveled)return; line(svg,origin,horizon,x(Number(body[dimension])),y(Number(body[2])),{stroke:"var(--amber)","stroke-width":1.35,"stroke-dasharray":"4 3"}); line(svg,origin,horizon,x(Number(leveled[dimension])),y(Number(leveled[2])),{stroke:"var(--teal)","stroke-width":1.35}); tag(svg,"circle",{cx:x(Number(body[dimension])),cy:y(Number(body[2])),r:2,fill:"var(--amber)"}); tag(svg,"circle",{cx:x(Number(leveled[dimension])),cy:y(Number(leveled[2])),r:2,fill:"var(--teal)"}); }); tag(svg,"circle",{cx:origin,cy:horizon,r:3.3,fill:"var(--text)",stroke:"var(--plot)"});
+      function angleRange(min, max) { return finite(min) && finite(max) ? `${signed(min)} … ${signed(max)}` : "—"; }
+      function drawCoverage() {
+        const svg=$("coverage"), {width,height}=clearSvg(svg,"Vertical sensor FOV and selected bin coverage");
+        const level=state.snapshot?.leveling || {}, geometry=level.geometry, view=Array.isArray(level.view_by_bin)?level.view_by_bin[state.bin]:level.view, bin=level.coverage?.bins?.[state.bin];
+        tag(svg,"rect",{x:0,y:0,width,height:height-1,rx:6,fill:"var(--plot)"});
+        if (!geometry || !view) { text(svg,width/2,height/2,"Coverage unavailable",{"text-anchor":"middle",fill:"var(--text)","font-weight":650}); return; }
+        const values=[Number(geometry.sensor_min_deg),Number(geometry.sensor_max_deg),Number(view.min_deg),Number(view.max_deg),0];
+        const axisMin=Math.min(-60,Math.floor(Math.min(...values)/10)*10-10), axisMax=Math.max(60,Math.ceil(Math.max(...values)/10)*10+10);
+        const left=62,right=width-17, top=18, bottom=height-31, x=(value)=>left+(Number(value)-axisMin)/(axisMax-axisMin)*(right-left);
+        [-60,-30,0,30,60].filter((value)=>value>=axisMin&&value<=axisMax).forEach((value)=>{line(svg,x(value),top,x(value),bottom,{stroke:value===0?"var(--muted)":"var(--grid)","stroke-width":value===0?1.4:1,"stroke-dasharray":value===0?"4 3":"none"}); text(svg,x(value),height-10,value<0?`−${-value}°`:`${value}°`,{"text-anchor":"middle"});});
+        text(svg,12,top+14,"Sensor FOV",{fill:"var(--muted)","font-weight":650}); text(svg,12,top+66,"Current view",{fill:"var(--teal)","font-weight":650}); text(svg,x(0)+5,top+10,"Horizon",{fill:"var(--text)"});
+        const sensorY=top+24, viewY=top+76;
+        tag(svg,"rect",{x:x(geometry.sensor_min_deg),y:sensorY,width:Math.max(2,x(geometry.sensor_max_deg)-x(geometry.sensor_min_deg)),height:18,rx:4,fill:"var(--muted)","fill-opacity":.35});
+        tag(svg,"rect",{x:x(view.min_deg),y:viewY,width:Math.max(2,x(view.max_deg)-x(view.min_deg)),height:22,rx:5,fill:"var(--teal)","fill-opacity":.34,stroke:"var(--teal)"});
+        if (bin) { const marker=(Number(view.min_deg)+Number(view.max_deg))/2; line(svg,x(marker),viewY-8,x(marker),viewY+30,{stroke:bin.coverage_ok&&level.coverage?.packet_continuity_valid?"var(--teal)":"var(--red)","stroke-width":2}); text(svg,x(marker),viewY-12,binName(state.bin),{"text-anchor":"middle",fill:bin.coverage_ok&&level.coverage?.packet_continuity_valid?"var(--teal)":"var(--red)","font-weight":700}); }
+        text(svg,left,bottom+18,"level frame · elevation",{fill:"var(--muted)"});
       }
-
       function renderLeveling() {
-        const snapshot=state.snapshot, level=snapshot?.leveling || {}, aircraft=snapshot?.aircraft || {}; const pitch=finite(level.pitch_deg)?level.pitch_deg:aircraft.pitch_deg, roll=finite(level.roll_deg)?level.roll_deg:aircraft.roll_deg, hasPairs=Array.isArray(level.pairs?.xz)&&level.pairs.xz.length>0 || Array.isArray(level.pairs?.yz)&&level.pairs.yz.length>0; set("pose-time",finite(level.reference_time_us)?`t₀ ${num(Number(level.reference_time_us)/1e6,3)} s`:"t₀ —"); set("leveling-state",hasPairs?"Pairs live":finite(pitch)||finite(roll)?"Pose live · pairs not exported":"Waiting for pose"); set("pitch",signed(pitch)); set("roll",signed(roll)); drawSlice($("rays-xz"),level.pairs?.xz,0,"x"); drawSlice($("rays-yz"),level.pairs?.yz,1,"y");
+        const snapshot=state.snapshot, level=snapshot?.leveling || {}, aircraft=snapshot?.aircraft || {}; const pitch=finite(level.pitch_deg)?level.pitch_deg:aircraft.pitch_deg, roll=finite(level.roll_deg)?level.roll_deg:aircraft.roll_deg, coverage=level.coverage, geometry=level.geometry, view=Array.isArray(level.view_by_bin)?level.view_by_bin[state.bin]:level.view, bin=coverage?.bins?.[state.bin], band=level.band;
+        set("pose-time",finite(level.reference_time_us)?`t₀ ${num(Number(level.reference_time_us)/1e6,3)} s`:"t₀ —"); set("leveling-state",coverage&&view?(bin?.state||"Coverage"):(finite(pitch)||finite(roll)?"Pose live":"Waiting for pose")); set("pitch",signed(pitch)); set("roll",signed(roll)); set("fov-range",geometry?angleRange(geometry.sensor_min_deg,geometry.sensor_max_deg):"—"); set("view-range",view?angleRange(view.min_deg,view.max_deg):"—"); set("coverage-bin",bin?`${binName(state.bin)} · ${bin.state}`:"—"); set("coverage-band",band&&finite(band.height_down_m)&&finite(band.height_up_m)?`−${num(band.height_down_m,2)} … +${num(band.height_up_m,2)} m`:
+          "—"); set("coverage-up",bin?`Up ${bin.up_ray_count}/${coverage.required_rays}`:"Up —"); set("coverage-down",bin?`Down ${bin.down_ray_count}/${coverage.required_rays}`:"Down —"); set("coverage-reason",bin?(bin.reason||bin.state):"Coverage unavailable"); drawCoverage();
       }
       function renderReadout() { const snapshot=state.snapshot, map=mapBins(snapshot), caps=capBins(snapshot), item=map[state.bin], value=caps[state.bin]; set("range",item.kind === "Unknown" ? "—" : item.kind === "Near" ? "0.0 m" : item.kind === "Clear" ? "Clear" : unit(item.distance/100,"m")); set("range-kind",item.kind); set("cap",unit(value,"m/s")); set("selection",`${binName(state.bin)} at ${bearing(state.bin)}. ${item.kind}. Cap ${unit(value,"m/s")}.`); $("bin-select").value=String(state.bin); }
       function renderAircraft() { const snapshot=state.snapshot||{}, aircraft=snapshot.aircraft||{}, hook=snapshot.hook, caps=snapshot.caps; set("mode",aircraft.mode||"—"); set("armed",aircraft.armed===true?"Armed":aircraft.armed===false?"Disarmed":"—"); set("speed",unit(aircraft.speed_m_s,"m/s")); set("height",unit(aircraft.height_m,"m")); set("limiter",hook?.action_name || caps?.state_name || "—"); $("hook-bin").querySelector("span").textContent=Number.isInteger(hook?.active_sector)&&hook.active_sector<72?binName(hook.active_sector):"No cut"; const inV=hook?.vel_sp_in_m_s, outV=hook?.vel_sp_out_m_s; set("hook-in",Array.isArray(inV)&&finite(inV[0])&&finite(inV[1])?speedUnit(Math.hypot(inV[0],inV[1])):"—"); set("hook-out",Array.isArray(outV)&&finite(outV[0])&&finite(outV[1])?speedUnit(Math.hypot(outV[0],outV[1])):"—"); set("hook-action",hook?.action_name||"—"); set("hook-age",hook?`sample ${num(Number(hook.sample_age_us)/1000,0)} ms · constraint ${num(Number(hook.constraint_age_us)/1000,0)} ms`:"No hook sample"); }
       function renderConnection(connection) { const stateName=connection||"waiting"; $("connection-dot").dataset.state=stateName; set("connection-label",labels[stateName]||stateName); $("connect").dataset.active=stateName !== "disconnected" ? "true" : "false"; $("data-mode").textContent=stateName === "connected" ? "Live" : stateName === "disconnected" ? "Offline" : "Waiting"; }
-      function renderSources() { const sources=state.snapshot?.sources||{}; const short=["map","odometry","caps","hook"].map((name)=>`${name} ${sources[name]?.state||"—"}`); set("source-line",`Sources: ${short.join(" · ")}`); }
+      function renderSources() { const sources=state.snapshot?.sources||{}; const short=["map","odometry","leveling","caps","hook"].map((name)=>`${name} ${sources[name]?.state||"—"}`); set("source-line",`Sources: ${short.join(" · ")}`); }
       function render() { renderConnection(state.snapshot?.connection); renderReadout(); renderAircraft(); renderLeveling(); renderSources(); drawRadar(); drawCaps(); }
-      function selectBin(bin) { if(Number.isInteger(bin)&&bin>=0&&bin<bins){ state.bin=bin; renderReadout(); drawRadar(); drawCaps(); } }
+      function selectBin(bin) { if(Number.isInteger(bin)&&bin>=0&&bin<bins){ state.bin=bin; renderReadout(); renderLeveling(); drawRadar(); drawCaps(); } }
       function connect() { state.manualDisconnect=false; if(state.stream) state.stream.close(); renderConnection("waiting"); const stream=new EventSource("/events"); state.stream=stream; stream.addEventListener("snapshot",(event)=>{try{state.snapshot=JSON.parse(event.data); if(!state.manualDisconnect) render();}catch(error){console.error(error);}}); stream.onerror=()=>{if(!state.manualDisconnect) renderConnection("waiting");}; }
       function disconnect() { state.manualDisconnect=true; if(state.stream){state.stream.close(); state.stream=null;} renderConnection("disconnected"); }
       for(let bin=0;bin<bins;bin++) $("bin-select").appendChild(new Option(`${binName(bin)} · ${bearing(bin)}`,bin));
@@ -254,7 +271,7 @@
       $("connect").addEventListener("click",connect); $("disconnect").addEventListener("click",disconnect); $("hook-bin").addEventListener("click",()=>selectBin(state.snapshot?.hook?.active_sector));
       [$("radar"),$("caps")].forEach((svg)=>svg.addEventListener("click",(event)=>{const target=event.target.closest("[data-bin]"); if(target)selectBin(Number(target.dataset.bin));}));
       [$("radar"),$("caps")].forEach((svg)=>svg.addEventListener("keydown",(event)=>{if(event.key!=="Enter"&&event.key!==" ")return; const target=event.target.closest("[data-bin]"); if(target){event.preventDefault();selectBin(Number(target.dataset.bin));}}));
-      const resize=new ResizeObserver(render); resize.observe($("radar")); resize.observe($("caps")); resize.observe($("rays-xz")); resize.observe($("rays-yz"));
+      const resize=new ResizeObserver(render); resize.observe($("radar")); resize.observe($("caps")); resize.observe($("coverage"));
       renderConnection("waiting"); render(); connect();
     })();
   </script>
