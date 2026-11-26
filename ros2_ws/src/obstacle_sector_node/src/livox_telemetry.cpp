@@ -70,6 +70,7 @@ sensor_msgs::msg::PointCloud2 livoxPointsToMessage(
 {
   sensor_msgs::msg::PointCloud2 message;
   message.header.frame_id = frame_id;
+  message.height = 1U;
   message.is_bigendian = false;
   message.is_dense = true;
   message.point_step = 20U;

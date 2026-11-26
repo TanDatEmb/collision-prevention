@@ -131,8 +131,8 @@ struct SdkSourceStats
 /// the lidar for spherical points once per detection: one read, and one write (the point data
 /// type, key 0x0000) only if the type differs. It writes nothing else. Like every start of the SDK,
 /// the SDK itself also sends the host IP and ports from the config file to the lidar (state, point
-/// and IMU destinations). The IMU callback is set only when a gyro sink is given (setGyroSink, before
-/// start); its samples with PTP time go to that sink, from the SDK's thread (ADR 0023).
+/// and IMU destinations). The IMU callback is set when either sink is given before start; PTP gyro
+/// samples go to `GyroSink`, and complete samples go to `ImuSink`, from the SDK's thread (ADR 0023).
 ///
 /// The SDK has one global state, so only one instance can run at a time.
 class LivoxSdkSampleSource

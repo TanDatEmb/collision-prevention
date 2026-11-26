@@ -53,6 +53,7 @@ TEST(LivoxTelemetryTest, PointCloudContainsOnlyReturnsAndRawMetadata)
       obstacle_sector_map::RayReturnKind::kQualifiedNoReturn, 0U, 9U, 1'000'100U)};
 
   const auto message = obstacle_sector_node::livoxPointsToMessage(samples, "livox_ARMCP550031900");
+  EXPECT_EQ(message.height, 1U);
   ASSERT_EQ(message.width, 1U);
   ASSERT_EQ(message.point_step, 20U);
   ASSERT_EQ(message.fields.size(), 6U);
