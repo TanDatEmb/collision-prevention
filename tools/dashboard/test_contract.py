@@ -49,6 +49,8 @@ class DdsContractTests(unittest.TestCase):
             "Pose live",
             "speedUnit",
             "hook-age",
+            "Limit",
+            "Far / clear",
         ):
             self.assertIn(text, html)
 
