@@ -304,6 +304,7 @@ class SnapshotStore:
         self._lock = threading.RLock()
         self._subscribers: set[queue.Queue[dict[str, str]]] = set()
         self._received: dict[str, float] = {}
+        self._older_us: dict[str, int] = {}
         self._errors: dict[str, str] = {}
         self._map: dict[str, Any] | None = None
         self._caps: dict[str, Any] | None = None
@@ -359,6 +360,30 @@ class SnapshotStore:
     def _update_locked(self, source: str) -> None:
         self._touch(source)
         self._notify_locked()
+
+    def _accept_px4_sample_locked(self, source: str, previous: Mapping[str, Any] | None, timestamp_us: int) -> bool:
+        """Whether a PX4 sample may replace the stored one and refresh its source age.
+
+        Two feeders (ROS 2 and px4-listener) read the same uORB topic, so a sample that is not newer is dropped.
+        PX4 timestamps count from boot, so after a restart every sample is older than the stored one: those are
+        taken once the stored sample is stale and they advance. A single old or repeated read does neither.
+        """
+        previous_us = previous.get("timestamp_us") if previous else None
+        if previous_us is None:
+            return True
+        if not timestamp_us or timestamp_us == previous_us:
+            return False
+        if timestamp_us > previous_us:
+            self._older_us.pop(source, None)
+            return True
+        older_us = self._older_us.get(source)
+        self._older_us[source] = timestamp_us
+        received = self._received.get(source)
+        stale = received is None or self._clock() - received > self._source_timeout_s
+        if not stale or older_us is None or timestamp_us <= older_us:
+            return False
+        del self._older_us[source]
+        return True
 
     def update_map(self, payload: Mapping[str, Any]) -> None:
         distances = [
@@ -428,10 +453,7 @@ class SnapshotStore:
         state = _integer(payload.get("state"))
         with self._lock:
             timestamp_us = _integer(payload.get("timestamp"), 0)
-            previous_timestamp_us = self._caps.get("timestamp_us") if self._caps else None
-            if previous_timestamp_us is not None and (
-                not timestamp_us or timestamp_us <= previous_timestamp_us
-            ):
+            if not self._accept_px4_sample_locked("caps", self._caps, timestamp_us):
                 return
             self._caps = {
                 "timestamp_us": timestamp_us,
@@ -455,10 +477,7 @@ class SnapshotStore:
         action = _integer(payload.get("action"))
         with self._lock:
             timestamp_us = _integer(payload.get("timestamp"), 0)
-            previous_timestamp_us = self._hook.get("timestamp_us") if self._hook else None
-            if previous_timestamp_us is not None and (
-                not timestamp_us or timestamp_us <= previous_timestamp_us
-            ):
+            if not self._accept_px4_sample_locked("hook", self._hook, timestamp_us):
                 return
             self._hook = {
                 "timestamp_us": timestamp_us,
