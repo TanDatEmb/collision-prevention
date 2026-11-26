@@ -5,7 +5,7 @@ import json
 import queue
 import unittest
 
-from bridge import SnapshotStore, parse_listener_output, sse_event
+from bridge import SnapshotStore, _diagnostics_payload, parse_listener_output, sse_event
 
 
 class ListenerParserTests(unittest.TestCase):
@@ -107,6 +107,26 @@ class SseTests(unittest.TestCase):
         self.assertTrue(result.startswith("event: snapshot\ndata: "))
         self.assertTrue(result.endswith("\n\n"))
         self.assertEqual(json.loads(result.split("data: ", 1)[1].strip())["connection"], "waiting")
+
+
+class DiagnosticsTests(unittest.TestCase):
+    def test_ros_uint8_bytes_are_normalized(self):
+        class Value:
+            key = "frames"
+            value = "12"
+
+        class Status:
+            name = "obstacle_sector_node"
+            level = b"\x01"
+            message = "running"
+            values = [Value()]
+
+        class Message:
+            status = [Status()]
+
+        payload = _diagnostics_payload(Message())
+
+        self.assertEqual(payload["statuses"][0]["level"], 1)
 
 
 if __name__ == "__main__":

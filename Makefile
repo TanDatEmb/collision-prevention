@@ -5,7 +5,7 @@ REPO := $(abspath .)
 SIM := $(REPO)/tools/manual_sim
 LOG ?= $(shell ls -t $(REPO)/build/manual_sim/log/*/*.ulg 2>/dev/null | head -1)
 
-.PHONY: help px4-sitl px4-v6x ros test sim sim-keys sim-headless sim-stop flight-check
+.PHONY: help px4-sitl px4-v6x ros test dashboard sim sim-dashboard sim-keys sim-headless sim-stop flight-check
 
 help:
 	@echo "make px4-sitl       build the PX4 SITL firmware (firmware/PX4-Autopilot)"
@@ -13,9 +13,11 @@ help:
 	@echo "make ros            build the ROS 2 workspace"
 	@echo "make test           ROS 2 unit tests of the packages"
 	@echo "make sim            manual-flight SITL, stick from the QGroundControl virtual joystick"
+	@echo "make sim-dashboard  manual-flight SITL with the live CP Monitor at http://127.0.0.1:8765"
 	@echo "make sim-keys       manual-flight SITL, stick from the keyboard"
 	@echo "make sim-headless   manual-flight SITL without the Gazebo window (QGroundControl stick)"
 	@echo "make sim-stop       stop every simulator process"
+	@echo "make dashboard      serve the CP Monitor and wait for a SITL connection"
 	@echo "make flight-check   feel metrics of the latest manual flight (LOG=path.ulg for another)"
 
 px4-sitl:
@@ -29,11 +31,18 @@ ros:
 
 test:
 	source /opt/ros/jazzy/setup.bash && cd ros2_ws && \
-	  colcon test --parallel-workers 2 --packages-select obstacle_sector_map px4_obstacle_bridge livox_ray_source obstacle_sector_node && \
+	  colcon test --parallel-workers 2 --packages-select collision_prevention_msgs obstacle_sector_map px4_obstacle_bridge livox_ray_source obstacle_sector_node && \
 	  colcon test-result --verbose
+
+dashboard:
+	source /opt/ros/jazzy/setup.bash && source ros2_ws/install/setup.bash && \
+	  python3 tools/dashboard/bridge.py --open
 
 sim:
 	JOY=qgc bash $(SIM)/fly.sh
+
+sim-dashboard:
+	JOY=qgc DASHBOARD=1 DASHBOARD_OPEN=1 bash $(SIM)/fly.sh
 
 sim-keys:
 	JOY=keys bash $(SIM)/fly.sh

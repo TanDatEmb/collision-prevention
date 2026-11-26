@@ -118,6 +118,11 @@ def parse_listener_output(output: str) -> dict[str, Any]:
 
 
 def _number(value: Any, default: float | None = None) -> float | None:
+    if isinstance(value, (bytes, bytearray)):
+        try:
+            return float(int.from_bytes(value, "little"))
+        except (TypeError, ValueError):
+            return default
     if isinstance(value, bool):
         return float(value)
     if isinstance(value, (int, float)):
@@ -426,6 +431,8 @@ class Px4Listener:
             self.binary = Path(configured)
         else:
             build = Path(os.environ.get("PX4_BUILD", "firmware/PX4-Autopilot/build/px4_sitl_default"))
+            if not build.is_absolute():
+                build = Path(__file__).resolve().parents[2] / build
             self.binary = build / "bin" / "px4-listener"
         self._runner = runner
 
@@ -483,6 +490,13 @@ class RosTelemetryThread(threading.Thread):
             from diagnostic_msgs.msg import DiagnosticArray
             from px4_msgs.msg import ObstacleDistance, VehicleOdometry, VehicleStatus
 
+            try:
+                from collision_prevention_msgs.msg import CpBrakeConstraints, CpBrakeHook
+            except ImportError as exc:
+                CpBrakeConstraints = None
+                CpBrakeHook = None
+                self._store.set_error("dds", f"monitor messages unavailable: {exc}")
+
             self._rclpy = rclpy
             rclpy.init(args=None)
             node = rclpy.create_node("collision_prevention_dashboard")
@@ -535,6 +549,49 @@ class RosTelemetryThread(threading.Thread):
                 lambda message: self._store.update_diagnostics(_diagnostics_payload(message)),
                 10,
             )
+            if CpBrakeConstraints is not None:
+                node.create_subscription(
+                    CpBrakeConstraints,
+                    "/fmu/out/cp_brake_constraints",
+                    lambda message: self._store.update_caps(
+                        {
+                            "timestamp": message.timestamp,
+                            "sample_timestamp": message.sample_timestamp,
+                            "heading_rad": message.heading_rad,
+                            "heading_valid": message.heading_valid,
+                            "caps_m_s": list(message.caps_m_s),
+                            "distances_m": list(message.distances_m),
+                            "clearance_m": message.clearance_m,
+                            "enforcement_active": message.enforcement_active,
+                            "valid": message.valid,
+                            "state": message.state,
+                            "reason_flags": message.reason_flags,
+                        }
+                    ),
+                    qos_profile_sensor_data,
+                )
+            if CpBrakeHook is not None:
+                node.create_subscription(
+                    CpBrakeHook,
+                    "/fmu/out/cp_brake_hook",
+                    lambda message: self._store.update_hook(
+                        {
+                            "timestamp": message.timestamp,
+                            "sample_timestamp": message.sample_timestamp,
+                            "constraint_timestamp": message.constraint_timestamp,
+                            "sample_age_us": message.sample_age_us,
+                            "constraint_age_us": message.constraint_age_us,
+                            "state": message.state,
+                            "reason_flags": message.reason_flags,
+                            "action": message.action,
+                            "active_sector": message.active_sector,
+                            "vel_sp_in": list(message.vel_sp_in),
+                            "vel_sp_out": list(message.vel_sp_out),
+                            "vel": list(message.vel),
+                        }
+                    ),
+                    qos_profile_sensor_data,
+                )
             executor = SingleThreadedExecutor()
             executor.add_node(node)
             while not self._stop_event.is_set():
@@ -555,7 +612,7 @@ def _diagnostics_payload(message: Any) -> dict[str, Any]:
         statuses.append(
             {
                 "name": status.name,
-                "level": int(status.level),
+                "level": _integer(status.level, 0),
                 "message": status.message,
                 "values": values,
             }

@@ -22,7 +22,7 @@ LOG=$RUN/log-launch
 if ps -eo args | grep -qE "^gz sim|[b]in/px4( |$)|^MicroXRCEAgent"; then
   echo "Another simulation is running. Stop it with: make sim-stop"; exit 1
 fi
-for f in "$PX4/bin/px4" "$REPO/ros2_ws/install/setup.bash" "$T/spawn_obstacle.sh"; do
+for f in "$PX4/bin/px4" "$REPO/ros2_ws/install/setup.bash" "$T/spawn_obstacle.sh" "$REPO/tools/dashboard/bridge.py" "$REPO/tools/dashboard/index.html"; do
   [ -e "$f" ] || { echo "missing: $f (build it with: make px4-sitl / make ros)"; exit 1; }
 done
 mkdir -p "$LOG"
@@ -44,6 +44,19 @@ trap cleanup EXIT
 trap 'exit 130' INT TERM HUP
 # each program in its own process group, so that cleanup also ends its children
 start() { local log=$1; shift; setsid "$@" > "$LOG/$log" 2>&1 < /dev/null & PIDS+=($!); }
+
+if [ "${DASHBOARD:-0}" = 1 ]; then
+  echo "0/4 dashboard..."
+  start dashboard.log bash -c "source /opt/ros/jazzy/setup.bash; source '$REPO/ros2_ws/install/setup.bash'; exec python3 '$REPO/tools/dashboard/bridge.py' --host '${DASHBOARD_HOST:-127.0.0.1}' --port '${DASHBOARD_PORT:-8765}'"
+  for _ in $(seq 1 20); do
+    sleep 0.2
+    grep -q "CP Monitor:" "$LOG/dashboard.log" 2>/dev/null && break
+  done
+  grep -q "CP Monitor:" "$LOG/dashboard.log" 2>/dev/null || { echo "dashboard did not start, see $LOG/dashboard.log"; exit 1; }
+  if [ "${DASHBOARD_OPEN:-0}" = 1 ]; then
+    python3 -m webbrowser "http://${DASHBOARD_HOST:-127.0.0.1}:${DASHBOARD_PORT:-8765}/" >/dev/null 2>&1 || true
+  fi
+fi
 
 # the Mid-360S-density lidar model comes first; the rest of the bench models from tools/scenarios
 export GZ_SIM_RESOURCE_PATH="$HERE/models:$T/models:$FORK/Tools/simulation/gz/models:$FORK/Tools/simulation/gz/worlds"
