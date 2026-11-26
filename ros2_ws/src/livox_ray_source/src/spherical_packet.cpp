@@ -134,7 +134,7 @@ DecodedPacket decodeSphericalPacket(const uint8_t * data, std::size_t size)
       time_usable ? packet_time_ns + (dot_num > 1U ? (index * interval_ns) / (dot_num - 1U) : 0U)
                   : 0U;
     packet.rays.push_back(ray);
-    packet.point_metadata.push_back(DecodedPacket::PointMetadata{reflectivity, tag});
+    packet.point_metadata.push_back(PointMetadata{reflectivity, tag});
   }
   packet.status = DecodeStatus::kOk;
   return packet;
@@ -150,17 +150,22 @@ bool UdpContinuityTracker::update(uint16_t udp_cnt)
 }
 
 std::size_t PacketSampler::append(
-  const DecodedPacket & packet, bool udp_break, std::vector<StreamSample> & out)
+  const DecodedPacket & packet, bool udp_break, std::vector<StreamSample> & out,
+  std::vector<PointMetadata> * metadata)
 {
   _pending_break = _pending_break || udp_break;
   std::size_t dropped = 0U;
-  for (const auto & ray : packet.rays) {
+  for (std::size_t index = 0U; index < packet.rays.size(); ++index) {
+    const auto & ray = packet.rays[index];
     if (ray.timestamp_ns == 0U) {
       ++dropped;
       _pending_break = true;
       continue;
     }
     out.push_back(StreamSample{ray, _pending_break});
+    if (metadata != nullptr && index < packet.point_metadata.size()) {
+      metadata->push_back(packet.point_metadata[index]);
+    }
     _pending_break = false;
   }
   return dropped;

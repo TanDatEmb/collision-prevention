@@ -38,6 +38,23 @@ leveling panel shows pitch and roll and, per bin, the rays in the upper and lowe
 band, from `/collision_prevention/leveling_coverage` (published for the `ring_cloud` source only). It does
 not show ray pairs before and after leveling.
 
+## Livox telemetry and diagnostics
+
+For `source:=livox`, the node keeps the safety path on one primary lidar and publishes raw
+telemetry per detected serial:
+
+- `/livox/<serial>/imu` (`sensor_msgs/Imu`): PTP-stamped gyro and accelerometer. Acceleration is
+  converted from Livox g to m/s²; it is not fused into leveling.
+- `/livox/<serial>/points` (`sensor_msgs/PointCloud2`): finite return points in the Livox FLU frame,
+  with `reflectivity`, `tag` and per-point `time_offset_ns` fields.
+- `/livox/status` (`diagnostic_msgs/DiagnosticArray`): device identity, packet/IMU counters,
+  timestamp types, sample ages, continuity and primary-lidar faults.
+
+Set `primary_lidar_sn` when more than one lidar is reachable. Without it, the first detected lidar
+is accepted until a second appears; then the safety stream is rejected fail-closed while raw topics
+remain available. A run without an FMU pose is acquisition-only: it cannot qualify leveling or PX4
+`/fmu/in/obstacle_distance`.
+
 ## Usage
 ```cpp
 auto config = obstacle_sector_node::loadSectorMapConfig("config/platforms/x500.yaml");
@@ -46,13 +63,28 @@ rclcpp::spin(std::make_shared<obstacle_sector_node::ObstacleSectorNode>(std::mov
 
 ## Run with a Livox Mid-360(S)
 `ros2 run obstacle_sector_node obstacle_sector_node --ros-args -p platform_config:=<yaml> -p
-source:=livox -p livox_config:=<Livox SDK2 JSON>` (the SDK's `mid360s_config.json` sample, with
-the host IP of this machine, works). `coverage_window_ms` is the frame window (default 100, the
-ICD value); `configure_point_type` (default true) lets the node ask the lidar for spherical points
-once, which is the only parameter it writes (see `livox_ray_source`). Every 5 s the log shows the
-packet counters: `unsynchronized` counts packets whose time is not PTP; their rays carry time 0, no
-frame forms and the diagnostics say "source ended". The lidar must be synchronized by PTP
-(`time_type` 1, ADR 0003), for example with `ptp4l` as master on the lidar's port.
+source:=livox -p livox_config:=<Livox SDK2 JSON> -p primary_lidar_sn:=<serial>` (the tracked
+`config/livox/mid360s_config.json` uses host `192.168.1.5`; change it for another NIC). Use the
+bench profile `config/platforms/x500-livox-bench.yaml` for the owner-selected gyro history
+(`depth: 128`, `max_bracket_gap_ms: 10`). `coverage_window_ms` is the frame window (default 100,
+the ICD value); `configure_point_type` (default true) asks the lidar for spherical points once,
+which is the only setting this path writes. Every 5 s the log shows packet/IMU counters:
+`unsynchronized` counts packets whose time is not PTP; their rays carry time 0 and cannot form a
+frame. The lidar must report PTP (`time_type` 1), for example with `make livox-up`. Software-only
+PTP is not an absolute clock-offset qualification.
+
+For a repeatable source check without an FC, use `make livox-check`. It verifies the Ethernet
+address, tracked config and PTP process, then runs `livox_source_probe`; this is source-only
+evidence. To run the real ROS 2 pipeline, keep `/fmu/out/vehicle_odometry` active and start:
+
+```bash
+source /opt/ros/jazzy/setup.bash && source ros2_ws/install/setup.bash
+ros2 run obstacle_sector_node obstacle_sector_node --ros-args \
+  -p platform_config:=config/platforms/x500-livox-bench.yaml \
+  -p source:=livox \
+  -p livox_config:=config/livox/mid360s_config.json \
+  -p primary_lidar_sn:=ARMCP550031900
+```
 
 ## Run in Gazebo SITL
 The executable `obstacle_sector_node` reads `sensor_msgs/LaserScan` from `scan` (parameter

@@ -28,7 +28,9 @@ Livox -> obstacle_sector_map -> px4_obstacle_bridge -> uXRCE-DDS -> PX4
 
 ```
 AGENTS.md                      rules for AI agents and contributors
-config/platforms/x500.yaml     platform values (X500 SITL bench values and self-mask; gyro TBD)
+config/platforms/x500.yaml     X500 SITL values (Livox gyro TBD)
+config/platforms/x500-livox-bench.yaml  owner-selected Livox bench profile (not flight-qualified)
+config/livox/                  tracked Mid-360S SDK2 and software-PTP bench configuration
 docs/architecture.md           scope, requirements, ICDs, hazards, V&V, open items
 docs/adr/                      accepted architecture decisions
 firmware/PX4-Autopilot         PX4 fork (submodule, pinned)
@@ -43,6 +45,7 @@ tools/check_msg_parity.sh      checks PX4 and px4_msgs message definitions match
 tools/dashboard/               read-only live monitor in the browser, and its tests
 tools/manual_sim/              manual-flight Gazebo SITL with obstacles (bench values), run with `make sim`
 tools/scenarios/               scripted SITL scenarios and their analysis
+tools/livox/                   Ethernet/PTP bring-up, live SDK2 probe and shutdown scripts
 Makefile                       developer entry points (`make` lists them)
 .agents/skills/                commit and pr skills (symlinked from .claude/skills/)
 .github/workflows/ci.yml       PR title check, format check, build and test
@@ -101,6 +104,26 @@ make dashboard        # the monitor alone: it waits for a SITL and stays while t
 ```
 
 A green build and unit test is not SITL, HIL, flight testing or qualification.
+
+## Livox Mid-360S bring-up
+
+The project-linked SDK2 adapter reads spherical PTP points and IMU gyro/acceleration. Leveling uses
+the gyro only; acceleration and point reflectivity/tag are telemetry. Start a software PTP master,
+then run the finite source probe:
+
+```bash
+make livox-up
+LIVOX_PRIMARY_SN=ARMCP550031900 LIVOX_DURATION_S=10 make livox-check
+make livox-down
+```
+
+The defaults are `enp52s0`, host `192.168.1.5`, sensor `192.168.1.100` and
+`config/livox/mid360s_config.json`. Override `LIVOX_IFACE`, `LIVOX_HOST_IP`, `LIVOX_SENSOR_IP`,
+`LIVOX_CONFIG`, `LIVOX_DURATION_S` or `LIVOX_PRIMARY_SN` for another bench. The source probe does
+not need an FC. A real ROS 2 pipeline does: use
+`config/platforms/x500-livox-bench.yaml`, keep `/fmu/out/vehicle_odometry` alive and start the
+`obstacle_sector_node` command documented in its README. Software-only PTP proves timestamp
+continuity, not absolute host/sensor clock offset; no-FC runs cannot qualify leveling or PX4 output.
 
 ## Platforms
 

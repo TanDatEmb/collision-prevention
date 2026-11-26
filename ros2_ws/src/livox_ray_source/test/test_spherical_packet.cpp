@@ -319,6 +319,22 @@ TEST(PacketSamplerTest, RaysWithATimeAreHandedOnInOrderAndUnbroken)
   }
 }
 
+TEST(PacketSamplerTest, PreservesPointMetadataForForwardedRays)
+{
+  PacketSampler sampler;
+  std::vector<StreamSample> out;
+  std::vector<livox_ray_source::PointMetadata> metadata;
+  const auto bytes = makePacket({{1000U, 9000U, 0U, 11U, 2U}, {2000U, 9000U, 100U, 22U, 4U}});
+  const auto packet = decodeSphericalPacket(bytes.data(), bytes.size());
+  EXPECT_EQ(sampler.append(packet, false, out, &metadata), 0U);
+  ASSERT_EQ(out.size(), 2U);
+  ASSERT_EQ(metadata.size(), out.size());
+  EXPECT_EQ(metadata[0].reflectivity, 11U);
+  EXPECT_EQ(metadata[0].tag, 2U);
+  EXPECT_EQ(metadata[1].reflectivity, 22U);
+  EXPECT_EQ(metadata[1].tag, 4U);
+}
+
 TEST(PacketSamplerTest, RaysWithoutATimeAreDroppedAndCounted)
 {
   PacketSampler sampler;

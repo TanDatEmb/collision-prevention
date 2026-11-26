@@ -23,18 +23,19 @@ enum class DecodeStatus : uint8_t
   kNoPoints,        ///< `dot_num` is 0
 };
 
+/// Per-point fields that are not part of the safety map contract.
+struct PointMetadata
+{
+  uint8_t reflectivity{0U};
+  uint8_t tag{0U};
+};
+
 struct DecodedPacket
 {
   DecodeStatus status{DecodeStatus::kTooShort};
   uint16_t udp_cnt{0U};
   uint8_t time_type{0U};  ///< 0 no sync (time since power on), 1 PTP, 2 GPS
   std::vector<obstacle_sector_map::RaySample> rays;
-  /// Per-point fields that are not part of the safety map contract. The order matches `rays`.
-  struct PointMetadata
-  {
-    uint8_t reflectivity{0U};
-    uint8_t tag{0U};
-  };
   std::vector<PointMetadata> point_metadata;
 };
 
@@ -121,8 +122,11 @@ class PacketSampler
 {
 public:
   /// Appends the rays of `packet` that have a time to `out`; `udp_break` is true when packets were
-  /// lost just before this one. Returns the number of rays dropped.
-  std::size_t append(const DecodedPacket & packet, bool udp_break, std::vector<StreamSample> & out);
+  /// lost just before this one. When `metadata` is supplied, it receives point metadata in the same
+  /// order as the forwarded samples. Returns the number of rays dropped.
+  std::size_t append(
+    const DecodedPacket & packet, bool udp_break, std::vector<StreamSample> & out,
+    std::vector<PointMetadata> * metadata = nullptr);
 
 private:
   bool _pending_break{false};

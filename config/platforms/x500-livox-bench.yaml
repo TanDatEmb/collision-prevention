@@ -1,0 +1,32 @@
+# X500 SITL / Livox Mid-360(S) bench profile.
+# This profile is for the repeatable bench pipeline only. It is not a flight-qualified platform
+# configuration and does not change config/platforms/x500.yaml, whose Livox gyro values remain TBD.
+# The gyro-history values below were selected by the owner for this bench (depth 128, 10 ms gap).
+platform: x500-livox-bench
+sim:
+  gz_model: x500_lidar_multi_ring
+sensor:
+  mount_pose_in_base_link:
+    xyz_m: [0.12, 0.0, 0.14]
+    rpy_rad: [0.0, 0.1745, 0.0]
+pose_history:
+  depth: 64
+  max_bracket_gap_ms: 50
+gyro_history:
+  depth: 128
+  max_bracket_gap_ms: 10
+sector_map:
+  height_up_m: 0.25
+  height_down_m: 0.60
+  rear_start_rad: 0.7854
+  obstacle_window_m: 0.5
+  obstacle_min_returns: 3
+  free_min_rays: 5
+  certified_range_m: 20.0
+  attitude_allowance_rad: 0.0157
+self_mask:
+  cylinders:
+    - {center_m: [0.174, 0.174], radius_m: 0.1565, z_min_m: 0.034, z_max_m: 0.0794}
+    - {center_m: [0.174, -0.174], radius_m: 0.1565, z_min_m: 0.034, z_max_m: 0.0794}
+    - {center_m: [-0.174, 0.174], radius_m: 0.1565, z_min_m: 0.034, z_max_m: 0.0794}
+    - {center_m: [-0.174, -0.174], radius_m: 0.1565, z_min_m: 0.034, z_max_m: 0.0794}

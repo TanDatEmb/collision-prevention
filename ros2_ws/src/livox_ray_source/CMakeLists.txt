@@ -11,7 +11,7 @@ find_package(obstacle_sector_map REQUIRED)
 find_package(yaml-cpp REQUIRED)
 
 add_library(livox_ray_source src/frame_segmenter.cpp src/replay_ray_source.cpp src/self_mask.cpp
-  src/masking_ray_source.cpp src/spherical_packet.cpp src/pose_history.cpp
+  src/masking_ray_source.cpp src/spherical_packet.cpp src/livox_source_contract.cpp src/pose_history.cpp
   src/ray_leveling.cpp src/leveling_ray_source.cpp src/gyro_track.cpp)
 target_include_directories(livox_ray_source PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
@@ -42,11 +42,15 @@ target_link_libraries(livox_ray_source_sdk
   PUBLIC livox_ray_source
   PRIVATE ${LIVOX_LIDAR_SDK_STATIC_LIBRARY} Threads::Threads)
 
+add_executable(livox_source_probe src/livox_source_probe.cpp)
+target_link_libraries(livox_source_probe livox_ray_source_sdk Threads::Threads)
+
 install(TARGETS livox_ray_source livox_ray_source_sdk
   EXPORT export_livox_ray_source
   ARCHIVE DESTINATION lib
   LIBRARY DESTINATION lib
   RUNTIME DESTINATION bin)
+install(TARGETS livox_source_probe RUNTIME DESTINATION lib/${PROJECT_NAME})
 install(DIRECTORY include/ DESTINATION include)
 
 if(BUILD_TESTING)
@@ -57,6 +61,8 @@ if(BUILD_TESTING)
   target_link_libraries(test_masking_ray_source livox_ray_source)
   ament_add_gtest(test_spherical_packet test/test_spherical_packet.cpp)
   target_link_libraries(test_spherical_packet livox_ray_source)
+  ament_add_gtest(test_livox_source_contract test/test_livox_source_contract.cpp)
+  target_link_libraries(test_livox_source_contract livox_ray_source)
   ament_add_gtest(test_pose_history test/test_pose_history.cpp)
   target_link_libraries(test_pose_history livox_ray_source)
   ament_add_gtest(test_ray_leveling test/test_ray_leveling.cpp)

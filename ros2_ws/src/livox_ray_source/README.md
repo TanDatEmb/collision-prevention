@@ -27,9 +27,11 @@ that reads them through the Livox SDK2 (ADR 0016).
   0.01 degree, theta is the polar angle from +z and phi increases from +x towards +y, so azimuth is
   phi (counter-clockwise, FLU) and elevation is 90 degrees minus theta. Values outside theta
   [0, 18000] and phi [0, 36000] are invalid.
-- A depth of 0 is invalid, never a return and never free: the protocol does not say what it means
-  and the qualified no-return rule is open (OPEN-022, ADR 0004). On a real Mid-360S about half of
-  the points had depth 0. Tags are not used.
+- A depth of 0 with a valid direction is a qualified no-return (issue #172): the vendor convention
+  is `(0, theta, phi)` for no object in range, the vendor driver forwards such points unfiltered,
+  and a real Mid-360S sends them. No vendor document defines it beyond that, so a blocked or dirty
+  window may read the same (open, bench test). Reflectivity and tag are retained as telemetry
+  metadata; they do not change the safety-map classification.
 - Time: only PTP time (`time_type` 1) is used; the packet time is the time of the first point and
   the points are equally spaced over `time_interval` (0.1 us, first to last point: a real packet
   has 96 points, 475 us first to last, 480 us between packets). Any other time type gives
@@ -37,13 +39,34 @@ that reads them through the Livox SDK2 (ADR 0016).
   falls back to the host clock; this project does not.
 - `UdpContinuityTracker` flags a gap, a duplicate or a step back of the 16 bit `udp_cnt`.
 - `LivoxSdkSampleSource` (library `livox_ray_source_sdk`) starts the SDK with a JSON config,
-  decodes every point packet from the SDK thread and gives the rays to a sink. With
-  `configure_point_type` it reads the lidar's point type once per detection and writes the point
-  type (spherical) only if it differs. The SDK itself also sends the host IP and ports of the
-  config file at every start. Only the point cloud callback is set: the IMU is not read.
+  decodes every point packet from the SDK thread and gives the safety rays to a sink. It also
+  exposes complete PTP IMU samples (gyro plus acceleration in g), point reflectivity/tag metadata,
+  per-device counters and a diagnostic snapshot. `GyroSink` remains the only input to leveling;
+  acceleration is telemetry only. With `configure_point_type` it reads the lidar's point type once
+  per detection and writes spherical type only when needed. A configured primary serial is required
+  when more than one lidar is present; raw telemetry still identifies every device. SDK2 status
+  push text is logged, while temperature/FUSA fields are intentionally not promoted because the
+  SDK exposes them as an opaque text callback rather than a stable numeric sample contract.
 - Linking: the SDK archive carries its own spdlog 1.3.1, which crashes `rclcpp::init` next to
   ROS's 1.12 unless its symbols are hidden: link with `-Wl,--exclude-libs,liblivox_lidar_sdk_static.a`
   (the node executable does).
+
+## Live probe
+
+Build the workspace first, then run the project-linked probe. It exits non-zero when no stream,
+IMU, PTP timestamp, continuity or primary-lidar contract is available:
+
+```bash
+make livox-up
+LIVOX_PRIMARY_SN=ARMCP550031900 LIVOX_DURATION_S=10 make livox-check
+make livox-down
+```
+
+`make livox-up` assigns `192.168.1.5/24` to `enp52s0` and starts the tracked software PTP
+profile. Override `LIVOX_IFACE`, `LIVOX_HOST_IP`, `LIVOX_SENSOR_IP` and `LIVOX_CONFIG` for a
+different bench. Software-only PTP proves packet timestamp continuity, not an absolute host/sensor
+clock offset. `LIVOX_ALLOW_UNSYNC=1 make livox-check` is source-only debug evidence and is never a
+qualified pipeline run.
 
 ## Usage
 ```cpp
