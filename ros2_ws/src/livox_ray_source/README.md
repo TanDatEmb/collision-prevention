@@ -43,8 +43,10 @@ that reads them through the Livox SDK2 (ADR 0016).
   exposes complete PTP IMU samples (gyro plus acceleration in g), point reflectivity/tag metadata,
   per-device counters and a diagnostic snapshot. `GyroSink` remains the only input to leveling;
   acceleration is telemetry only. With `configure_point_type` it reads the lidar's point type once
-  per detection and writes spherical type only when needed. A configured primary serial is required
-  when more than one lidar is present; raw telemetry still identifies every device. SDK2 status
+  per detection and writes spherical type only when needed. On each detection it also requests
+  `kLivoxLidarNormal` and enables the IMU stream, matching the official ROS2 driver lifecycle;
+  these commands are idempotent on reconnect. A configured primary serial is required when more
+  than one lidar is present; raw telemetry still identifies every device. SDK2 status
   push text is logged, while temperature/FUSA fields are intentionally not promoted because the
   SDK exposes them as an opaque text callback rather than a stable numeric sample contract.
 - Linking: the SDK archive carries its own spdlog 1.3.1, which crashes `rclcpp::init` next to

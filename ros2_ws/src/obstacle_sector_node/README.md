@@ -50,6 +50,11 @@ telemetry per detected serial:
 - `/livox/status` (`diagnostic_msgs/DiagnosticArray`): device identity, packet/IMU counters,
   timestamp types, sample ages, continuity and primary-lidar faults.
 
+IMU packets are queued between the SDK callback and ROS publication so DDS work cannot block
+acquisition; each packet is published once with its Livox timestamp. The bounded telemetry queue
+holds 256 samples per device; drops are reported as `imu_queue_drops` in diagnostics. The ROS IMU
+covariance is unknown (zero matrix), while orientation is explicitly unavailable.
+
 Set `primary_lidar_sn` when more than one lidar is reachable. Without it, the first detected lidar
 is accepted until a second appears; then the safety stream is rejected fail-closed while raw topics
 remain available. A run without an FMU pose is acquisition-only: it cannot qualify leveling or PX4
@@ -67,8 +72,8 @@ source:=livox -p livox_config:=<Livox SDK2 JSON> -p primary_lidar_sn:=<serial>` 
 `config/livox/mid360s_config.json` uses host `192.168.1.5`; change it for another NIC). Use the
 bench profile `config/platforms/x500-livox-bench.yaml` for the owner-selected gyro history
 (`depth: 128`, `max_bracket_gap_ms: 10`). `coverage_window_ms` is the frame window (default 100,
-the ICD value); `configure_point_type` (default true) asks the lidar for spherical points once,
-which is the only setting this path writes. Every 5 s the log shows packet/IMU counters:
+the ICD value); `configure_point_type` (default true) asks the lidar for spherical points once.
+The source also requests normal work mode and enables IMU data on detection. Every 5 s the log shows packet/IMU counters:
 `unsynchronized` counts packets whose time is not PTP; their rays carry time 0 and cannot form a
 frame. The lidar must report PTP (`time_type` 1), for example with `make livox-up`. Software-only
 PTP is not an absolute clock-offset qualification.

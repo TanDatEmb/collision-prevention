@@ -208,7 +208,9 @@ void onImu(
     ++impl->imu_accel_unusable;
     ++state->imu_accel_unusable;
   }
-  if (impl->gyro_sink) {
+  // The gyro feeds the single safety leveler, so it must follow the same primary-device
+  // selection as the safety point stream. Complete IMU telemetry remains all-device below.
+  if (impl->gyro_sink && impl->registry.accepts(handle)) {
     impl->gyro_sink(decoded.gyro);
   }
   if (impl->imu_sink && decoded.accelerationIsValid()) {
@@ -240,6 +242,45 @@ void onPointTypeSet(
   impl->say(
     "livox: point type set to spherical, status " + std::to_string(status) + ", ret_code " +
     std::to_string(response->ret_code));
+}
+
+void onWorkModeSet(
+  livox_status status, uint32_t handle, LivoxLidarAsyncControlResponse * response,
+  void * client_data)
+{
+  auto * impl = static_cast<Impl *>(client_data);
+  if (impl == nullptr) {
+    return;
+  }
+  const uint32_t ret_code = response == nullptr ? 0xFFFFFFFFU : response->ret_code;
+  if (status == kLivoxLidarStatusSuccess && ret_code == 0U) {
+    impl->say("livox: lidar " + std::to_string(handle) + " is in normal work mode");
+  }
+  else {
+    impl->say(
+      "livox: could not set lidar " + std::to_string(handle) +
+      " to normal work mode, status " + std::to_string(status) + ", ret_code " +
+      std::to_string(ret_code));
+  }
+}
+
+void onImuEnable(
+  livox_status status, uint32_t handle, LivoxLidarAsyncControlResponse * response,
+  void * client_data)
+{
+  auto * impl = static_cast<Impl *>(client_data);
+  if (impl == nullptr) {
+    return;
+  }
+  const uint32_t ret_code = response == nullptr ? 0xFFFFFFFFU : response->ret_code;
+  if (status == kLivoxLidarStatusSuccess && ret_code == 0U) {
+    impl->say("livox: IMU data enabled for lidar " + std::to_string(handle));
+  }
+  else {
+    impl->say(
+      "livox: could not enable IMU data for lidar " + std::to_string(handle) + ", status " +
+      std::to_string(status) + ", ret_code " + std::to_string(ret_code));
+  }
 }
 
 void onInternalInfo(
@@ -283,14 +324,31 @@ void onLidarInfoChange(const uint32_t handle, const LivoxLidarInfo * info, void 
   impl->registry.observe(identity);
   ++impl->device_events;
   impl->say(std::string("livox: detected lidar ") + identity.serial + " at " + identity.lidar_ip);
-  if (!impl->configure_point_type) {
-    return;
-  }
   bool expected = false;
-  if (!state->detection_handled.compare_exchange_strong(expected, true)) {
-    return;
+  // The lifecycle commands below are idempotent and are repeated on a reconnect. The point type
+  // query/write is the only command kept to one request per detection epoch.
+  if (impl->configure_point_type && state->detection_handled.compare_exchange_strong(expected, true)) {
+    QueryLivoxLidarInternalInfo(handle, onInternalInfo, impl);
   }
-  QueryLivoxLidarInternalInfo(handle, onInternalInfo, impl);
+
+  // The SDK callback is delivered when a device is detected, but the reference driver still
+  // explicitly starts normal sampling and enables the optional IMU stream. Do the same here;
+  // these commands are safe to repeat after a reconnect.
+  const livox_status work_mode_status =
+    SetLivoxLidarWorkMode(handle, kLivoxLidarNormal, onWorkModeSet, impl);
+  if (work_mode_status != kLivoxLidarStatusSuccess) {
+    impl->say(
+      "livox: normal work-mode request failed immediately, status " +
+      std::to_string(work_mode_status));
+  }
+  if (impl->gyro_sink || impl->imu_sink) {
+    const livox_status imu_status = EnableLivoxLidarImuData(handle, onImuEnable, impl);
+    if (imu_status != kLivoxLidarStatusSuccess) {
+      impl->say(
+        "livox: IMU enable request failed immediately, status " +
+        std::to_string(imu_status));
+    }
+  }
 }
 
 void onLidarInfo(const uint32_t handle, const uint8_t, const char * info, void * client_data)

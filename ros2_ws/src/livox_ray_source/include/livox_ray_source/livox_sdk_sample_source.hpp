@@ -132,7 +132,8 @@ struct SdkSourceStats
 /// type, key 0x0000) only if the type differs. It writes nothing else. Like every start of the SDK,
 /// the SDK itself also sends the host IP and ports from the config file to the lidar (state, point
 /// and IMU destinations). The IMU callback is set when either sink is given before start; PTP gyro
-/// samples go to `GyroSink`, and complete samples go to `ImuSink`, from the SDK's thread (ADR 0023).
+/// samples from the selected primary lidar go to `GyroSink`, and complete samples from every lidar
+/// go to `ImuSink`, from the SDK's thread (ADR 0023).
 ///
 /// The SDK has one global state, so only one instance can run at a time.
 class LivoxSdkSampleSource
@@ -153,8 +154,8 @@ public:
   LivoxSdkSampleSource(const LivoxSdkSampleSource &) = delete;
   LivoxSdkSampleSource & operator=(const LivoxSdkSampleSource &) = delete;
 
-  /// Gives the IMU gyro samples to `sink` (thread safe, called from the SDK's thread). Call before start();
-  /// a null sink leaves the IMU unread.
+  /// Gives PTP IMU gyro samples from the selected primary lidar to `sink` (thread safe, called from
+  /// the SDK's thread). Call before start(); a null sink leaves the safety gyro stream unread.
   void setGyroSink(GyroSink sink);
 
   /// Gives complete IMU samples to `sink`. Acceleration stays in g until a ROS boundary converts it.

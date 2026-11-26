@@ -124,8 +124,11 @@ int main(int argc, char ** argv)
 
     const auto stats = source.stats();
     const auto health = source.health();
-    const bool observed = stats.packets > 0U && stats.decoded_packets > 0U && point_samples > 0U &&
-                          stats.imu_packets > 0U;
+    // The raw point/IMU sinks intentionally reject unsynchronized timestamps. In source-only
+    // debug mode, decoded packet counters prove that the sensor is producing data without
+    // weakening the safety stream's PTP requirement.
+    const bool observed = stats.packets > 0U && stats.decoded_packets > 0U &&
+                          stats.point_metadata_samples > 0U && stats.imu_packets > 0U;
     const bool qualified =
       stats.packets > 0U && stats.decoded_packets > 0U && stream_samples > 0U &&
       point_samples > 0U && imu_samples > 0U && stats.rejected_packets == 0U &&

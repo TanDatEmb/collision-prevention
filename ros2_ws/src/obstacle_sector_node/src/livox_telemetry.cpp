@@ -60,8 +60,8 @@ sensor_msgs::msg::Imu livoxImuToMessage(
   message.linear_acceleration.y = sample.sample.acceleration_flu_g[1] * kStandardGravityMps2;
   message.linear_acceleration.z = sample.sample.acceleration_flu_g[2] * kStandardGravityMps2;
   message.orientation_covariance[0] = -1.0;
-  message.angular_velocity_covariance[0] = -1.0;
-  message.linear_acceleration_covariance[0] = -1.0;
+  // The samples are measured, but no covariance calibration is available. ROS uses an all-zero
+  // covariance to mean "unknown"; -1 would tell consumers to discard these populated estimates.
   return message;
 }
 

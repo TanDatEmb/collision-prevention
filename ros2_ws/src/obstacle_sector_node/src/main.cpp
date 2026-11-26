@@ -37,6 +37,7 @@
 #include <cctype>
 #include <chrono>
 #include <exception>
+#include <deque>
 #include <iostream>
 #include <limits>
 #include <map>
@@ -101,11 +102,16 @@ std::string livoxTopicToken(const livox_ray_source::LivoxDeviceIdentity & device
   return token.empty() ? "unknown" : token;
 }
 
+// Matches the bounded IMU queue used by the official Livox ROS2 driver. This is telemetry
+// back-pressure only; the safety gyro path remains synchronous and is never replaced by a queue.
+constexpr std::size_t kLivoxImuTelemetryQueueCapacity{256U};
+
 struct LivoxTelemetryState
 {
   std::mutex mutex;
   std::map<std::string, std::vector<livox_ray_source::LivoxPointSample>> point_batches;
-  std::map<std::string, livox_ray_source::LivoxImuSample> latest_imu;
+  std::map<std::string, std::deque<livox_ray_source::LivoxImuSample>> imu_batches;
+  std::map<std::string, uint64_t> imu_queue_drops;
   std::map<std::string, rclcpp::Publisher<sensor_msgs::msg::Imu>::SharedPtr> imu_publishers;
   std::map<std::string, rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr>
     point_publishers;
@@ -319,6 +325,7 @@ int main(int argc, char ** argv)
     std::unique_ptr<livox_ray_source::LivoxSdkSampleSource> livox;
     rclcpp::TimerBase::SharedPtr livox_stats_timer;
     rclcpp::TimerBase::SharedPtr livox_status_timer;
+    rclcpp::TimerBase::SharedPtr livox_imu_timer;
     rclcpp::TimerBase::SharedPtr livox_point_timer;
     rclcpp::Publisher<diagnostic_msgs::msg::DiagnosticArray>::SharedPtr livox_status_pub;
     auto livox_telemetry = std::make_shared<LivoxTelemetryState>();
@@ -377,17 +384,16 @@ int main(int argc, char ** argv)
         [gyro](const livox_ray_source::GyroSample & sample) { gyro->push(sample); });
       livox->setImuSink([livox_telemetry](const livox_ray_source::LivoxImuSample & sample) {
         const std::string token = livoxTopicToken(sample.device);
-        rclcpp::Publisher<sensor_msgs::msg::Imu>::SharedPtr publisher;
         {
           const std::lock_guard<std::mutex> lock(livox_telemetry->mutex);
-          livox_telemetry->latest_imu[token] = sample;
-          const auto it = livox_telemetry->imu_publishers.find(token);
-          if (it != livox_telemetry->imu_publishers.end()) {
-            publisher = it->second;
+          // Keep SDK callbacks short. The reference driver also queues IMU packets before ROS
+          // publication; this prevents a DDS publish from blocking acquisition.
+          auto & batch = livox_telemetry->imu_batches[token];
+          if (batch.size() >= kLivoxImuTelemetryQueueCapacity) {
+            batch.pop_front();
+            ++livox_telemetry->imu_queue_drops[token];
           }
-        }
-        if (publisher) {
-          publisher->publish(obstacle_sector_node::livoxImuToMessage(sample, "livox_" + token));
+          batch.push_back(sample);
         }
       });
       livox->setPointSink([livox_telemetry](const livox_ray_source::LivoxPointSample & sample) {
@@ -419,26 +425,46 @@ int main(int argc, char ** argv)
       }
       livox_status_pub =
         node->create_publisher<diagnostic_msgs::msg::DiagnosticArray>("/livox/status", 10);
+      livox_imu_timer = node->create_wall_timer(
+        std::chrono::milliseconds(5), [livox_telemetry]() {
+          std::vector<std::pair<rclcpp::Publisher<sensor_msgs::msg::Imu>::SharedPtr,
+                                livox_ray_source::LivoxImuSample>> samples;
+          {
+            const std::lock_guard<std::mutex> lock(livox_telemetry->mutex);
+            for (auto & [token, batch] : livox_telemetry->imu_batches) {
+              const auto publisher = livox_telemetry->imu_publishers.find(token);
+              if (publisher == livox_telemetry->imu_publishers.end()) {
+                continue;
+              }
+              while (!batch.empty()) {
+                samples.emplace_back(publisher->second, std::move(batch.front()));
+                batch.pop_front();
+              }
+            }
+          }
+          for (const auto & [publisher, sample] : samples) {
+            publisher->publish(
+              obstacle_sector_node::livoxImuToMessage(sample, "livox_" + livoxTopicToken(sample.device)));
+          }
+        });
       livox_status_timer = node->create_wall_timer(
         std::chrono::seconds(1), [node, livox_source, livox_status_pub, livox_telemetry]() {
           const auto health = livox_source->health();
           for (const auto & device : health) {
             const std::string token = livoxTopicToken(device.device);
-            const std::lock_guard<std::mutex> lock(livox_telemetry->mutex);
-            if (livox_telemetry->imu_publishers.count(token) == 0U) {
-              livox_telemetry->imu_publishers[token] =
-                node->create_publisher<sensor_msgs::msg::Imu>(
-                  "/livox/" + token + "/imu", rclcpp::SensorDataQoS());
-            }
-            if (livox_telemetry->point_publishers.count(token) == 0U) {
-              livox_telemetry->point_publishers[token] =
-                node->create_publisher<sensor_msgs::msg::PointCloud2>(
-                  "/livox/" + token + "/points", rclcpp::QoS(rclcpp::KeepLast(2)).best_effort());
-            }
-            const auto imu_it = livox_telemetry->latest_imu.find(token);
-            if (imu_it != livox_telemetry->latest_imu.end()) {
-              livox_telemetry->imu_publishers[token]->publish(
-                obstacle_sector_node::livoxImuToMessage(imu_it->second, "livox_" + token));
+            {
+              const std::lock_guard<std::mutex> lock(livox_telemetry->mutex);
+              if (livox_telemetry->imu_publishers.count(token) == 0U) {
+                livox_telemetry->imu_publishers[token] =
+                  node->create_publisher<sensor_msgs::msg::Imu>(
+                    "/livox/" + token + "/imu", rclcpp::SensorDataQoS());
+              }
+              if (livox_telemetry->point_publishers.count(token) == 0U) {
+                livox_telemetry->point_publishers[token] =
+                  node->create_publisher<sensor_msgs::msg::PointCloud2>(
+                    "/livox/" + token + "/points",
+                    rclcpp::QoS(rclcpp::KeepLast(2)).best_effort());
+              }
             }
           }
 
@@ -456,6 +482,14 @@ int main(int argc, char ** argv)
           for (const auto & device : health) {
             diagnostic_msgs::msg::DiagnosticStatus status;
             const std::string token = livoxTopicToken(device.device);
+            uint64_t imu_queue_drops = 0U;
+            {
+              const std::lock_guard<std::mutex> lock(livox_telemetry->mutex);
+              const auto drops = livox_telemetry->imu_queue_drops.find(token);
+              if (drops != livox_telemetry->imu_queue_drops.end()) {
+                imu_queue_drops = drops->second;
+              }
+            }
             status.name = "livox/" + token;
             status.hardware_id = device.device.serial;
             status.level = diagnostic_msgs::msg::DiagnosticStatus::OK;
@@ -472,9 +506,9 @@ int main(int argc, char ** argv)
               device.last_point_time_type != 1U || device.last_imu_time_type != 1U ||
               device.unsynchronized_packets > 0U || device.rejected_packets > 0U ||
               device.continuity_breaks > 0U || device.imu_unusable > 0U ||
-              device.imu_accel_unusable > 0U) {
+              device.imu_accel_unusable > 0U || imu_queue_drops > 0U) {
               status.level = diagnostic_msgs::msg::DiagnosticStatus::WARN;
-              status.message = "data or time warnings";
+              status.message = "data, time or telemetry warnings";
             }
             status.values.push_back(livoxValue("device_type", device.device.device_type));
             status.values.push_back(livoxValue("point_packets", device.point_packets));
@@ -487,6 +521,7 @@ int main(int argc, char ** argv)
             status.values.push_back(livoxValue("dropped_rays", device.dropped_rays));
             status.values.push_back(livoxValue("imu_unusable", device.imu_unusable));
             status.values.push_back(livoxValue("imu_accel_unusable", device.imu_accel_unusable));
+            status.values.push_back(livoxValue("imu_queue_drops", imu_queue_drops));
             status.values.push_back(
               livoxValue("last_point_time_type", device.last_point_time_type));
             status.values.push_back(livoxValue("last_imu_time_type", device.last_imu_time_type));

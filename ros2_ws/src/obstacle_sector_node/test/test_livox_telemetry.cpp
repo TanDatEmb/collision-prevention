@@ -42,6 +42,8 @@ TEST(LivoxTelemetryTest, ImuMessageConvertsAccelerationFromGAndPreservesPtpTime)
   EXPECT_DOUBLE_EQ(message.angular_velocity.x, 0.1);
   EXPECT_DOUBLE_EQ(message.linear_acceleration.y, -0.5 * 9.80665);
   EXPECT_EQ(message.orientation_covariance[0], -1.0);
+  EXPECT_DOUBLE_EQ(message.angular_velocity_covariance[0], 0.0);
+  EXPECT_DOUBLE_EQ(message.linear_acceleration_covariance[0], 0.0);
 }
 
 TEST(LivoxTelemetryTest, PointCloudContainsOnlyReturnsAndRawMetadata)

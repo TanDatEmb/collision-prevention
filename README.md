@@ -107,8 +107,9 @@ A green build and unit test is not SITL, HIL, flight testing or qualification.
 
 ## Livox Mid-360S bring-up
 
-The project-linked SDK2 adapter reads spherical PTP points and IMU gyro/acceleration. Leveling uses
-the gyro only; acceleration and point reflectivity/tag are telemetry. Start a software PTP master,
+The project-linked SDK2 adapter requests normal work mode, enables IMU data, and reads spherical
+PTP points plus IMU gyro/acceleration. IMU telemetry is queued outside the SDK callback. Leveling
+uses the gyro only; acceleration and point reflectivity/tag are telemetry. Start a software PTP master,
 then run the finite source probe:
 
 ```bash
