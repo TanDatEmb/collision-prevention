@@ -2,6 +2,7 @@
 """Unit tests for the SITL dashboard bridge."""
 
 import json
+import math
 import queue
 import types
 import unittest
@@ -57,6 +58,90 @@ class ListenerParserTests(unittest.TestCase):
 
 
 class SnapshotStoreTests(unittest.TestCase):
+    @staticmethod
+    def coverage_payload(**overrides):
+        payload = {
+            "timestamp": 2_000_000,
+            "sample_timestamp": 1_900_000,
+            "mount_roll_rad": 0.0,
+            "mount_pitch_down_rad": math.radians(10.0),
+            "mount_yaw_left_rad": 0.0,
+            "sensor_elevation_min_rad": math.radians(-7.0),
+            "sensor_elevation_max_rad": math.radians(52.0),
+            "height_up_m": 0.25,
+            "height_down_m": 0.60,
+            "attitude_allowance_rad": 0.0157,
+            "required_rays": 5,
+            "packet_continuity_valid": True,
+            "up_ray_count": [5] * 72,
+            "down_ray_count": [5] * 72,
+            "rear_only": [False] * 72,
+            "coverage_ok": [True] * 72,
+        }
+        payload.update(overrides)
+        return payload
+
+    def test_leveling_view_uses_mount_and_sensor_fov_at_hover(self):
+        store = SnapshotStore(clock=lambda: 100.0)
+        store.update_leveling_coverage(self.coverage_payload())
+        store.update_odometry(
+            {
+                "timestamp": 1_000_000,
+                "position": [0.0, 0.0, -4.0],
+                "velocity": [0.0, 0.0, 0.0],
+                "q": [1.0, 0.0, 0.0, 0.0],
+            }
+        )
+
+        leveling = store.snapshot()["leveling"]
+
+        self.assertAlmostEqual(leveling["view_by_bin"][0]["min_deg"], -17.0, places=3)
+        self.assertAlmostEqual(leveling["view_by_bin"][0]["max_deg"], 42.0, places=3)
+        self.assertEqual(leveling["coverage"]["bins"][0]["state"], "Covered")
+        self.assertEqual(leveling["band"]["height_down_m"], 0.60)
+
+    def test_leveling_view_moves_with_vehicle_pitch(self):
+        store = SnapshotStore(clock=lambda: 100.0)
+        store.update_leveling_coverage(self.coverage_payload())
+        pitch = math.radians(10.0)
+        store.update_odometry(
+            {
+                "timestamp": 1_000_000,
+                "position": [0.0, 0.0, -4.0],
+                "velocity": [0.0, 0.0, 0.0],
+                "q": [math.cos(pitch / 2.0), 0.0, math.sin(pitch / 2.0), 0.0],
+            }
+        )
+
+        view = store.snapshot()["leveling"]["view_by_bin"][0]
+
+        self.assertAlmostEqual(view["min_deg"], -7.0, places=3)
+        self.assertAlmostEqual(view["max_deg"], 52.0, places=3)
+
+    def test_incomplete_packet_is_not_labelled_clear(self):
+        store = SnapshotStore(clock=lambda: 100.0)
+        store.update_leveling_coverage(
+            self.coverage_payload(
+                packet_continuity_valid=False,
+                down_ray_count=[2] * 72,
+                coverage_ok=[False] * 72,
+            )
+        )
+
+        coverage = store.snapshot()["leveling"]["coverage"]
+
+        self.assertFalse(coverage["packet_continuity_valid"])
+        self.assertEqual(coverage["bins"][0]["state"], "Unknown")
+        self.assertEqual(coverage["bins"][0]["down_ray_count"], 2)
+
+    def test_coverage_decision_is_derived_when_optional_flags_are_absent(self):
+        store = SnapshotStore(clock=lambda: 100.0)
+        payload = self.coverage_payload()
+        payload.pop("coverage_ok")
+        store.update_leveling_coverage(payload)
+
+        self.assertTrue(store.snapshot()["leveling"]["coverage"]["bins"][0]["coverage_ok"])
+
     def test_snapshot_reports_ros_connection_without_inventing_caps(self):
         now = [100.0]
         store = SnapshotStore(clock=lambda: now[0], source_timeout_s=2.0)

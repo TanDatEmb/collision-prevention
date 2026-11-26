@@ -172,6 +172,99 @@ def _quaternion_attitude(q: list[Any]) -> tuple[float | None, float | None]:
     return math.degrees(roll), math.degrees(pitch)
 
 
+def _rotation_x(angle: float) -> tuple[tuple[float, float, float], ...]:
+    cosine, sine = math.cos(angle), math.sin(angle)
+    return ((1.0, 0.0, 0.0), (0.0, cosine, -sine), (0.0, sine, cosine))
+
+
+def _rotation_y(angle: float) -> tuple[tuple[float, float, float], ...]:
+    cosine, sine = math.cos(angle), math.sin(angle)
+    return ((cosine, 0.0, sine), (0.0, 1.0, 0.0), (-sine, 0.0, cosine))
+
+
+def _rotation_z(angle: float) -> tuple[tuple[float, float, float], ...]:
+    cosine, sine = math.cos(angle), math.sin(angle)
+    return ((cosine, -sine, 0.0), (sine, cosine, 0.0), (0.0, 0.0, 1.0))
+
+
+def _mat_vec(matrix: tuple[tuple[float, float, float], ...], vector: tuple[float, float, float]):
+    return tuple(sum(row[index] * vector[index] for index in range(3)) for row in matrix)
+
+
+def _mat_mul(
+    left: tuple[tuple[float, float, float], ...], right: tuple[tuple[float, float, float], ...]
+) -> tuple[tuple[float, float, float], ...]:
+    return tuple(
+        tuple(sum(left[row][index] * right[index][column] for index in range(3)) for column in range(3))
+        for row in range(3)
+    )
+
+
+def _view_elevation_deg(
+    sensor_elevation_rad: float,
+    azimuth_rad: float,
+    mount_roll_rad: float,
+    mount_pitch_down_rad: float,
+    mount_yaw_left_rad: float,
+    aircraft_roll_rad: float,
+    aircraft_pitch_rad: float,
+) -> float:
+    """Transform one sensor-frame ray to the gravity-aligned frame used by the map."""
+
+    cos_el = math.cos(sensor_elevation_rad)
+    sensor_ray = (
+        cos_el * math.cos(azimuth_rad),
+        cos_el * math.sin(azimuth_rad),
+        math.sin(sensor_elevation_rad),
+    )
+    mount = _mat_mul(
+        _rotation_z(mount_yaw_left_rad),
+        _mat_mul(_rotation_y(mount_pitch_down_rad), _rotation_x(mount_roll_rad)),
+    )
+    # Positive aircraft pitch is nose-up. In FLU, a positive mount-style Y rotation points down, so
+    # the body-to-level pitch is the inverse; positive roll keeps the left side positive-up.
+    body_ray = _mat_vec(mount, sensor_ray)
+    level = _mat_mul(_rotation_x(aircraft_roll_rad), _rotation_y(-aircraft_pitch_rad))
+    level_ray = _mat_vec(level, body_ray)
+    return math.degrees(math.atan2(level_ray[2], math.hypot(level_ray[0], level_ray[1])))
+
+
+def _view_ranges(geometry: Mapping[str, Any], pitch_deg: float, roll_deg: float) -> list[dict[str, float]]:
+    mount_roll = math.radians(float(geometry["mount_roll_deg"]))
+    mount_pitch = math.radians(float(geometry["mount_pitch_down_deg"]))
+    mount_yaw = math.radians(float(geometry["mount_yaw_left_deg"]))
+    sensor_min = math.radians(float(geometry["sensor_min_deg"]))
+    sensor_max = math.radians(float(geometry["sensor_max_deg"]))
+    aircraft_pitch = math.radians(pitch_deg)
+    aircraft_roll = math.radians(roll_deg)
+    result = []
+    for index in range(72):
+        bearing_deg = index * 5.0
+        azimuth = math.radians(bearing_deg)
+        edges = (
+            _view_elevation_deg(
+                sensor_min,
+                azimuth,
+                mount_roll,
+                mount_pitch,
+                mount_yaw,
+                aircraft_roll,
+                aircraft_pitch,
+            ),
+            _view_elevation_deg(
+                sensor_max,
+                azimuth,
+                mount_roll,
+                mount_pitch,
+                mount_yaw,
+                aircraft_roll,
+                aircraft_pitch,
+            ),
+        )
+        result.append({"bearing_deg": bearing_deg, "min_deg": min(edges), "max_deg": max(edges)})
+    return result
+
+
 def _copy_or_none(value: Any) -> Any:
     return None if value is None else copy.deepcopy(value)
 
@@ -219,6 +312,11 @@ class SnapshotStore:
             "pitch_deg": None,
             "roll_deg": None,
             "pairs": None,
+            "geometry": None,
+            "view": None,
+            "view_by_bin": None,
+            "band": None,
+            "coverage": None,
         }
 
     def _touch(self, source: str) -> None:
@@ -295,6 +393,7 @@ class SnapshotStore:
                     "roll_deg": roll,
                 }
             )
+            self._recompute_leveling_view_locked()
             if self._leveling["status"] == "no_ray_pairs":
                 self._leveling["status"] = "pose_only"
             self._update_locked("odometry")
@@ -358,6 +457,86 @@ class SnapshotStore:
         with self._lock:
             self._diagnostics = _copy_or_none(dict(payload))
             self._update_locked("diagnostics")
+
+    def _recompute_leveling_view_locked(self) -> None:
+        geometry = self._leveling.get("geometry")
+        pitch = _number(self._leveling.get("pitch_deg"))
+        roll = _number(self._leveling.get("roll_deg"))
+        if not isinstance(geometry, Mapping) or pitch is None or roll is None:
+            self._leveling["view"] = None
+            self._leveling["view_by_bin"] = None
+            return
+        views = _view_ranges(geometry, pitch, roll)
+        self._leveling["view_by_bin"] = views
+        self._leveling["view"] = views[0]
+
+    def update_leveling_coverage(self, payload: Mapping[str, Any]) -> None:
+        """Store the node's per-bin vertical coverage without treating it as a safety decision."""
+
+        required = max(0, _integer(payload.get("required_rays"), 0) or 0)
+        up = [max(0, _integer(item, 0) or 0) for item in _list_value(payload.get("up_ray_count"), 72)]
+        down = [max(0, _integer(item, 0) or 0) for item in _list_value(payload.get("down_ray_count"), 72)]
+        rear = [bool(item) for item in _list_value(payload.get("rear_only"), 72)]
+        has_supplied_ok = "coverage_ok" in payload
+        supplied_ok = _list_value(payload.get("coverage_ok"), 72) if has_supplied_ok else []
+        packet_continuity = bool(payload.get("packet_continuity_valid"))
+        geometry = {
+            "mount_roll_deg": math.degrees(_number(payload.get("mount_roll_rad"), 0.0) or 0.0),
+            "mount_pitch_down_deg": math.degrees(
+                _number(payload.get("mount_pitch_down_rad"), 0.0) or 0.0
+            ),
+            "mount_yaw_left_deg": math.degrees(_number(payload.get("mount_yaw_left_rad"), 0.0) or 0.0),
+            "sensor_min_deg": math.degrees(
+                _number(payload.get("sensor_elevation_min_rad"), 0.0) or 0.0
+            ),
+            "sensor_max_deg": math.degrees(
+                _number(payload.get("sensor_elevation_max_rad"), 0.0) or 0.0
+            ),
+        }
+        band = {
+            "height_up_m": _number(payload.get("height_up_m")),
+            "height_down_m": _number(payload.get("height_down_m")),
+            "attitude_allowance_deg": math.degrees(
+                _number(payload.get("attitude_allowance_rad"), 0.0) or 0.0
+            ),
+            "required_rays": required,
+        }
+        bins = []
+        for index in range(72):
+            computed_ok = up[index] >= required and (rear[index] or down[index] >= required)
+            coverage_ok = bool(supplied_ok[index]) if has_supplied_ok else computed_ok
+            bins.append(
+                {
+                    "up_ray_count": up[index],
+                    "down_ray_count": down[index],
+                    "rear_only": rear[index],
+                    "coverage_ok": coverage_ok,
+                    "state": "Covered" if packet_continuity and coverage_ok else "Unknown",
+                    "reason": "Covered"
+                    if packet_continuity and coverage_ok
+                    else ("Packet gap" if not packet_continuity else "Coverage gap"),
+                }
+            )
+        with self._lock:
+            self._leveling.update(
+                {
+                    "status": "coverage_live"
+                    if _number(self._leveling.get("pitch_deg")) is not None
+                    else "coverage_waiting",
+                    "reference_time_us": _integer(payload.get("sample_timestamp"), 0),
+                    "geometry": geometry,
+                    "band": band,
+                    "coverage": {
+                        "timestamp_us": _integer(payload.get("timestamp"), 0),
+                        "sample_timestamp_us": _integer(payload.get("sample_timestamp"), 0),
+                        "packet_continuity_valid": packet_continuity,
+                        "required_rays": required,
+                        "bins": bins,
+                    },
+                }
+            )
+            self._recompute_leveling_view_locked()
+            self._update_locked("leveling")
 
     def update_leveling_pairs(self, payload: Mapping[str, Any]) -> None:
         """Accept an optional future debug stream without fabricating pairs from the map."""
@@ -510,10 +689,11 @@ class RosTelemetryThread(threading.Thread):
             from px4_msgs.msg import ObstacleDistance, VehicleOdometry, VehicleStatus
 
             try:
-                from collision_prevention_msgs.msg import CpBrakeConstraints, CpBrakeHook
+                from collision_prevention_msgs.msg import CpBrakeConstraints, CpBrakeHook, CpLevelingCoverage
             except ImportError as exc:
                 CpBrakeConstraints = None
                 CpBrakeHook = None
+                CpLevelingCoverage = None
                 self._store.set_error("dds", f"monitor messages unavailable: {exc}")
 
             self._rclpy = rclpy
@@ -607,6 +787,32 @@ class RosTelemetryThread(threading.Thread):
                             "vel_sp_in": list(message.vel_sp_in),
                             "vel_sp_out": list(message.vel_sp_out),
                             "vel": list(message.vel),
+                        }
+                    ),
+                    qos_profile_sensor_data,
+                )
+            if CpLevelingCoverage is not None:
+                node.create_subscription(
+                    CpLevelingCoverage,
+                    "/collision_prevention/leveling_coverage",
+                    lambda message: self._store.update_leveling_coverage(
+                        {
+                            "timestamp": message.timestamp,
+                            "sample_timestamp": message.sample_timestamp,
+                            "mount_roll_rad": message.mount_roll_rad,
+                            "mount_pitch_down_rad": message.mount_pitch_down_rad,
+                            "mount_yaw_left_rad": message.mount_yaw_left_rad,
+                            "sensor_elevation_min_rad": message.sensor_elevation_min_rad,
+                            "sensor_elevation_max_rad": message.sensor_elevation_max_rad,
+                            "height_up_m": message.height_up_m,
+                            "height_down_m": message.height_down_m,
+                            "attitude_allowance_rad": message.attitude_allowance_rad,
+                            "required_rays": message.required_rays,
+                            "packet_continuity_valid": message.packet_continuity_valid,
+                            "up_ray_count": list(message.up_ray_count),
+                            "down_ray_count": list(message.down_ray_count),
+                            "rear_only": list(message.rear_only),
+                            "coverage_ok": list(message.coverage_ok),
                         }
                     ),
                     qos_profile_sensor_data,
