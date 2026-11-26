@@ -36,6 +36,7 @@ struct DeviceState
   std::atomic<uint64_t> imu_packets{0U};
   std::atomic<uint64_t> decoded_points{0U};
   std::atomic<uint64_t> rejected_packets{0U};
+  std::atomic<uint64_t> unsynchronized_packets{0U};
   std::atomic<uint64_t> continuity_breaks{0U};
   std::atomic<uint64_t> dropped_rays{0U};
   std::atomic<uint64_t> imu_unusable{0U};
@@ -144,6 +145,7 @@ void onPointCloud(
   impl->point_metadata_samples += decoded.point_metadata.size();
   if (decoded.time_type != 1U) {
     ++impl->unsynchronized_packets;
+    ++state->unsynchronized_packets;
   }
   state->last_point_time_type = decoded.time_type;
   state->last_point_timestamp_ns = decoded.rays.empty() ? 0U : decoded.rays.front().timestamp_ns;
@@ -432,6 +434,7 @@ std::vector<LivoxDeviceHealth> LivoxSdkSampleSource::health() const
     snapshot.imu_packets = state->imu_packets.load();
     snapshot.decoded_points = state->decoded_points.load();
     snapshot.rejected_packets = state->rejected_packets.load();
+    snapshot.unsynchronized_packets = state->unsynchronized_packets.load();
     snapshot.continuity_breaks = state->continuity_breaks.load();
     snapshot.dropped_rays = state->dropped_rays.load();
     snapshot.imu_unusable = state->imu_unusable.load();

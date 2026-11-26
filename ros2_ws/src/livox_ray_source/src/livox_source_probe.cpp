@@ -128,7 +128,7 @@ int main(int argc, char ** argv)
       stats.packets > 0U && stats.decoded_packets > 0U && stream_samples > 0U &&
       point_samples > 0U && imu_samples > 0U && stats.rejected_packets == 0U &&
       stats.not_spherical_packets == 0U && stats.continuity_breaks == 0U &&
-      stats.imu_unusable == 0U && stats.imu_accel_unusable == 0U &&
+      stats.dropped_rays == 0U && stats.imu_unusable == 0U && stats.imu_accel_unusable == 0U &&
       (!options.require_ptp || stats.unsynchronized_packets == 0U) && !source.multipleLidarFault();
 
     std::ostringstream output;

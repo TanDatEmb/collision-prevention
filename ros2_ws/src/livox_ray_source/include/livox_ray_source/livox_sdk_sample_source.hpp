@@ -64,6 +64,7 @@ struct LivoxDeviceHealth
   uint64_t imu_packets{0U};
   uint64_t decoded_points{0U};
   uint64_t rejected_packets{0U};
+  uint64_t unsynchronized_packets{0U};
   uint64_t continuity_breaks{0U};
   uint64_t dropped_rays{0U};
   uint64_t imu_unusable{0U};

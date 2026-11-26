@@ -16,6 +16,13 @@ if [[ ! "$pid" =~ ^[0-9]+$ ]]; then
   exit 2
 fi
 
+process_args=$(sudo ps -p "$pid" -o args= 2>/dev/null || true)
+expected_config=${repo_dir}/config/livox/ptp4l-software.conf
+if [[ -n "$process_args" && ( "$process_args" != *ptp4l* || "$process_args" != *"$expected_config"* ) ]]; then
+  echo "livox-down: refusing to signal pid $pid; it is not this workspace's ptp4l" >&2
+  exit 2
+fi
+
 if sudo kill -0 "$pid" 2>/dev/null; then
   sudo kill -TERM "$pid"
   for _ in {1..10}; do

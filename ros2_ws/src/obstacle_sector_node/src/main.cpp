@@ -470,8 +470,9 @@ int main(int argc, char ** argv)
             }
             else if (
               device.last_point_time_type != 1U || device.last_imu_time_type != 1U ||
-              device.rejected_packets > 0U || device.continuity_breaks > 0U ||
-              device.imu_unusable > 0U || device.imu_accel_unusable > 0U) {
+              device.unsynchronized_packets > 0U || device.rejected_packets > 0U ||
+              device.continuity_breaks > 0U || device.imu_unusable > 0U ||
+              device.imu_accel_unusable > 0U) {
               status.level = diagnostic_msgs::msg::DiagnosticStatus::WARN;
               status.message = "data or time warnings";
             }
@@ -480,6 +481,8 @@ int main(int argc, char ** argv)
             status.values.push_back(livoxValue("imu_packets", device.imu_packets));
             status.values.push_back(livoxValue("decoded_points", device.decoded_points));
             status.values.push_back(livoxValue("rejected_packets", device.rejected_packets));
+            status.values.push_back(
+              livoxValue("unsynchronized_packets", device.unsynchronized_packets));
             status.values.push_back(livoxValue("continuity_breaks", device.continuity_breaks));
             status.values.push_back(livoxValue("dropped_rays", device.dropped_rays));
             status.values.push_back(livoxValue("imu_unusable", device.imu_unusable));
