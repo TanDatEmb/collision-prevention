@@ -1,7 +1,9 @@
 #pragma once
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <vector>
 
 #include "livox_ray_source/gyro_track.hpp"
@@ -27,6 +29,25 @@ struct DecodedPacket
   uint16_t udp_cnt{0U};
   uint8_t time_type{0U};  ///< 0 no sync (time since power on), 1 PTP, 2 GPS
   std::vector<obstacle_sector_map::RaySample> rays;
+  /// Per-point fields that are not part of the safety map contract. The order matches `rays`.
+  struct PointMetadata
+  {
+    uint8_t reflectivity{0U};
+    uint8_t tag{0U};
+  };
+  std::vector<PointMetadata> point_metadata;
+};
+
+/// One complete Livox IMU sample. Acceleration is kept in the SDK's raw unit (g) until a ROS
+/// boundary converts it to m/s²; the collision-prevention leveler consumes only `gyro`.
+struct ImuSample
+{
+  GyroSample gyro{};
+  std::array<double, 3> acceleration_flu_g{
+    std::numeric_limits<double>::quiet_NaN(), std::numeric_limits<double>::quiet_NaN(),
+    std::numeric_limits<double>::quiet_NaN()};
+
+  [[nodiscard]] bool isValid() const;
 };
 
 /// Decodes one Livox Mid-360(S) point packet of data type 3 (single return, spherical): the 36 byte
@@ -58,6 +79,14 @@ struct DecodedImuPacket
   bool layout_ok{false};  ///< data type 0 and exactly 36 + 24 bytes
   uint8_t time_type{0U};  ///< 0 no sync (time since power on), 1 PTP, 2 GPS
   GyroSample gyro{};      ///< valid only with layout_ok and PTP time (`time_type` 1, non-zero time)
+  std::array<double, 3> acceleration_flu_g{
+    std::numeric_limits<double>::quiet_NaN(), std::numeric_limits<double>::quiet_NaN(),
+    std::numeric_limits<double>::quiet_NaN()};
+
+  /// True only when all three raw accelerometer axes are finite and the packet has usable gyro time.
+  [[nodiscard]] bool accelerationIsValid() const;
+
+  [[nodiscard]] ImuSample toImuSample() const;
 };
 
 /// Decodes one Livox Mid-360(S) IMU packet: the 36 byte header (the same layout and time stamp as the

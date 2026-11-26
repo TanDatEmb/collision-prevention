@@ -1,9 +1,10 @@
 #include <gtest/gtest.h>
 
+#include <array>
 #include <cmath>
 #include <cstdint>
-#include <array>
 #include <cstring>
+#include <limits>
 #include <string>
 #include <vector>
 
@@ -109,6 +110,19 @@ TEST(DecodeSphericalPacketTest, PointsBecomeRaysWithRangeInMetresAndTheVendorAng
   EXPECT_FLOAT_EQ(packet.rays[1].range_m, 1.0F);
   EXPECT_NEAR(packet.rays[1].azimuth_rad, kPi / 2.0F, 1e-6F);
   EXPECT_FALSE(packet.rays[0].masked);
+}
+
+TEST(DecodeSphericalPacketTest, PointMetadataStaysAlignedWithDecodedRays)
+{
+  const auto bytes = makePacket({{2000U, 9000U, 0U, 17U, 3U}, {1000U, 9000U, 9000U, 231U, 9U}});
+  const DecodedPacket packet = decodeSphericalPacket(bytes.data(), bytes.size());
+  ASSERT_EQ(packet.status, DecodeStatus::kOk);
+  ASSERT_EQ(packet.rays.size(), 2U);
+  ASSERT_EQ(packet.point_metadata.size(), packet.rays.size());
+  EXPECT_EQ(packet.point_metadata[0].reflectivity, 17U);
+  EXPECT_EQ(packet.point_metadata[0].tag, 3U);
+  EXPECT_EQ(packet.point_metadata[1].reflectivity, 231U);
+  EXPECT_EQ(packet.point_metadata[1].tag, 9U);
 }
 
 TEST(DecodeSphericalPacketTest, ElevationIsNinetyDegreesMinusThetaAndTheEndsAreCovered)
@@ -401,6 +415,38 @@ TEST(DecodeImuPacketTest, GyroRatesAndThePtpTimeAreRead)
   EXPECT_DOUBLE_EQ(packet.gyro.rate_flu_rad_s[2], static_cast<double>(0.3F));
 }
 
+TEST(DecodeImuPacketTest, AccelerometerValuesAreReadInG)
+{
+  const auto bytes = makeImuPacket({0.1F, -0.2F, 0.3F, 0.0F, -0.5F, 1.0F});
+  const auto packet = livox_ray_source::decodeImuPacket(bytes.data(), bytes.size());
+  ASSERT_TRUE(packet.gyro.isValid());
+  ASSERT_TRUE(packet.accelerationIsValid());
+  EXPECT_DOUBLE_EQ(packet.acceleration_flu_g[0], 0.0);
+  EXPECT_DOUBLE_EQ(packet.acceleration_flu_g[1], static_cast<double>(-0.5F));
+  EXPECT_DOUBLE_EQ(packet.acceleration_flu_g[2], static_cast<double>(1.0F));
+}
+
+TEST(DecodeImuPacketTest, FullImuSampleContainsGyroAndAccelerometer)
+{
+  const auto bytes = makeImuPacket({0.1F, -0.2F, 0.3F, 0.0F, -0.5F, 1.0F});
+  const auto packet = livox_ray_source::decodeImuPacket(bytes.data(), bytes.size());
+  const livox_ray_source::ImuSample sample = packet.toImuSample();
+  ASSERT_TRUE(sample.isValid());
+  EXPECT_EQ(sample.gyro.timestamp_ns, kPtpTimeNs);
+  EXPECT_DOUBLE_EQ(sample.acceleration_flu_g[2], static_cast<double>(1.0F));
+}
+
+TEST(DecodeImuPacketTest, NonFiniteAccelerometerIsNotUsable)
+{
+  const auto bytes = makeImuPacket({0.1F, -0.2F, 0.3F, 0.0F, 0.0F, 0.0F});
+  auto mutable_bytes = bytes;
+  const float nan = std::numeric_limits<float>::quiet_NaN();
+  put<float>(mutable_bytes, 36U + 4U * 3U, nan);
+  const auto packet = livox_ray_source::decodeImuPacket(mutable_bytes.data(), mutable_bytes.size());
+  EXPECT_TRUE(packet.gyro.isValid());
+  EXPECT_FALSE(packet.accelerationIsValid());
+}
+
 TEST(DecodeImuPacketTest, NoPtpTimeOrAnotherLayoutGivesNoSample)
 {
   const std::array<float, 6> values{0.1F, 0.2F, 0.3F, 0.0F, 0.0F, 1.0F};
@@ -409,7 +455,8 @@ TEST(DecodeImuPacketTest, NoPtpTimeOrAnotherLayoutGivesNoSample)
   EXPECT_TRUE(packet.layout_ok);
   EXPECT_FALSE(packet.gyro.isValid());
   const auto zero_time = makeImuPacket(values, 1U, 0U);
-  EXPECT_FALSE(livox_ray_source::decodeImuPacket(zero_time.data(), zero_time.size()).gyro.isValid());
+  EXPECT_FALSE(
+    livox_ray_source::decodeImuPacket(zero_time.data(), zero_time.size()).gyro.isValid());
   const auto too_long = makeImuPacket(values, 1U, kPtpTimeNs, 4U);
   packet = livox_ray_source::decodeImuPacket(too_long.data(), too_long.size());
   EXPECT_FALSE(packet.layout_ok);

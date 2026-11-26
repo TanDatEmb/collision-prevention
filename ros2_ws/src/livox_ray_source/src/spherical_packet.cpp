@@ -52,9 +52,21 @@ DecodedImuPacket decodeImuPacket(const uint8_t * data, std::size_t size)
   for (std::size_t axis = 0U; axis < 3U; ++axis) {
     packet.gyro.rate_flu_rad_s[axis] =
       static_cast<double>(readLe<float>(data + kHeaderBytes + axis * sizeof(float)));
+    packet.acceleration_flu_g[axis] =
+      static_cast<double>(readLe<float>(data + kHeaderBytes + (axis + 3U) * sizeof(float)));
   }
   return packet;
 }
+
+bool ImuSample::isValid() const
+{
+  return gyro.isValid() && std::isfinite(acceleration_flu_g[0]) &&
+         std::isfinite(acceleration_flu_g[1]) && std::isfinite(acceleration_flu_g[2]);
+}
+
+bool DecodedImuPacket::accelerationIsValid() const { return toImuSample().isValid(); }
+
+ImuSample DecodedImuPacket::toImuSample() const { return ImuSample{gyro, acceleration_flu_g}; }
 
 DecodedPacket decodeSphericalPacket(const uint8_t * data, std::size_t size)
 {
@@ -87,11 +99,14 @@ DecodedPacket decodeSphericalPacket(const uint8_t * data, std::size_t size)
   const uint64_t interval_ns =
     static_cast<uint64_t>(time_interval) * kNanosecondsPerTenthMicrosecond;
   packet.rays.reserve(dot_num);
+  packet.point_metadata.reserve(dot_num);
   for (std::size_t index = 0U; index < dot_num; ++index) {
     const uint8_t * point = data + kHeaderBytes + index * kPointBytes;
     const uint32_t depth_mm = readLe<uint32_t>(point);
     const uint16_t theta = readLe<uint16_t>(point + 4);
     const uint16_t phi = readLe<uint16_t>(point + 6);
+    const uint8_t reflectivity = point[8];
+    const uint8_t tag = point[9];
 
     RaySample ray;
     ray.azimuth_rad = static_cast<float>(static_cast<double>(phi) * kRadiansPerHundredthDegree);
@@ -107,16 +122,19 @@ DecodedPacket decodeSphericalPacket(const uint8_t * data, std::size_t size)
     // gates of ADR 0004 (packet continuity, PTP time, the ray count) still decide whether a sector is clear.
     if (!angles_valid) {
       ray.return_kind = RayReturnKind::kInvalid;
-    } else if (depth_mm == 0U) {
+    }
+    else if (depth_mm == 0U) {
       ray.return_kind = RayReturnKind::kQualifiedNoReturn;
       ray.range_m = std::numeric_limits<float>::quiet_NaN();
-    } else {
+    }
+    else {
       ray.return_kind = RayReturnKind::kReturn;
     }
     ray.timestamp_ns =
       time_usable ? packet_time_ns + (dot_num > 1U ? (index * interval_ns) / (dot_num - 1U) : 0U)
                   : 0U;
     packet.rays.push_back(ray);
+    packet.point_metadata.push_back(DecodedPacket::PointMetadata{reflectivity, tag});
   }
   packet.status = DecodeStatus::kOk;
   return packet;
