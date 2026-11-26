@@ -48,7 +48,9 @@ telemetry per detected serial:
 - `/livox/<serial>/points` (`sensor_msgs/PointCloud2`): finite return points in the Livox FLU frame,
   with `reflectivity`, `tag` and per-point `time_offset_ns` fields.
 - `/livox/status` (`diagnostic_msgs/DiagnosticArray`): device identity, packet/IMU counters,
-  timestamp types, sample ages, continuity and primary-lidar faults.
+  timestamp types, sample ages, continuity and primary-lidar faults. A device is reported stale
+  after 0.5 s without a valid required point/IMU sample; this is an operator diagnostic, not a
+  replacement for the pipeline's safety freshness gate.
 
 IMU packets are queued between the SDK callback and ROS publication so DDS work cannot block
 acquisition; each packet is published once with its Livox timestamp. The bounded telemetry queue

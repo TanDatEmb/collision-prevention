@@ -110,6 +110,10 @@ uint64_t steadyNowNs()
                                  .count());
 }
 
+// Diagnostics must stop calling a disconnected sensor "connected". This matches the approved
+// 0.5 s stale-observation baseline (PERF-04); it is a health indication, not a new safety gate.
+constexpr uint64_t kLivoxHealthStaleAfterNs{500'000'000U};
+
 LivoxDeviceIdentity identityOf(const std::shared_ptr<detail::DeviceState> & state)
 {
   const std::lock_guard<std::mutex> lock(state->mutex);
@@ -516,13 +520,26 @@ std::vector<LivoxDeviceHealth> LivoxSdkSampleSource::health() const
     snapshot.last_imu_timestamp_ns = state->last_imu_timestamp_ns.load();
     const uint64_t point_host_ns = state->last_point_host_ns.load();
     const uint64_t imu_host_ns = state->last_imu_host_ns.load();
-    if (point_host_ns != 0U || imu_host_ns != 0U) {
-      snapshot.state = LivoxHealthState::kConnected;
-    }
     snapshot.last_point_age_ms =
       point_host_ns == 0U || now_ns < point_host_ns ? 0U : (now_ns - point_host_ns) / 1'000'000U;
     snapshot.last_imu_age_ms =
       imu_host_ns == 0U || now_ns < imu_host_ns ? 0U : (now_ns - imu_host_ns) / 1'000'000U;
+    const bool imu_expected = static_cast<bool>(_impl->gyro_sink) || static_cast<bool>(_impl->imu_sink);
+    const bool point_seen = point_host_ns != 0U;
+    const bool imu_seen = imu_host_ns != 0U;
+    const bool point_stale =
+      !point_seen || (now_ns >= point_host_ns && now_ns - point_host_ns > kLivoxHealthStaleAfterNs);
+    const bool imu_stale = imu_expected &&
+      (!imu_seen || (now_ns >= imu_host_ns && now_ns - imu_host_ns > kLivoxHealthStaleAfterNs));
+    if (!point_seen && (!imu_expected || !imu_seen)) {
+      snapshot.state = LivoxHealthState::kUnknown;
+    }
+    else if (point_stale || imu_stale) {
+      snapshot.state = LivoxHealthState::kStale;
+    }
+    else {
+      snapshot.state = LivoxHealthState::kConnected;
+    }
     result.push_back(snapshot);
   }
   return result;

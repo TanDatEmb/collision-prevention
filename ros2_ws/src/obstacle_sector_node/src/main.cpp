@@ -502,6 +502,10 @@ int main(int argc, char ** argv)
               status.level = diagnostic_msgs::msg::DiagnosticStatus::WARN;
               status.message = "configured primary lidar not detected";
             }
+            else if (device.state == livox_ray_source::LivoxHealthState::kStale) {
+              status.level = diagnostic_msgs::msg::DiagnosticStatus::WARN;
+              status.message = "stale acquisition";
+            }
             else if (
               device.last_point_time_type != 1U || device.last_imu_time_type != 1U ||
               device.unsynchronized_packets > 0U || device.rejected_packets > 0U ||

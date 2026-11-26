@@ -54,8 +54,10 @@ enum class LivoxHealthState : uint8_t
   kStale,
 };
 
-/// Snapshot for diagnostics and a live probe. Rates are measured by the adapter; no health field is
-/// fabricated when the SDK does not expose it.
+/// Snapshot for diagnostics and a live probe. `kStale` means the required point stream, or an
+/// enabled IMU stream, has had no valid sample for the approved 0.5 s health window; this is a
+/// diagnostic indication, not a new safety gate. Rates are measured by the adapter; no health
+/// field is fabricated when the SDK does not expose it.
 struct LivoxDeviceHealth
 {
   LivoxDeviceIdentity device;
