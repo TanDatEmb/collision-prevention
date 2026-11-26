@@ -61,6 +61,13 @@ struct SectorObservation
   // Diagnostics of the two parts of distance_m; NaN when the part does not exist.
   float obstacle_distance_m{std::numeric_limits<float>::quiet_NaN()};
   float free_distance_m{std::numeric_limits<float>::quiet_NaN()};
+  // Coverage evidence used by the monitor. These fields are appended to preserve the ABI of consumers that
+  // already read the map's distance diagnostics. Counts include free and obstacle rays in each half of the
+  // vertical band; a horizon ray contributes to both halves.
+  uint32_t up_ray_count{0U};
+  uint32_t down_ray_count{0U};
+  bool rear_only{false};
+  bool coverage_ok{false};
 };
 
 struct SectorMap
