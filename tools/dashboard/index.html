@@ -1,0 +1,279 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>CP Monitor</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #09111a;
+      --panel: #101d2a;
+      --plot: #0b1723;
+      --text: #e8f1f8;
+      --muted: #9bb0c1;
+      --border: #294050;
+      --grid: #243747;
+      --blue: #80c5ff;
+      --teal: #5ad3b8;
+      --amber: #ffc18b;
+      --red: #f2a0a7;
+      --hatch: #567084;
+      --shadow: 0 18px 42px rgb(0 0 0 / .16);
+    }
+    @media (prefers-color-scheme: light) {
+      :root { color-scheme: light; --bg:#edf2f6; --panel:#fbfdff; --plot:#f2f7fb; --text:#142331; --muted:#4f6374; --border:#cdd9e2; --grid:#d5e1e9; --blue:#236bbb; --teal:#00756a; --amber:#a44712; --red:#9b3440; --hatch:#8a9aa8; --shadow:0 14px 32px rgb(31 62 85 / .1); }
+    }
+    * { box-sizing: border-box; }
+    body { margin:0; min-width:320px; background:var(--bg); color:var(--text); font:14px/1.4 system-ui, sans-serif; }
+    button, select { font:inherit; }
+    button, select { min-height:34px; border:1px solid var(--border); border-radius:8px; padding:6px 10px; background:var(--panel); color:var(--text); }
+    button { cursor:pointer; }
+    button:focus-visible, select:focus-visible, [data-bin]:focus-visible { outline:2px solid var(--blue); outline-offset:3px; }
+    main { width:min(1440px, 100%); margin:0 auto; padding:18px; }
+    header { display:flex; align-items:end; justify-content:space-between; gap:18px; margin-bottom:12px; }
+    h1, h2, h3, p, dl, dd { margin:0; }
+    h1 { font-size:clamp(24px, 3vw, 34px); letter-spacing:-.04em; line-height:1; }
+    h2 { font-size:15px; letter-spacing:-.01em; }
+    h3 { font-size:12px; color:var(--muted); font-weight:650; }
+    .context, .subtle { color:var(--muted); font-size:12px; }
+    .context { margin-bottom:4px; }
+    .connection { display:flex; align-items:center; flex-wrap:wrap; justify-content:end; gap:7px; }
+    .connection-state { display:inline-flex; align-items:center; gap:7px; color:var(--muted); white-space:nowrap; }
+    .dot { width:9px; height:9px; border-radius:50%; background:var(--muted); box-shadow:0 0 0 3px color-mix(in srgb, var(--muted) 18%, transparent); }
+    .dot[data-state="connected"] { background:var(--teal); box-shadow:0 0 0 3px color-mix(in srgb, var(--teal) 18%, transparent); }
+    .dot[data-state="partial"], .dot[data-state="stale"] { background:var(--amber); box-shadow:0 0 0 3px color-mix(in srgb, var(--amber) 18%, transparent); }
+    .dot[data-state="disconnected"] { background:var(--red); box-shadow:0 0 0 3px color-mix(in srgb, var(--red) 18%, transparent); }
+    .connection button { min-height:30px; padding:4px 9px; font-size:12px; }
+    .connection button[data-active="true"] { border-color:var(--blue); color:var(--blue); }
+    .flight { display:flex; align-items:center; flex-wrap:wrap; gap:9px clamp(15px, 3vw, 34px); margin-bottom:11px; padding:10px 12px; border:1px solid var(--border); border-radius:9px; background:var(--panel); box-shadow:var(--shadow); }
+    .metric { display:flex; align-items:center; gap:7px; min-width:0; }
+    .metric .glyph { color:var(--blue); font-size:16px; }
+    .metric strong, dd { font-variant-numeric:tabular-nums; }
+    .metric small { display:block; color:var(--muted); font-size:10px; }
+    .metric strong { font-size:13px; }
+    .pill { margin-left:auto; border:1px solid var(--border); border-radius:6px; padding:3px 7px; color:var(--muted); font-size:11px; }
+    .layout { display:grid; grid-template-columns:minmax(0, 1.25fr) minmax(0, 1fr); gap:11px; align-items:stretch; }
+    .side { display:grid; grid-template-rows:minmax(0, 1fr) auto; gap:11px; }
+    .panel { min-width:0; padding:12px; border:1px solid var(--border); border-radius:10px; background:var(--panel); box-shadow:var(--shadow); }
+    .panel-top { display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:5px 12px; }
+    .title { display:inline-flex; align-items:center; gap:7px; }
+    .title .glyph { color:var(--blue); font-size:16px; }
+    .inspect { display:flex; align-items:center; flex-wrap:wrap; gap:7px 14px; margin-top:9px; }
+    .inspect label, .reading { display:inline-flex; align-items:center; gap:6px; }
+    .inspect .glyph { color:var(--blue); }
+    .inspect select { border-color:var(--blue); min-height:30px; padding:4px 8px; font-size:12px; }
+    .reading { white-space:nowrap; }
+    .reading b { font-variant-numeric:tabular-nums; }
+    .reading small { color:var(--muted); font-size:11px; }
+    svg { display:block; width:100%; font:11px system-ui,sans-serif; font-variant-numeric:tabular-nums; }
+    .radar { height:clamp(260px, 31vw, 360px); margin-top:6px; }
+    .caps { height:118px; margin-top:4px; }
+    .legend { display:flex; align-items:center; flex-wrap:wrap; gap:4px 14px; color:var(--muted); font-size:11px; }
+    .legend span { display:inline-flex; align-items:center; gap:6px; }
+    .key { display:inline-block; width:13px; height:3px; background:currentColor; }
+    .key.dot { width:7px; height:7px; }
+    .key.hatch { width:13px; height:8px; border:1px solid currentColor; background:repeating-linear-gradient(135deg, transparent 0 2px, currentColor 2px 3px, transparent 3px 5px); }
+    .amber { color:var(--amber); }
+    .teal { color:var(--teal); }
+    .muted { color:var(--muted); }
+    .divider { margin-top:11px; padding-top:10px; border-top:1px solid var(--border); }
+    .leveling { display:grid; grid-template-rows:auto auto minmax(0, 1fr); gap:8px; }
+    .leveling-meta { display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:5px 12px; }
+    .pose { display:flex; flex-wrap:wrap; gap:6px 12px; color:var(--muted); font-size:12px; }
+    .pose b { color:var(--blue); }
+    .coverage-wrap { display:flex; flex-direction:column; gap:6px; min-height:0; }
+    .coverage-readout, .coverage-meta { display:flex; align-items:center; flex-wrap:wrap; gap:5px 14px; color:var(--muted); font-size:11px; font-variant-numeric:tabular-nums; }
+    .coverage-readout b, .coverage-meta b { color:var(--text); }
+    .coverage { flex:1; min-height:190px; }
+    .hook-values { display:flex; align-items:center; gap:16px; margin-top:8px; }
+    .hook-values div { display:grid; gap:2px; }
+    .hook-values dt { color:var(--muted); font-size:10px; }
+    .hook-values dd { font-weight:650; white-space:nowrap; }
+    .hook-meta { margin-top:7px; color:var(--muted); font-size:11px; font-variant-numeric:tabular-nums; }
+    .hook-bin { display:inline-flex; align-items:center; gap:5px; color:var(--blue); font-size:12px; }
+    .source-line { margin-top:10px; color:var(--muted); font-size:11px; }
+    .visually-hidden { position:absolute; width:1px; height:1px; overflow:hidden; clip-path:inset(50%); white-space:nowrap; }
+    @media (max-width:760px) { main{padding:11px} header{align-items:start; flex-direction:column}.connection{justify-content:start}.layout{grid-template-columns:1fr}.side{grid-template-rows:auto auto} }
+    @media (pointer:coarse) { button, select { min-height:44px; } .connection button{min-height:40px} }
+  </style>
+</head>
+<body>
+  <main id="app">
+    <header>
+      <div><p class="context">X500 <span aria-hidden="true">·</span> Gazebo SITL</p><h1>CP Monitor</h1></div>
+      <div class="connection" role="group" aria-label="Dashboard connection">
+        <span class="connection-state"><i class="dot" id="connection-dot" data-state="waiting" aria-hidden="true"></i><span id="connection-label" aria-live="polite">Waiting for SITL</span></span>
+        <button type="button" id="connect">Connect</button>
+        <button type="button" id="disconnect">Disconnect</button>
+      </div>
+    </header>
+
+    <section class="flight" aria-label="Aircraft status">
+      <span class="metric"><span class="glyph" aria-hidden="true">◈</span><span><strong id="mode">—</strong><small id="armed">—</small></span></span>
+      <span class="metric"><span class="glyph" aria-hidden="true">⌁</span><span><strong id="speed">—</strong><small>Speed</small></span></span>
+      <span class="metric"><span class="glyph" aria-hidden="true">↕</span><span><strong id="height">—</strong><small>Height</small></span></span>
+      <span class="metric"><span class="glyph" aria-hidden="true">◉</span><span><strong id="limiter">—</strong><small>Limiter</small></span></span>
+      <span class="pill" id="data-mode">Live</span>
+    </section>
+
+    <div class="layout">
+      <section class="panel" aria-labelledby="radar-title">
+        <div class="panel-top"><h2 class="title" id="radar-title"><span class="glyph" aria-hidden="true">◎</span>Radar</h2><span class="subtle">72 × 5°</span></div>
+        <div class="inspect">
+          <label><span class="glyph" aria-hidden="true">⌖</span><span class="visually-hidden">Select bin</span><select id="bin-select" aria-label="Select bin"></select></label>
+          <span class="reading"><span class="glyph" aria-hidden="true">↔</span><span><b id="range">—</b> <small id="range-kind">—</small></span></span>
+          <span class="reading"><span class="glyph" aria-hidden="true">⌁</span><span><b id="cap">—</b> <small>Cap</small></span></span>
+          <span class="visually-hidden" id="selection" aria-live="polite"></span>
+        </div>
+        <svg class="radar" id="radar" role="img" aria-label="72-bin radar"></svg>
+        <div class="legend"><span><i class="key dot" style="color:var(--red)" aria-hidden="true"></i>Limit</span><span><i class="key dot teal" aria-hidden="true"></i>Far / clear</span><span><i class="key hatch muted" aria-hidden="true"></i>Unknown</span></div>
+        <div class="divider">
+          <div class="panel-top"><h3 class="title"><span class="glyph" aria-hidden="true">▥</span>Speed caps</h3><span class="subtle">m/s</span></div>
+          <svg class="caps" id="caps" role="img" aria-label="PX4 speed caps by bearing"></svg>
+        </div>
+      </section>
+
+      <div class="side">
+        <section class="panel leveling" aria-labelledby="leveling-title">
+          <div class="panel-top"><h2 class="title" id="leveling-title"><span class="glyph" aria-hidden="true">⌁</span>Leveling</h2><span class="subtle" id="leveling-state">Waiting for pose</span><span class="subtle" id="pose-time">t₀ —</span></div>
+          <div class="leveling-meta"><div class="pose"><span>Pitch <b id="pitch">—</b></span><span>Roll <b id="roll">—</b></span></div><div class="legend"><span><i class="key muted" aria-hidden="true"></i>Sensor FOV</span><span><i class="key teal" aria-hidden="true"></i>Current view</span><span>Horizon</span></div></div>
+          <div class="coverage-wrap">
+            <div class="coverage-readout"><span>Sensor FOV <b id="fov-range">—</b></span><span>Current view <b id="view-range">—</b></span><span>Bin <b id="coverage-bin">—</b></span></div>
+            <svg class="coverage" id="coverage" role="img" aria-label="Vertical coverage: sensor FOV and selected bin"></svg>
+            <div class="coverage-meta"><span>Band <b id="coverage-band">—</b></span><span id="coverage-up">Up —</span><span id="coverage-down">Down —</span><span id="coverage-reason">Coverage unavailable</span></div>
+          </div>
+        </section>
+
+        <section class="panel" aria-labelledby="hook-title">
+          <div class="panel-top"><h2 class="title" id="hook-title"><span class="glyph" aria-hidden="true">◉</span>Limiter hook</h2><button type="button" class="hook-bin" id="hook-bin">⌖ <span>B—</span></button></div>
+          <dl class="hook-values"><div><dt>In</dt><dd id="hook-in">—</dd></div><span class="muted" aria-hidden="true">→</span><div><dt>Out</dt><dd id="hook-out">—</dd></div><span class="subtle" id="hook-action">—</span></dl>
+          <p class="hook-meta" id="hook-age">No hook sample</p>
+        </section>
+      </div>
+    </div>
+    <p class="source-line" id="source-line">Sources: waiting</p>
+  </main>
+
+  <script>
+    (() => {
+      const $ = (id) => document.getElementById(id);
+      const NS = "http://www.w3.org/2000/svg";
+      const bins = 72;
+      const state = { bin: 0, snapshot: null, stream: null, manualDisconnect: false };
+      const labels = { waiting: "Waiting for SITL", connected: "Connected", partial: "Partial", stale: "Stale", disconnected: "Disconnected" };
+      const nav = (bin) => (bin < 36 ? bin : bin - 72) * 5;
+      const binName = (bin) => `B${String(bin).padStart(2, "0")}`;
+      const bearing = (bin) => `${bin * 5}°`;
+      const finite = (value) => value !== null && value !== undefined && value !== "" && Number.isFinite(Number(value));
+      const num = (value, digits = 1) => finite(value) ? Number(value).toLocaleString("en-US", {minimumFractionDigits:digits, maximumFractionDigits:digits}) : "—";
+      const signed = (value) => finite(value) ? `${Number(value) > 0 ? "+" : Number(value) < 0 ? "−" : ""}${num(Math.abs(Number(value)), 1)}°` : "—";
+      const unit = (value, suffix, digits = 1) => finite(value) ? `${num(value, digits)} ${suffix}` : "—";
+      const speedUnit = (value) => finite(value) ? `${num(value, Math.abs(Number(value)) < 0.1 ? 2 : 1)} m/s` : "—";
+      // Display-only separation; it is not a flight-control threshold.
+      const CAP_DISPLAY_EPS_M_S = 0.05;
+      const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+
+      function tag(parent, name, attrs = {}, text) {
+        const el = document.createElementNS(NS, name);
+        Object.entries(attrs).forEach(([key, value]) => el.setAttribute(key, value));
+        if (text !== undefined) el.textContent = text;
+        parent.appendChild(el); return el;
+      }
+      function line(parent, x1, y1, x2, y2, attrs = {}) { return tag(parent, "line", {x1, y1, x2, y2, ...attrs}); }
+      function text(parent, x, y, value, attrs = {}) { return tag(parent, "text", {x, y, fill:"var(--muted)", ...attrs}, value); }
+      function clearSvg(svg, label) { const width = Math.max(80, Math.round(svg.clientWidth)); const height = Math.max(80, Math.round(svg.clientHeight)); svg.replaceChildren(); svg.setAttribute("viewBox", `0 0 ${width} ${height}`); svg.setAttribute("aria-label", label); return {width, height}; }
+      function point(cx, cy, radius, angle) { const r = angle * Math.PI / 180; return [cx + radius * Math.sin(r), cy - radius * Math.cos(r)]; }
+      function arc(cx, cy, radius, start, end) { return `M ${point(cx,cy,radius,start).join(" ")} A ${radius} ${radius} 0 0 1 ${point(cx,cy,radius,end).join(" ")}`; }
+      function sector(cx, cy, inner, outer, start, end) { return `${arc(cx,cy,outer,start,end)} L ${point(cx,cy,inner,end).join(" ")} A ${inner} ${inner} 0 0 0 ${point(cx,cy,inner,start).join(" ")} Z`; }
+      function set(id, value) { $(id).textContent = value; }
+      function capLimitFlags(snapshot) {
+        const values = capBins(snapshot), known = values.filter(finite), reference = known.length ? Math.max(...known) : null;
+        const hook = snapshot?.hook || {}, active = Number.isInteger(hook.active_sector) && hook.active_sector < bins && (hook.action === 3 || hook.action === 4);
+        return values.map((value, index) => active && index === hook.active_sector || finite(reference) && finite(value) && reference - value > CAP_DISPLAY_EPS_M_S);
+      }
+      function mapBins(snapshot) {
+        const map = snapshot?.map;
+        const distances = Array.isArray(map?.distances_cm) ? map.distances_cm : [];
+        const max = Number.isFinite(Number(map?.max_distance_cm)) ? Number(map.max_distance_cm) : 4000;
+        const limited = capLimitFlags(snapshot);
+        return Array.from({length:bins}, (_, index) => {
+          const distance = finite(distances[index]) ? Number(distances[index]) : NaN;
+          const kind = distance === 0 ? "Near" : distance === 65535 || !finite(distance) ? "Unknown" : distance > max ? "Clear" : "Range";
+          return {distance, kind, limited: limited[index]};
+        });
+      }
+      function capBins(snapshot) { const caps = snapshot?.caps?.caps_m_s; return Array.from({length:bins}, (_, index) => finite(caps?.[index]) ? Number(caps[index]) : null); }
+
+      function drawRadar() {
+        const svg = $("radar"), {width, height} = clearSvg(svg, `72-bin radar, ${binName(state.bin)} selected`);
+        const cx = width / 2, cy = height / 2, radius = Math.min(width / 2 - 34, height / 2 - 25), map = mapBins(state.snapshot), scale = radius / 20;
+        tag(svg, "circle", {cx, cy, r:radius, fill:"var(--plot)", stroke:"var(--border)"});
+        const unknown = tag(svg, "defs"); const pattern = tag(unknown, "pattern", {id:"unknown-hatch", width:5, height:5, patternUnits:"userSpaceOnUse", patternTransform:"rotate(45)"}); line(pattern, 0, 0, 0, 5, {stroke:"var(--hatch)", "stroke-width":1.5});
+        [5,10,15,20].forEach((meters) => { const r = meters * scale; tag(svg, "circle", {cx, cy, r, fill:"none", stroke:"var(--border)", "stroke-width":.8}); if (meters < 20) text(svg, cx + r * .72, cy + r * .72, `${meters} m`, {"text-anchor":"middle", "paint-order":"stroke", stroke:"var(--plot)", "stroke-width":3}); });
+        map.forEach((item, index) => {
+          const a = index * 5;
+          if (item.kind === "Unknown") tag(svg, "path", {d:sector(cx,cy,radius-12,radius,a-2.35,a+2.35), fill:"url(#unknown-hatch)", opacity:.7, stroke:item.limited?"var(--red)":"none", "stroke-width":item.limited?1.6:0});
+          else if (item.kind === "Near") tag(svg, "path", {d:sector(cx,cy,0,18,a-2.35,a+2.35), fill:"var(--red)", "fill-opacity":.8, stroke:"var(--red)", "stroke-width":1});
+          else if (item.kind === "Clear") tag(svg, "path", {d:sector(cx,cy,0,radius,a-2.35,a+2.35), fill:"var(--teal)", "fill-opacity":.12, stroke:"var(--teal)", "stroke-width":1});
+          else if (finite(item.distance)) { const color=item.limited?"var(--red)":"var(--teal)"; tag(svg, "path", {d:sector(cx,cy,0,clamp(item.distance / 100 * scale, 0, radius),a-2.35,a+2.35), fill:color, "fill-opacity":item.limited?.42:.16, stroke:item.limited?color:"none", "stroke-width":item.limited?1:0}); }
+        });
+        for (let index = 0; index < bins; index++) { const a = index * 5 + 2.5; const [x1,y1] = point(cx,cy,radius-7,a), [x2,y2] = point(cx,cy,radius,a); line(svg,x1,y1,x2,y2,{stroke:"var(--grid)", "stroke-width":.8}); }
+        tag(svg, "path", {d:sector(cx,cy,14,radius+1,state.bin*5-2.5,state.bin*5+2.5), fill:"var(--blue)", "fill-opacity":.15, stroke:"var(--blue)"});
+        map.forEach((item, index) => { if (item.kind === "Unknown" || item.kind === "Clear" || !finite(item.distance)) return; const [x,y] = point(cx,cy,item.kind === "Near" ? 16 : clamp(item.distance / 100 * scale, 0, radius),index*5); tag(svg, "circle", {cx:x,cy:y,r:index === state.bin ? 3.7 : 2.4,fill:item.limited?"var(--red)":"var(--teal)",stroke:"var(--plot)","stroke-width":.8}); });
+        tag(svg, "circle", {cx,cy,r:12,fill:"var(--plot)",stroke:"var(--border)"}); tag(svg, "path", {d:`M ${cx-5} ${cy+5} L ${cx} ${cy-7} L ${cx+5} ${cy+5} L ${cx} ${cy+2} Z`, fill:"var(--text)"});
+        [[cx,cy-radius-8,"0°","middle"],[cx,cy+radius+17,"180°","middle"],[cx-radius-5,cy+4,"270°","end"],[cx+radius+5,cy+4,"90°","start"]].forEach(([x,y,value,anchor]) => text(svg,x,y,value,{"text-anchor":anchor,fill:value === "0°" ? "var(--text)" : "var(--muted)"}));
+        for (let index = 0; index < bins; index++) tag(svg, "path", {d:sector(cx,cy,13,radius+3,index*5-2.5,index*5+2.5), fill:"transparent", "data-bin":index, tabindex:"0"});
+      }
+
+      function drawCaps() {
+        const svg = $("caps"), {width, height} = clearSvg(svg, "PX4 speed caps by bearing"); const left=27, right=width-12, top=12, bottom=height-23, step=(right-left)/bins, values=capBins(state.snapshot), known=values.filter(finite); const max = Math.max(2, known.length ? Math.ceil(Math.max(...known)/2)*2 : 2); const y = (value) => bottom - value / max * (bottom-top);
+        const defs = tag(svg, "defs"); const pattern = tag(defs, "pattern", {id:"caps-unknown-hatch", width:5, height:5, patternUnits:"userSpaceOnUse", patternTransform:"rotate(45)"}); line(pattern, 0, 0, 0, 5, {stroke:"var(--hatch)", "stroke-width":1.5});
+        tag(svg, "rect", {x:left,y:top,width:right-left,height:bottom-top,rx:3,fill:"var(--plot)"}); [0,max/2,max].forEach((value) => { line(svg,left,y(value),right,y(value),{stroke:"var(--border)","stroke-width":.8}); text(svg,left-6,y(value)+4,String(value),{"text-anchor":"end"}); });
+        tag(svg, "rect", {x:left+state.bin*step,y:top,width:step,height:bottom-top,fill:"var(--blue)","fill-opacity":.2});
+        if (!known.length) { tag(svg,"rect",{x:left,y:top,width:right-left,height:bottom-top,fill:"url(#caps-unknown-hatch)",opacity:.22}); text(svg,(left+right)/2,(top+bottom)/2+4,"No cap data",{"text-anchor":"middle",fill:"var(--text)","font-weight":650}); }
+        values.forEach((value,index) => { const x=left+index*step; if (!finite(value)) return; if (value === 0) tag(svg,"circle",{cx:x+step/2,cy:bottom,r:Math.min(2,step*.35),fill:index===state.bin?"var(--text)":"var(--blue)"}); else tag(svg,"rect",{x:x+step*.13,y:y(value),width:step*.74,height:bottom-y(value),rx:.7,fill:index===state.bin?"var(--text)":"var(--blue)"}); tag(svg,"rect",{x,y:top,width:step,height:bottom-top+5,fill:"transparent","data-bin":index,tabindex:"0"}); });
+        [[0,"0°","start"],[18,"90°","middle"],[36,"180°","middle"],[54,"270°","middle"],[72,"360°","end"]].forEach(([index,value,anchor])=>text(svg,left+index*step,height-5,value,{"text-anchor":anchor}));
+      }
+
+      function angleRange(min, max) { return finite(min) && finite(max) ? `${signed(min)} … ${signed(max)}` : "—"; }
+      function drawCoverage() {
+        const svg=$("coverage"), {width,height}=clearSvg(svg,"Vertical sensor FOV and selected bin coverage");
+        const level=state.snapshot?.leveling || {}, geometry=level.geometry, view=Array.isArray(level.view_by_bin)?level.view_by_bin[state.bin]:level.view, bin=level.coverage?.bins?.[state.bin];
+        tag(svg,"rect",{x:0,y:0,width,height:height-1,rx:6,fill:"var(--plot)"});
+        if (!geometry || !view) { text(svg,width/2,height/2,"Coverage unavailable",{"text-anchor":"middle",fill:"var(--text)","font-weight":650}); return; }
+        const values=[Number(geometry.sensor_min_deg),Number(geometry.sensor_max_deg),Number(view.min_deg),Number(view.max_deg),0];
+        const axisMin=Math.min(-60,Math.floor(Math.min(...values)/10)*10-10), axisMax=Math.max(60,Math.ceil(Math.max(...values)/10)*10+10);
+        const left=62,right=width-17, top=18, bottom=height-31, x=(value)=>left+(Number(value)-axisMin)/(axisMax-axisMin)*(right-left);
+        [-60,-30,0,30,60].filter((value)=>value>=axisMin&&value<=axisMax).forEach((value)=>{line(svg,x(value),top,x(value),bottom,{stroke:value===0?"var(--muted)":"var(--grid)","stroke-width":value===0?1.4:1,"stroke-dasharray":value===0?"4 3":"none"}); text(svg,x(value),height-10,value<0?`−${-value}°`:`${value}°`,{"text-anchor":"middle"});});
+        text(svg,12,top+14,"Sensor FOV",{fill:"var(--muted)","font-weight":650}); text(svg,12,top+66,"Current view",{fill:"var(--teal)","font-weight":650}); text(svg,x(0)+5,top+10,"Horizon",{fill:"var(--text)"});
+        const sensorY=top+24, viewY=top+76;
+        tag(svg,"rect",{x:x(geometry.sensor_min_deg),y:sensorY,width:Math.max(2,x(geometry.sensor_max_deg)-x(geometry.sensor_min_deg)),height:18,rx:4,fill:"var(--muted)","fill-opacity":.35});
+        tag(svg,"rect",{x:x(view.min_deg),y:viewY,width:Math.max(2,x(view.max_deg)-x(view.min_deg)),height:22,rx:5,fill:"var(--teal)","fill-opacity":.34,stroke:"var(--teal)"});
+        if (bin) { const marker=(Number(view.min_deg)+Number(view.max_deg))/2; line(svg,x(marker),viewY-8,x(marker),viewY+30,{stroke:bin.coverage_ok&&level.coverage?.packet_continuity_valid?"var(--teal)":"var(--red)","stroke-width":2}); text(svg,x(marker),viewY-12,binName(state.bin),{"text-anchor":"middle",fill:bin.coverage_ok&&level.coverage?.packet_continuity_valid?"var(--teal)":"var(--red)","font-weight":700}); }
+        text(svg,left,bottom+18,"level frame · elevation",{fill:"var(--muted)"});
+      }
+      function renderLeveling() {
+        const snapshot=state.snapshot, level=snapshot?.leveling || {}, aircraft=snapshot?.aircraft || {}; const pitch=finite(level.pitch_deg)?level.pitch_deg:aircraft.pitch_deg, roll=finite(level.roll_deg)?level.roll_deg:aircraft.roll_deg, coverage=level.coverage, geometry=level.geometry, view=Array.isArray(level.view_by_bin)?level.view_by_bin[state.bin]:level.view, bin=coverage?.bins?.[state.bin], band=level.band;
+        set("pose-time",finite(level.reference_time_us)?`t₀ ${num(Number(level.reference_time_us)/1e6,3)} s`:"t₀ —"); set("leveling-state",coverage&&view?(bin?.state||"Coverage"):(finite(pitch)||finite(roll)?"Pose live":"Waiting for pose")); set("pitch",signed(pitch)); set("roll",signed(roll)); set("fov-range",geometry?angleRange(geometry.sensor_min_deg,geometry.sensor_max_deg):"—"); set("view-range",view?angleRange(view.min_deg,view.max_deg):"—"); set("coverage-bin",bin?`${binName(state.bin)} · ${bin.state}`:"—"); set("coverage-band",band&&finite(band.height_down_m)&&finite(band.height_up_m)?`−${num(band.height_down_m,2)} … +${num(band.height_up_m,2)} m`:
+          "—"); set("coverage-up",bin?`Up ${bin.up_ray_count}/${coverage.required_rays}`:"Up —"); set("coverage-down",bin?`Down ${bin.down_ray_count}/${coverage.required_rays}`:"Down —"); set("coverage-reason",bin?(bin.reason||bin.state):"Coverage unavailable"); drawCoverage();
+      }
+      function renderReadout() { const snapshot=state.snapshot, map=mapBins(snapshot), caps=capBins(snapshot), item=map[state.bin], value=caps[state.bin]; set("range",item.kind === "Unknown" ? "—" : item.kind === "Near" ? "0.0 m" : item.kind === "Clear" ? "Clear" : unit(item.distance/100,"m")); set("range-kind",item.kind); set("cap",unit(value,"m/s")); set("selection",`${binName(state.bin)} at ${bearing(state.bin)}. ${item.kind}. Cap ${unit(value,"m/s")}.`); $("bin-select").value=String(state.bin); }
+      function renderAircraft() { const snapshot=state.snapshot||{}, aircraft=snapshot.aircraft||{}, hook=snapshot.hook, caps=snapshot.caps; set("mode",aircraft.mode||"—"); set("armed",aircraft.armed===true?"Armed":aircraft.armed===false?"Disarmed":"—"); set("speed",unit(aircraft.speed_m_s,"m/s")); set("height",unit(aircraft.height_m,"m")); set("limiter",hook?.action_name || caps?.state_name || "—"); $("hook-bin").querySelector("span").textContent=Number.isInteger(hook?.active_sector)&&hook.active_sector<72?binName(hook.active_sector):"No cut"; const inV=hook?.vel_sp_in_m_s, outV=hook?.vel_sp_out_m_s; set("hook-in",Array.isArray(inV)&&finite(inV[0])&&finite(inV[1])?speedUnit(Math.hypot(inV[0],inV[1])):"—"); set("hook-out",Array.isArray(outV)&&finite(outV[0])&&finite(outV[1])?speedUnit(Math.hypot(outV[0],outV[1])):"—"); set("hook-action",hook?.action_name||"—"); set("hook-age",hook?`sample ${num(Number(hook.sample_age_us)/1000,0)} ms · constraint ${num(Number(hook.constraint_age_us)/1000,0)} ms`:"No hook sample"); }
+      function renderConnection(connection) { const stateName=connection||"waiting"; $("connection-dot").dataset.state=stateName; set("connection-label",labels[stateName]||stateName); $("connect").dataset.active=stateName !== "disconnected" ? "true" : "false"; $("data-mode").textContent=stateName === "connected" ? "Live" : stateName === "disconnected" ? "Offline" : "Waiting"; }
+      function renderSources() { const sources=state.snapshot?.sources||{}; const short=["map","odometry","leveling","caps","hook"].map((name)=>`${name} ${sources[name]?.state||"—"}`); set("source-line",`Sources: ${short.join(" · ")}`); }
+      function render() { renderConnection(state.snapshot?.connection); renderReadout(); renderAircraft(); renderLeveling(); renderSources(); drawRadar(); drawCaps(); }
+      function selectBin(bin) { if(Number.isInteger(bin)&&bin>=0&&bin<bins){ state.bin=bin; renderReadout(); renderLeveling(); drawRadar(); drawCaps(); } }
+      function connect() { state.manualDisconnect=false; if(state.stream) state.stream.close(); renderConnection("waiting"); const stream=new EventSource("/events"); state.stream=stream; stream.addEventListener("snapshot",(event)=>{try{state.snapshot=JSON.parse(event.data); if(!state.manualDisconnect) render();}catch(error){console.error(error);}}); stream.onerror=()=>{if(!state.manualDisconnect) renderConnection("waiting");}; }
+      function disconnect() { state.manualDisconnect=true; if(state.stream){state.stream.close(); state.stream=null;} renderConnection("disconnected"); }
+      for(let bin=0;bin<bins;bin++) $("bin-select").appendChild(new Option(`${binName(bin)} · ${bearing(bin)}`,bin));
+      $("bin-select").addEventListener("change",()=>selectBin(Number($("bin-select").value)));
+      $("connect").addEventListener("click",connect); $("disconnect").addEventListener("click",disconnect); $("hook-bin").addEventListener("click",()=>selectBin(state.snapshot?.hook?.active_sector));
+      [$("radar"),$("caps")].forEach((svg)=>svg.addEventListener("click",(event)=>{const target=event.target.closest("[data-bin]"); if(target)selectBin(Number(target.dataset.bin));}));
+      [$("radar"),$("caps")].forEach((svg)=>svg.addEventListener("keydown",(event)=>{if(event.key!=="Enter"&&event.key!==" ")return; const target=event.target.closest("[data-bin]"); if(target){event.preventDefault();selectBin(Number(target.dataset.bin));}}));
+      const resize=new ResizeObserver(render); resize.observe($("radar")); resize.observe($("caps")); resize.observe($("coverage"));
+      renderConnection("waiting"); render(); connect();
+    })();
+  </script>
+</body>
+</html>

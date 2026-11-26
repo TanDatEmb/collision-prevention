@@ -47,12 +47,17 @@ public:
   [[nodiscard]] StepResult step();
 
   [[nodiscard]] const PipelineStats & stats() const { return _stats; }
+  [[nodiscard]] const std::optional<obstacle_sector_map::SectorMap> & latestMap() const
+  {
+    return _latest_map;
+  }
 
 private:
   std::unique_ptr<livox_ray_source::RaySource> _source;
   obstacle_sector_map::SectorMapConfig _config;
   obstacle_sector_map::SectorMapBuilder _builder;
   PipelineStats _stats;
+  std::optional<obstacle_sector_map::SectorMap> _latest_map;
 };
 
 }  // namespace obstacle_sector_node

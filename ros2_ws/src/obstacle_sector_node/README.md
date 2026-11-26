@@ -22,6 +22,19 @@ class and an executable for a planar scan (the Gazebo 2D lidar) or a Livox Mid-3
   `negative_age_drops`; `messages` counts the maps the pipeline built, held back or not. A sample
   time that does not fit in int64 nanoseconds counts as ahead of the clock. No limit on a large
   age is applied (OPEN-033).
+- The wire map uses 72 clockwise 5-degree bins in BODY_FRD, starting at the nose. A finite
+  distance in the normal range is the smaller of the confirmed obstacle distance and the
+  certified free range when both exist (ADR 0024). The message carries a single distance per bin,
+  so consumers need separate evidence to locate confirmed obstacle returns. The pinned PX4 fork
+  exports the monitor-only `cp_brake_constraints` and `cp_brake_hook` uORB topics over uXRCE-DDS;
+  the ROS mirror is `collision_prevention_msgs`.
+
+## Live CP Monitor
+`make dashboard` serves the read-only browser dashboard at `http://127.0.0.1:8765` and waits for
+SITL telemetry. `make sim-dashboard` starts the dashboard with the manual Gazebo SITL flow and
+opens the page. The browser reads the 72-bin map, vehicle pose/status, PX4 speed caps and limiter
+hook. Selecting a radar bin only changes the inspection readout; it does not alter leveling. The
+leveling plots show `No ray pairs` until an explicit debug ray-pair stream is exported by the node.
 
 ## Usage
 ```cpp
@@ -87,8 +100,11 @@ a frame with no rays. A range at or beyond `ring_layout.range_max_m` or `+inf` i
 no-return only when `range_max_m` is at least 40 m, as for the planar scan; `-inf` (nearer than the
 minimum) and NaN are invalid.
 
-The node has no mount and no leveling yet (#137): the rays are in the sensor frame, so a sector map
-from this source is not leveled and is not valid evidence on the vehicle's pitch.
+The incoming cloud is in the sensor frame. The node applies the configured mount and uses the FMU
+pose from `/fmu/out/vehicle_odometry` to level the rays at the map reference time (#179, ADR 0023).
+The sector builder receives rays in the gravity-aligned, yaw-only frame. If the reference pose is
+unavailable, the leveler drops the rays and marks the frame discontinuous. The live ROS topics
+expose the input cloud and the resulting map. The individual leveled rays stay in the node.
 
 ```bash
 source /opt/ros/jazzy/setup.bash && source ros2_ws/install/setup.bash

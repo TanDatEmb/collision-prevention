@@ -71,6 +71,17 @@ TEST(SectorMapPipelineTest, ContinuousNoReturnsEncodeObservedClearWithTheEarlies
   EXPECT_EQ(result.message->distances[1], kUnknown);
 }
 
+TEST(SectorMapPipelineTest, RetainsTheLatestFinalizedMapForMonitorTelemetry)
+{
+  SectorMapPipeline pipeline{replay({makeNoReturn(6'500'000U), makeNoReturn(7'000'000U)}), kConfig};
+
+  ASSERT_EQ(pipeline.step().status, StepStatus::kMessage);
+  ASSERT_TRUE(pipeline.latestMap().has_value());
+  EXPECT_EQ(pipeline.latestMap()->sample_timestamp_ns, 6'500'000U);
+  EXPECT_EQ(pipeline.latestMap()->sectors[0].up_ray_count, 2U);
+  EXPECT_EQ(pipeline.latestMap()->sectors[0].down_ray_count, 2U);
+}
+
 TEST(SectorMapPipelineTest, LostPacketsGiveUnknownNotClear)
 {
   SectorMapPipeline pipeline{

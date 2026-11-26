@@ -7,6 +7,7 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 add_compile_options(-Wall -Wextra -Wpedantic -Werror)
 
 find_package(ament_cmake REQUIRED)
+find_package(collision_prevention_msgs REQUIRED)
 find_package(obstacle_sector_map REQUIRED)
 find_package(px4_obstacle_bridge REQUIRED)
 find_package(livox_ray_source REQUIRED)
@@ -25,7 +26,7 @@ target_link_libraries(obstacle_sector_node PUBLIC
   obstacle_sector_map::obstacle_sector_map
   px4_obstacle_bridge::px4_obstacle_bridge
   livox_ray_source::livox_ray_source)
-ament_target_dependencies(obstacle_sector_node PUBLIC px4_msgs rclcpp diagnostic_msgs sensor_msgs)
+ament_target_dependencies(obstacle_sector_node PUBLIC collision_prevention_msgs px4_msgs rclcpp diagnostic_msgs sensor_msgs)
 target_link_libraries(obstacle_sector_node PRIVATE yaml-cpp::yaml-cpp)
 
 # `ros2 run obstacle_sector_node obstacle_sector_node`
@@ -72,6 +73,6 @@ endif()
 
 ament_export_targets(export_obstacle_sector_node HAS_LIBRARY_TARGET)
 ament_export_dependencies(
-  obstacle_sector_map px4_obstacle_bridge livox_ray_source px4_msgs rclcpp diagnostic_msgs
+  collision_prevention_msgs obstacle_sector_map px4_obstacle_bridge livox_ray_source px4_msgs rclcpp diagnostic_msgs
   sensor_msgs yaml-cpp)
 ament_package()

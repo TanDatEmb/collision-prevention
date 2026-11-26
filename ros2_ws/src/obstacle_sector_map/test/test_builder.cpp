@@ -333,6 +333,48 @@ TEST(SectorMapBuilderTest, ThePartialSectorIsUnknownUntilBothHalvesHaveEnoughRay
   EXPECT_EQ(one_horizon_ray.finalize().sectors[0].state, SectorState::kUnknown);
 }
 
+TEST(SectorMapBuilderTest, ExposesPerHalfCoverageAndDecision)
+{
+  SectorMapBuilder builder{kConfig};
+  builder.reset(true);
+  builder.addRay(makeNoReturn(0.0F, 1'000U, 3.0F * kDegreesToRadians));
+  builder.addRay(makeNoReturn(0.0F, 1'000U, 3.0F * kDegreesToRadians));
+  builder.addRay(makeNoReturn(0.0F, 1'000U, -3.0F * kDegreesToRadians));
+
+  const auto partial = builder.finalize().sectors[0];
+  EXPECT_EQ(partial.up_ray_count, 2U);
+  EXPECT_EQ(partial.down_ray_count, 1U);
+  EXPECT_FALSE(partial.rear_only);
+  EXPECT_FALSE(partial.coverage_ok);
+
+  SectorMapBuilder covered{kConfig};
+  covered.reset(true);
+  addOpenSky(covered);
+  covered.addRay(makeNoReturn(0.0F, 1'000U, 3.0F * kDegreesToRadians));
+  covered.addRay(makeNoReturn(0.0F, 1'000U, -3.0F * kDegreesToRadians));
+  const auto complete = covered.finalize().sectors[0];
+  EXPECT_EQ(complete.up_ray_count, 3U);
+  EXPECT_EQ(complete.down_ray_count, 3U);
+  EXPECT_TRUE(complete.coverage_ok);
+}
+
+TEST(SectorMapBuilderTest, RearSectorCoverageNeedsOnlyTheUpperHalf)
+{
+  SectorMapConfig config = kConfig;
+  config.rear_start_rad = 0.5F;
+  SectorMapBuilder builder{config};
+  builder.reset(true);
+  const float rear = 3.14159265358979323846F;
+  builder.addRay(makeNoReturn(rear, 1'000U, 3.0F * kDegreesToRadians));
+  builder.addRay(makeNoReturn(rear, 1'000U, 3.0F * kDegreesToRadians));
+
+  const auto sector = builder.finalize().sectors[36];
+  EXPECT_TRUE(sector.rear_only);
+  EXPECT_EQ(sector.up_ray_count, 2U);
+  EXPECT_EQ(sector.down_ray_count, 0U);
+  EXPECT_TRUE(sector.coverage_ok);
+}
+
 // Issue #148, SYS-CP-029: a half outside the field of view is not a half filled by a wall.
 TEST(SectorMapBuilderTest, ConfirmedObstacleWithAHalfOutsideTheFieldOfViewIsUnknown)
 {

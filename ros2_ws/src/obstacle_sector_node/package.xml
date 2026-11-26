@@ -6,6 +6,7 @@
   <maintainer email="tandat.emb@gmail.com">Le Tan Dat</maintainer>
   <license>TODO</license>
   <buildtool_depend>ament_cmake</buildtool_depend>
+  <depend>collision_prevention_msgs</depend>
   <depend>obstacle_sector_map</depend>
   <depend>px4_obstacle_bridge</depend>
   <depend>livox_ray_source</depend>

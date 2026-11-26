@@ -4,6 +4,7 @@
 #include <memory>
 #include <optional>
 
+#include "collision_prevention_msgs/msg/cp_leveling_coverage.hpp"
 #include "diagnostic_msgs/msg/diagnostic_array.hpp"
 #include "obstacle_sector_node/pipeline.hpp"
 #include "px4_msgs/msg/obstacle_distance.hpp"
@@ -11,6 +12,24 @@
 
 namespace obstacle_sector_node
 {
+
+/// Static geometry needed to explain the vertical ray coverage in the dashboard. Disabled for a planar scan
+/// and enabled only when the source supplies a validated sensor layout.
+struct LevelingCoverageConfig
+{
+  bool enabled{false};
+  double mount_roll_rad{0.0};
+  double mount_pitch_down_rad{0.0};
+  double mount_yaw_left_rad{0.0};
+  double sensor_elevation_min_rad{0.0};
+  double sensor_elevation_max_rad{0.0};
+  double height_up_m{0.0};
+  double height_down_m{0.0};
+  double attitude_allowance_rad{0.0};
+  uint32_t required_rays{0U};
+
+  [[nodiscard]] bool isValid() const;
+};
 
 /// Diagnostic level of the node: ERROR when the source ended, the latest frame did not encode or
 /// the latest map was held back for a negative age (nothing reaches PX4), WARN when earlier frames
@@ -43,7 +62,8 @@ public:
   ObstacleSectorNode(
     std::unique_ptr<livox_ray_source::RaySource> source,
     const obstacle_sector_map::SectorMapConfig & config,
-    const rclcpp::NodeOptions & options = rclcpp::NodeOptions());
+    const rclcpp::NodeOptions & options = rclcpp::NodeOptions(),
+    const LevelingCoverageConfig & coverage = LevelingCoverageConfig());
 
   [[nodiscard]] const PipelineStats & stats() const { return _pipeline->stats(); }
 
@@ -53,13 +73,16 @@ public:
 private:
   void publishNext();
   void publishDiagnostics();
+  void publishLevelingCoverage(const obstacle_sector_map::SectorMap & map);
 
   std::unique_ptr<SectorMapPipeline> _pipeline;
+  LevelingCoverageConfig _coverage_config;
   StepStatus _last_status{StepStatus::kMessage};
   uint64_t _negative_age_drops{0U};
   bool _latest_map_dropped{false};
   std::optional<uint64_t> _latest_sample_us;
   rclcpp::Publisher<px4_msgs::msg::ObstacleDistance>::SharedPtr _distance_pub;
+  rclcpp::Publisher<collision_prevention_msgs::msg::CpLevelingCoverage>::SharedPtr _coverage_pub;
   rclcpp::Publisher<diagnostic_msgs::msg::DiagnosticArray>::SharedPtr _diagnostics_pub;
   rclcpp::TimerBase::SharedPtr _map_timer;
   rclcpp::TimerBase::SharedPtr _diagnostics_timer;
