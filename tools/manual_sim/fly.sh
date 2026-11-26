@@ -19,8 +19,12 @@ T=$REPO/tools/scenarios
 RUN=$REPO/build/manual_sim
 LOG=$RUN/log-launch
 
-if ps -eo args | grep -qE "^gz sim|[b]in/px4( |$)|^MicroXRCEAgent|dashboard/bridge\.py"; then
+if ps -eo args | grep -qE "^gz sim|[b]in/px4( |$)|^MicroXRCEAgent"; then
   echo "Another simulation is running. Stop it with: make sim-stop"; exit 1
+fi
+# a dashboard left running (make dashboard) only watches and may stay; a second one would need the same port
+if [ "${DASHBOARD:-0}" = 1 ] && ps -eo args | grep -qE "[d]ashboard/bridge\.py"; then
+  echo "A dashboard is already running: use make sim, or stop it first (make sim-stop)."; exit 1
 fi
 for f in "$PX4/bin/px4" "$REPO/ros2_ws/install/setup.bash" "$T/spawn_obstacle.sh" "$REPO/tools/dashboard/bridge.py" "$REPO/tools/dashboard/index.html"; do
   [ -e "$f" ] || { echo "missing: $f (build it with: make px4-sitl / make ros)"; exit 1; }

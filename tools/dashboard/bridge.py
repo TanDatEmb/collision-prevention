@@ -745,6 +745,7 @@ class RosTelemetryThread(threading.Thread):
             import rclpy
             from rclpy.executors import SingleThreadedExecutor
             from rclpy.qos import qos_profile_sensor_data
+            from rclpy.signals import SignalHandlerOptions
             from diagnostic_msgs.msg import DiagnosticArray
             from px4_msgs.msg import ObstacleDistance, VehicleOdometry, VehicleStatus
 
@@ -757,7 +758,8 @@ class RosTelemetryThread(threading.Thread):
                 self._store.set_error("dds", f"monitor messages unavailable: {exc}")
 
             self._rclpy = rclpy
-            rclpy.init(args=None)
+            # no ROS signal handlers: they stop only ROS, and the HTTP server would outlive a plain kill
+            rclpy.init(args=None, signal_handler_options=SignalHandlerOptions.NO)
             node = rclpy.create_node("collision_prevention_dashboard")
             node.create_subscription(
                 ObstacleDistance,
