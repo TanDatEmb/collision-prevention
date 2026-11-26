@@ -25,9 +25,16 @@ class and an executable for a planar scan (the Gazebo 2D lidar) or a Livox Mid-3
 - The wire map uses 72 clockwise 5-degree bins in BODY_FRD, starting at the nose. A finite
   distance in the normal range is the smaller of the confirmed obstacle distance and the
   certified free range when both exist (ADR 0024). The message carries a single distance per bin,
-  so consumers need separate evidence to locate confirmed obstacle returns. PX4 publishes the
-  speed caps in its internal `cp_brake_constraints` uORB topic. The pinned DDS configuration
-  currently leaves `cp_brake_constraints` and `cp_brake_hook` internal to PX4.
+  so consumers need separate evidence to locate confirmed obstacle returns. The pinned PX4 fork
+  exports the monitor-only `cp_brake_constraints` and `cp_brake_hook` uORB topics over uXRCE-DDS;
+  the ROS mirror is `collision_prevention_msgs`.
+
+## Live CP Monitor
+`make dashboard` serves the read-only browser dashboard at `http://127.0.0.1:8765` and waits for
+SITL telemetry. `make sim-dashboard` starts the dashboard with the manual Gazebo SITL flow and
+opens the page. The browser reads the 72-bin map, vehicle pose/status, PX4 speed caps and limiter
+hook. Selecting a radar bin only changes the inspection readout; it does not alter leveling. The
+leveling plots show `No ray pairs` until an explicit debug ray-pair stream is exported by the node.
 
 ## Usage
 ```cpp
