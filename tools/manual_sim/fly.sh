@@ -19,7 +19,7 @@ T=$REPO/tools/scenarios
 RUN=$REPO/build/manual_sim
 LOG=$RUN/log-launch
 
-if ps -eo args | grep -qE "^gz sim|[b]in/px4( |$)|^MicroXRCEAgent"; then
+if ps -eo args | grep -qE "^gz sim|[b]in/px4( |$)|^MicroXRCEAgent|dashboard/bridge\.py"; then
   echo "Another simulation is running. Stop it with: make sim-stop"; exit 1
 fi
 for f in "$PX4/bin/px4" "$REPO/ros2_ws/install/setup.bash" "$T/spawn_obstacle.sh" "$REPO/tools/dashboard/bridge.py" "$REPO/tools/dashboard/index.html"; do

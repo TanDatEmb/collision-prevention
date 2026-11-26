@@ -157,6 +157,18 @@ def _list_value(value: Any, length: int | None = None) -> list[Any]:
     return result
 
 
+def _has_complete_array(value: Any, length: int) -> bool:
+    """Return true only for a fully populated listener array of the expected length."""
+
+    if isinstance(value, Mapping):
+        try:
+            keys = {int(index) for index in value}
+        except (TypeError, ValueError):
+            return False
+        return keys == set(range(length)) and all(item is not None for item in value.values())
+    return isinstance(value, (list, tuple)) and len(value) == length and all(item is not None for item in value)
+
+
 def _quaternion_attitude(q: list[Any]) -> tuple[float | None, float | None]:
     values = [_number(item) for item in _list_value(q, 4)]
     if any(item is None for item in values):
@@ -415,8 +427,14 @@ class SnapshotStore:
         distances = [_number(item) for item in _list_value(payload.get("distances_m"), 72)]
         state = _integer(payload.get("state"))
         with self._lock:
+            timestamp_us = _integer(payload.get("timestamp"), 0)
+            previous_timestamp_us = self._caps.get("timestamp_us") if self._caps else None
+            if previous_timestamp_us is not None and (
+                not timestamp_us or timestamp_us <= previous_timestamp_us
+            ):
+                return
             self._caps = {
-                "timestamp_us": _integer(payload.get("timestamp"), 0),
+                "timestamp_us": timestamp_us,
                 "sample_timestamp_us": _integer(payload.get("sample_timestamp"), 0),
                 "heading_rad": _number(payload.get("heading_rad")),
                 "heading_valid": bool(payload.get("heading_valid")) if "heading_valid" in payload else None,
@@ -436,8 +454,14 @@ class SnapshotStore:
     def update_hook(self, payload: Mapping[str, Any]) -> None:
         action = _integer(payload.get("action"))
         with self._lock:
+            timestamp_us = _integer(payload.get("timestamp"), 0)
+            previous_timestamp_us = self._hook.get("timestamp_us") if self._hook else None
+            if previous_timestamp_us is not None and (
+                not timestamp_us or timestamp_us <= previous_timestamp_us
+            ):
+                return
             self._hook = {
-                "timestamp_us": _integer(payload.get("timestamp"), 0),
+                "timestamp_us": timestamp_us,
                 "sample_timestamp_us": _integer(payload.get("sample_timestamp"), 0),
                 "constraint_timestamp_us": _integer(payload.get("constraint_timestamp"), 0),
                 "sample_age_us": _integer(payload.get("sample_age_us")),
@@ -616,6 +640,15 @@ class SnapshotStore:
         with self._lock:
             return self._snapshot_locked()
 
+    def snapshot_event(self) -> dict[str, str]:
+        """Build a fresh SSE snapshot so source timeouts are visible without new telemetry."""
+
+        with self._lock:
+            return {
+                "event": "snapshot",
+                "data": json.dumps(self._snapshot_locked(), ensure_ascii=False, separators=(",", ":")),
+            }
+
 
 class Px4Listener:
     """Small subprocess adapter for PX4's local uORB listener command."""
@@ -649,7 +682,15 @@ class Px4Listener:
         parsed = parse_listener_output(getattr(result, "stdout", ""))
         # px4-listener exits with status 0 for a topic-size error and still prints a ``TOPIC``
         # header. Do not turn that metadata into a zero-filled dashboard sample.
-        return parsed if "timestamp" in parsed else None
+        if "timestamp" not in parsed:
+            return None
+        if topic == "cp_brake_constraints" and not _has_complete_array(parsed.get("caps_m_s"), 72):
+            return None
+        if topic == "cp_brake_hook" and not all(
+            _has_complete_array(parsed.get(field), 2) for field in ("vel_sp_in", "vel_sp_out", "vel")
+        ):
+            return None
+        return parsed
 
 
 class ListenerPoller(threading.Thread):
@@ -902,10 +943,11 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
             self.wfile.flush()
             while True:
                 try:
-                    event = subscriber.get(timeout=15.0)
+                    event = subscriber.get(timeout=1.0)
                     encoded = f"event: {event['event']}\ndata: {event['data']}\n\n"
                 except queue.Empty:
-                    encoded = ": ping\n\n"
+                    event = self.server.store.snapshot_event()
+                    encoded = f"event: {event['event']}\ndata: {event['data']}\n\n"
                 self.wfile.write(encoded.encode("utf-8"))
                 self.wfile.flush()
         except (BrokenPipeError, ConnectionResetError, TimeoutError):
@@ -925,13 +967,13 @@ def run_server(
 ) -> None:
     store = SnapshotStore(source_timeout_s=source_timeout_s)
     stop_event = threading.Event()
+    httpd = DashboardHttpServer((host, port), root, store)
     ros_thread = RosTelemetryThread(store, stop_event)
     ros_thread.start()
     listener_thread: ListenerPoller | None = None
     if enable_listener:
         listener_thread = ListenerPoller(store, Px4Listener(px4_binary), stop_event)
         listener_thread.start()
-    httpd = DashboardHttpServer((host, port), root, store)
     print(f"CP Monitor: http://{host}:{port}", flush=True)
     if open_browser:
         threading.Timer(0.4, lambda: webbrowser.open(f"http://{host}:{port}/")).start()

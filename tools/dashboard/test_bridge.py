@@ -56,6 +56,17 @@ class ListenerParserTests(unittest.TestCase):
 
         self.assertIsNone(listener.poll("cp_brake_constraints"))
 
+    def test_listener_rejects_partial_constraint_arrays(self):
+        def runner(*_args, **_kwargs):
+            return types.SimpleNamespace(
+                returncode=0,
+                stdout="timestamp: 1234567\ncaps_m_s[0]: 4.25\n",
+            )
+
+        listener = Px4Listener(binary=__file__, runner=runner)
+
+        self.assertIsNone(listener.poll("cp_brake_constraints"))
+
 
 class SnapshotStoreTests(unittest.TestCase):
     @staticmethod
@@ -173,6 +184,36 @@ class SnapshotStoreTests(unittest.TestCase):
         self.assertAlmostEqual(snapshot["aircraft"]["speed_m_s"], 2.0)
         self.assertAlmostEqual(snapshot["aircraft"]["height_m"], 4.0)
         self.assertEqual(snapshot["leveling"]["status"], "pose_only")
+
+    def test_caps_do_not_regress_when_listener_returns_an_older_sample(self):
+        store = SnapshotStore(clock=lambda: 100.0)
+        store.update_caps({"timestamp": 20, "caps_m_s": [2.0] * 72})
+        store.update_caps({"timestamp": 10, "caps_m_s": [0.0] * 72})
+
+        caps = store.snapshot()["caps"]
+        self.assertEqual(caps["timestamp_us"], 20)
+        self.assertEqual(caps["caps_m_s"][0], 2.0)
+
+    def test_older_caps_sample_does_not_refresh_source_age(self):
+        now = [100.0]
+        store = SnapshotStore(clock=lambda: now[0], source_timeout_s=2.0)
+        store.update_caps({"timestamp": 20, "caps_m_s": [2.0] * 72})
+        now[0] = 103.0
+
+        store.update_caps({"timestamp": 10, "caps_m_s": [0.0] * 72})
+
+        self.assertEqual(store.snapshot()["sources"]["caps"]["state"], "stale")
+
+    def test_snapshot_event_recomputes_stale_source_state(self):
+        now = [100.0]
+        store = SnapshotStore(clock=lambda: now[0], source_timeout_s=2.0)
+        store.update_map({"timestamp": 1, "distances": [1] * 72})
+        now[0] = 103.0
+
+        event = store.snapshot_event()
+
+        self.assertEqual(event["event"], "snapshot")
+        self.assertEqual(json.loads(event["data"])["connection"], "stale")
 
     def test_source_ages_make_stale_connection_explicit(self):
         now = [100.0]
