@@ -41,7 +41,15 @@ class DdsContractTests(unittest.TestCase):
 
     def test_browser_contract_keeps_live_controls_and_explicit_pair_empty_state(self):
         html = DASHBOARD_HTML.read_text()
-        for text in ("Connect", "Disconnect", 'EventSource("/events")', "No ray pairs", "Pose live"):
+        for text in (
+            "Connect",
+            "Disconnect",
+            'EventSource("/events")',
+            "No ray pairs",
+            "Pose live",
+            "speedUnit",
+            "hook-age",
+        ):
             self.assertIn(text, html)
 
 
