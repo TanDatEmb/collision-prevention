@@ -294,4 +294,6 @@ std::size_t PacketSampler::append(
   return dropped;
 }
 
+void PacketSampler::markBreak() { _pending_break = true; }
+
 }  // namespace livox_ray_source

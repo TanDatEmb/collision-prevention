@@ -310,6 +310,11 @@ void onPointCloud(
       ++state->continuity_breaks;
     }
     const std::size_t dropped = state->sampler.append(decoded, is_break, samples, &metadata);
+    if (!configured_type_matches) {
+      // The packet is available to telemetry, but it is withheld from safety. Keep the next
+      // safety sample from silently bridging over the missing packet.
+      state->sampler.markBreak();
+    }
     impl->dropped_rays += dropped;
     state->dropped_rays += dropped;
   }

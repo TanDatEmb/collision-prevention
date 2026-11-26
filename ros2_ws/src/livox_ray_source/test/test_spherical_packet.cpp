@@ -497,6 +497,21 @@ TEST(PacketSamplerTest, AStreamWithoutTimeBuffersNothingInTheSegmenter)
   EXPECT_FALSE(segmenter.flush().has_value());
 }
 
+TEST(PacketSamplerTest, AWithheldPacketBreaksTheNextSafetySample)
+{
+  PacketSampler sampler;
+  std::vector<StreamSample> out;
+  const auto packet = decodeThree(1U);
+  static_cast<void>(sampler.append(packet, false, out));
+  out.clear();
+
+  sampler.markBreak();
+  static_cast<void>(sampler.append(packet, false, out));
+  ASSERT_EQ(out.size(), 3U);
+  EXPECT_TRUE(out.front().continuity_break);
+  EXPECT_FALSE(out[1].continuity_break);
+}
+
 }  // namespace
 
 namespace

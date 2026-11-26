@@ -143,6 +143,10 @@ public:
     const DecodedPacket & packet, bool udp_break, std::vector<StreamSample> & out,
     std::vector<PointMetadata> * metadata = nullptr);
 
+  /// Marks that a decoded packet was withheld from the safety stream. The next forwarded ray
+  /// carries a continuity break, even when the withheld packet had a usable timestamp.
+  void markBreak();
+
 private:
   bool _pending_break{false};
 };
