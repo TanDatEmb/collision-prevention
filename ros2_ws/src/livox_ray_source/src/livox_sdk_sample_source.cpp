@@ -361,6 +361,19 @@ bool LivoxSdkSampleSource::start()
     _impl->devices.clear();
   }
   _impl->registry.clear();
+  _impl->packets = 0U;
+  _impl->decoded_packets = 0U;
+  _impl->rejected_packets = 0U;
+  _impl->not_spherical_packets = 0U;
+  _impl->unsynchronized_packets = 0U;
+  _impl->continuity_breaks = 0U;
+  _impl->dropped_rays = 0U;
+  _impl->point_metadata_samples = 0U;
+  _impl->imu_packets = 0U;
+  _impl->imu_unusable = 0U;
+  _impl->imu_accel_unusable = 0U;
+  _impl->device_events = 0U;
+  _impl->non_primary_samples = 0U;
   bool expected = false;
   if (!g_instance_running.compare_exchange_strong(expected, true)) {
     _impl->say("livox: another instance of the SDK source is running");
