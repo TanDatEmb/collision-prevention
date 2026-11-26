@@ -204,6 +204,61 @@ class SnapshotStoreTests(unittest.TestCase):
 
         self.assertEqual(store.snapshot()["sources"]["caps"]["state"], "stale")
 
+    def test_caps_follow_px4_after_a_restart(self):
+        # PX4 timestamps count from boot: after a restart every sample is smaller than the stored one
+        now = [100.0]
+        store = SnapshotStore(clock=lambda: now[0], source_timeout_s=2.0)
+        store.update_caps({"timestamp": 900_000_000, "caps_m_s": [1.0] * 72})
+        now[0] = 115.0
+        store.update_caps({"timestamp": 20_000_000, "caps_m_s": [9.0] * 72})
+        now[0] = 115.05
+        store.update_caps({"timestamp": 20_050_000, "caps_m_s": [8.0] * 72})
+
+        snapshot = store.snapshot()
+        self.assertEqual(snapshot["caps"]["timestamp_us"], 20_050_000)
+        self.assertEqual(snapshot["caps"]["caps_m_s"][0], 8.0)
+        self.assertEqual(snapshot["sources"]["caps"]["state"], "live")
+
+    def test_hook_follows_px4_after_a_restart(self):
+        now = [100.0]
+        store = SnapshotStore(clock=lambda: now[0], source_timeout_s=2.0)
+        store.update_hook({"timestamp": 900_000_000, "action": 3})
+        now[0] = 115.0
+        store.update_hook({"timestamp": 20_000_000, "action": 2})
+        now[0] = 115.1
+        store.update_hook({"timestamp": 20_100_000, "action": 2})
+
+        snapshot = store.snapshot()
+        self.assertEqual(snapshot["hook"]["timestamp_us"], 20_100_000)
+        self.assertEqual(snapshot["hook"]["action"], 2)
+        self.assertEqual(snapshot["sources"]["hook"]["state"], "live")
+
+    def test_a_repeated_older_sample_is_not_a_restart(self):
+        # the listener of a topic that stopped publishing returns the same sample again and again
+        now = [100.0]
+        store = SnapshotStore(clock=lambda: now[0], source_timeout_s=2.0)
+        store.update_caps({"timestamp": 20, "caps_m_s": [2.0] * 72})
+        for later in (103.0, 103.2, 103.4):
+            now[0] = later
+            store.update_caps({"timestamp": 10, "caps_m_s": [0.0] * 72})
+
+        snapshot = store.snapshot()
+        self.assertEqual(snapshot["caps"]["timestamp_us"], 20)
+        self.assertEqual(snapshot["sources"]["caps"]["state"], "stale")
+
+    def test_advancing_older_samples_wait_until_the_stored_one_is_stale(self):
+        # delayed reads of the same boot must not pull the display back while newer data is fresh
+        now = [100.0]
+        store = SnapshotStore(clock=lambda: now[0], source_timeout_s=2.0)
+        store.update_hook({"timestamp": 100, "action": 3})
+        store.update_hook({"timestamp": 10, "action": 2})
+        store.update_hook({"timestamp": 11, "action": 2})
+        self.assertEqual(store.snapshot()["hook"]["timestamp_us"], 100)
+
+        now[0] = 103.0
+        store.update_hook({"timestamp": 12, "action": 2})
+        self.assertEqual(store.snapshot()["hook"]["timestamp_us"], 12)
+
     def test_snapshot_event_recomputes_stale_source_state(self):
         now = [100.0]
         store = SnapshotStore(clock=lambda: now[0], source_timeout_s=2.0)

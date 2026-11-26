@@ -1,7 +1,14 @@
 #!/usr/bin/env python3
 """Repository contract tests for the live dashboard telemetry path."""
 
+import contextlib
+import importlib.util
+import os
 import pathlib
+import signal
+import subprocess
+import sys
+import time
 import unittest
 
 
@@ -60,6 +67,58 @@ class DdsContractTests(unittest.TestCase):
         ):
             self.assertIn(text, html)
         self.assertNotIn("No ray pairs", html)
+
+
+@contextlib.contextmanager
+def running_dashboard():
+    """A process that looks like a running dashboard to the launcher; it serves nothing."""
+    process = subprocess.Popen(["bash", "-c", "exec -a 'python3 tools/dashboard/bridge.py' sleep 60"])
+    try:
+        time.sleep(0.3)
+        yield
+    finally:
+        process.kill()
+        process.wait()
+
+
+def launch(**extra):
+    """Run the manual-sim launcher up to its file checks: PX4_BUILD points nowhere, so nothing is started."""
+    env = dict(os.environ, PX4_BUILD="/nonexistent-px4-build", **extra)
+    return subprocess.run(["bash", str(ROOT / "tools/manual_sim/fly.sh")], env=env, capture_output=True, text=True,
+                          timeout=30, check=False).stdout
+
+
+class LauncherContractTests(unittest.TestCase):
+    def setUp(self):
+        if "Another simulation is running" in launch(DASHBOARD="0"):
+            self.skipTest("a simulator is running on this machine")
+
+    def test_a_running_dashboard_does_not_block_the_simulator(self):
+        # make dashboard serves and waits for SITL: starting or restarting the simulator must work next to it
+        with running_dashboard():
+            output = launch(DASHBOARD="0")
+        self.assertIn("missing: /nonexistent-px4-build/bin/px4", output)
+
+    def test_a_second_dashboard_is_refused(self):
+        with running_dashboard():
+            output = launch(DASHBOARD="1")
+        self.assertIn("A dashboard is already running", output)
+
+
+@unittest.skipUnless(importlib.util.find_spec("rclpy"), "needs a sourced ROS 2 workspace")
+class ShutdownContractTests(unittest.TestCase):
+    def test_a_plain_kill_stops_the_bridge(self):
+        # rclpy installs its own SIGTERM handler, which stops only the ROS side and leaves the server running
+        process = subprocess.Popen([sys.executable, str(ROOT / "tools/dashboard" / "bridge.py"), "--port", "0"],
+                                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        try:
+            time.sleep(3)
+            self.assertIsNone(process.poll(), "the bridge did not start")
+            process.send_signal(signal.SIGTERM)
+            process.wait(timeout=6)
+        finally:
+            process.kill()
+            process.wait()
 
 
 if __name__ == "__main__":
