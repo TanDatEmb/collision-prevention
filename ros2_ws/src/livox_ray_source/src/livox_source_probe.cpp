@@ -124,6 +124,8 @@ int main(int argc, char ** argv)
 
     const auto stats = source.stats();
     const auto health = source.health();
+    const bool observed = stats.packets > 0U && stats.decoded_packets > 0U && point_samples > 0U &&
+                          stats.imu_packets > 0U;
     const bool qualified =
       stats.packets > 0U && stats.decoded_packets > 0U && stream_samples > 0U &&
       point_samples > 0U && imu_samples > 0U && stats.rejected_packets == 0U &&
@@ -137,6 +139,7 @@ int main(int argc, char ** argv)
     output << jsonString("config") << ':' << jsonString(options.config);
     first = false;
     add(output, "duration_ms", static_cast<uint64_t>(options.duration_s * 1000.0), first);
+    output << ',' << jsonString("observed") << ':' << (observed ? "true" : "false");
     add(output, "stream_samples", stream_samples.load(), first);
     add(output, "point_samples", point_samples.load(), first);
     add(output, "imu_samples", imu_samples.load(), first);
@@ -159,7 +162,7 @@ int main(int argc, char ** argv)
     output << ',' << jsonString("qualified") << ':' << (qualified ? "true" : "false");
     output << "}\n";
     std::cout << output.str();
-    return qualified ? 0 : 3;
+    return (options.require_ptp ? qualified : observed) ? 0 : 3;
   }
   catch (const std::exception & error) {
     std::cerr << "livox_source_probe: " << error.what() << '\n';
