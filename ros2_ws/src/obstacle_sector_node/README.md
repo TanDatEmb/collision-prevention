@@ -41,11 +41,12 @@ not show ray pairs before and after leveling.
 ## Livox telemetry and diagnostics
 
 For `source:=livox`, the node keeps the safety path on one primary lidar and publishes raw
-telemetry per detected serial:
+telemetry per detected serial (sanitized as a ROS name token; digit-leading serials get a `lidar_`
+prefix):
 
-- `/livox/<serial>/imu` (`sensor_msgs/Imu`): PTP-stamped gyro and accelerometer. Acceleration is
+- `/livox/<token>/imu` (`sensor_msgs/Imu`): PTP-stamped gyro and accelerometer. Acceleration is
   converted from Livox g to m/s²; it is not fused into leveling.
-- `/livox/<serial>/points` (`sensor_msgs/PointCloud2`): finite return points in the Livox FLU frame,
+- `/livox/<token>/points` (`sensor_msgs/PointCloud2`): finite return points in the Livox FLU frame,
   with `reflectivity`, `tag` and per-point `time_offset_ns` fields.
 - `/livox/status` (`diagnostic_msgs/DiagnosticArray`): device identity, packet/IMU counters,
   timestamp types, sample ages, continuity and primary-lidar faults. A device is reported stale

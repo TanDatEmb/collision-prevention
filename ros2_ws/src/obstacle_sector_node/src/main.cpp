@@ -99,7 +99,14 @@ std::string livoxTopicToken(const livox_ray_source::LivoxDeviceIdentity & device
   for (const char character : source) {
     token.push_back(std::isalnum(static_cast<unsigned char>(character)) ? character : '_');
   }
-  return token.empty() ? "unknown" : token;
+  if (token.empty()) {
+    return "unknown";
+  }
+  // ROS name tokens cannot begin with a digit; preserve the serial while making the topic valid.
+  if (std::isdigit(static_cast<unsigned char>(token.front()))) {
+    token.insert(0U, "lidar_");
+  }
+  return token;
 }
 
 // Matches the bounded IMU queue used by the official Livox ROS2 driver. This is telemetry

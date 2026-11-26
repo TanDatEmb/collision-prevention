@@ -105,6 +105,7 @@ int main(int argc, char ** argv)
     std::atomic<uint64_t> stream_samples{0U};
     std::atomic<uint64_t> point_samples{0U};
     std::atomic<uint64_t> imu_samples{0U};
+    std::atomic<uint64_t> primary_gyro_samples{0U};
 
     livox_ray_source::LivoxSdkSampleSource source(
       options.config,
@@ -114,7 +115,8 @@ int main(int argc, char ** argv)
     source.setPointSink(
       [&point_samples](const livox_ray_source::LivoxPointSample &) { ++point_samples; });
     source.setImuSink([&imu_samples](const livox_ray_source::LivoxImuSample &) { ++imu_samples; });
-    source.setGyroSink([](const livox_ray_source::GyroSample &) {});
+    source.setGyroSink(
+      [&primary_gyro_samples](const livox_ray_source::GyroSample &) { ++primary_gyro_samples; });
 
     if (!source.start()) {
       throw std::runtime_error("Livox SDK did not start");
@@ -131,7 +133,8 @@ int main(int argc, char ** argv)
                           stats.point_metadata_samples > 0U && stats.imu_packets > 0U;
     const bool qualified =
       stats.packets > 0U && stats.decoded_packets > 0U && stream_samples > 0U &&
-      point_samples > 0U && imu_samples > 0U && stats.rejected_packets == 0U &&
+      point_samples > 0U && imu_samples > 0U && primary_gyro_samples > 0U &&
+      stats.rejected_packets == 0U &&
       stats.not_spherical_packets == 0U && stats.continuity_breaks == 0U &&
       stats.dropped_rays == 0U && stats.imu_unusable == 0U && stats.imu_accel_unusable == 0U &&
       (!options.require_ptp || stats.unsynchronized_packets == 0U) && !source.multipleLidarFault();
@@ -146,6 +149,7 @@ int main(int argc, char ** argv)
     add(output, "stream_samples", stream_samples.load(), first);
     add(output, "point_samples", point_samples.load(), first);
     add(output, "imu_samples", imu_samples.load(), first);
+    add(output, "primary_gyro_samples", primary_gyro_samples.load(), first);
     add(output, "packets", stats.packets, first);
     add(output, "decoded_packets", stats.decoded_packets, first);
     add(output, "rejected_packets", stats.rejected_packets, first);
