@@ -534,6 +534,10 @@ int main(int argc, char ** argv)
               status.level = diagnostic_msgs::msg::DiagnosticStatus::ERROR;
               status.message = "unsupported device or packet layout";
             }
+            else if (device.wrong_data_type_packets > 0U) {
+              status.level = diagnostic_msgs::msg::DiagnosticStatus::ERROR;
+              status.message = "configured point layout mismatch";
+            }
             else if (device.configuration == livox_ray_source::LivoxConfigurationState::kFailed) {
               status.level = diagnostic_msgs::msg::DiagnosticStatus::ERROR;
               status.message = device.configuration_error.empty() ? "device configuration failed"
@@ -559,8 +563,7 @@ int main(int argc, char ** argv)
               device.last_point_time_type != 1U || device.last_imu_time_type != 1U ||
               device.unsynchronized_packets > 0U || device.rejected_packets > 0U ||
               device.continuity_breaks > 0U || device.imu_unusable > 0U ||
-              device.imu_accel_unusable > 0U || device.wrong_data_type_packets > 0U ||
-              imu_queue_drops > 0U) {
+              device.imu_accel_unusable > 0U || imu_queue_drops > 0U) {
               status.level = diagnostic_msgs::msg::DiagnosticStatus::WARN;
               status.message = "data, time or telemetry warnings";
             }
