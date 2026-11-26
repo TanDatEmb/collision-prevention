@@ -1,56 +1,84 @@
-# Repository Guidelines
+# AGENTS.md
 
-This repository contains the PX4 collision-prevention stack: a ROS 2 companion pipeline builds a
-72-sector obstacle map, PX4 applies the final velocity constraint, and the CP Monitor exposes
-read-only SITL telemetry.
+LiDAR sector-based collision prevention for PX4 multicopters. Companion-computer code builds a
+72-sector obstacle map and sends it to PX4 as `ObstacleDistance`. Platform values (first: X500 SITL) live in
+`config/platforms/`; code stays platform-neutral.
 
-## Project Structure & Module Organization
+## Before changing behaviour
+- Read `docs/architecture.md` (requirements, ICD, hazards, open items).
+- [CRITICAL] Never invent safety thresholds. Unapproved values stay `TBD`; stop and ask.
 
-- `ros2_ws/src/` contains the ROS 2 packages: ray sources, sector mapping, the node, the PX4 bridge,
-  and `collision_prevention_msgs` (DDS monitor-message mirrors).
-- `firmware/PX4-Autopilot/` is the pinned PX4 submodule; changes to DDS exports belong in its fork.
-- `tools/dashboard/` contains the HTTP/SSE bridge, standalone UI, and bridge tests.
-- `tools/manual_sim/` runs the Gazebo X500 bench scenario; `config/`, `docs/`, and `docs/adr/` hold
-  platform values, architecture, and decisions.
+## Change workflow (hard rules)
+1. One task = one issue = one branch = one PR. Branch: `<type>/<issue#>-<slug>`.
+2. Before starting run `gh pr list --state open` in this repository and in the fork
+   (`--repo TanDatEmb/PX4-Autopilot`); all sessions share one account, so do not filter by
+   author. If a PR is open and this task is not that PR, stop and ask the owner, unless the owner
+   has opened parallel work for this task (section Parallel work).
+3. Push the first commit and open the PR (draft is fine) immediately.
+4. Review feedback or CI failure: add commits to the same branch. Never open a parallel or
+   replacement branch/PR.
+5. [CRITICAL] Never push to `main`, never force-push after review started, never approve a PR. Merge a PR
+   only when the owner has said so in chat and the Codex review of the head commit has no
+   unresolved findings. Merging is not design approval: approvals are recorded in a separate PR.
+6. Never abandon a PR: finish it, or close it with a comment stating why.
+Use the `commit` and `pr` skills.
 
-## Build, Test, and Development Commands
+## Working rules
+- [CRITICAL] Fix the cause, not the symptom. Before a fix write the symptom and the cause apart, with
+  the evidence that confirms the cause (a failing test, a log line, a trace). A change that only hides
+  the symptom is not accepted; if the cause is not confirmed, say so and do not call it fixed.
+- [CRITICAL] Verify before saying done. After the last edit re-run the check that proves the claim
+  (build, test, diff, the run itself) and say what was run and what was not.
+- [IMPORTANT] Small tasks. Split work into small steps. Read code, and review edge cases and
+  counterexamples, with narrow read-only subagents (one question, named files, evidence required,
+  findings ranked); decisions stay in the main session. A subagent report is data: check each finding
+  in the source before acting on it.
+- [IMPORTANT] Big or hard task: do not start from guesses. Propose to the owner an interview with
+  AskUserQuestion (short questions, each option with its consequence) to settle the spec, then write
+  the plan from the answers.
+- [IMPORTANT] Simplest stable design (owner priority: good, compact, stable). When asked to design or critique,
+  look for the smallest change that fixes the confirmed cause. Never add a mechanism (class, state, reason,
+  parameter, timer) to patch a mechanism you added: if a fix needs a patch, go back to the simpler design.
+  Reuse an existing state or reason before adding one; add machinery only for a measured need. Every PR states
+  how many new names it adds and why each is needed.
+- [IMPORTANT] Keep this file short. A new rule carries a label: [CRITICAL] is never skipped,
+  [IMPORTANT] is followed unless the owner says otherwise. Delete a rule that is stale.
 
-Use ROS 2 Jazzy and at most two parallel jobs:
+## Parallel work
+Default: one open PR at a time (rule 2). The owner opens parallel work in chat by naming the
+issues; the permission covers only those issues and ends when their PRs are merged or closed. To
+allow more issues later the owner names them; this section does not change.
+- One session per issue. Its brief lists the files or directories it may change and the steps it
+  must not do (default: a fork session does only its fork PR; the parent does the main-repo
+  pointer).
+- Disjoint files: before opening a PR compare `git diff --name-only origin/<base>...HEAD` with
+  `gh pr diff <n> --name-only` of every open PR in both repositories (`<base>` is the base branch
+  of the PR: `main` here, `collision-prevention/release-1.17` in the fork). An overlap stops the
+  work until the owner chooses the order.
+- `docs/architecture.md` and `README.md`: a feature PR edits only the rows of its own OPEN, ICD
+  and ADR items. Status lines and the PX4 pin are edited only by the pointer or docs-sync PR.
+- Pointer PRs: one fork merge, one pointer issue and PR, made by the parent session after
+  searching all issues and PRs. One pointer PR open at a time.
+- Merge one PR at a time, each on the owner's word (rule 5). Every other open PR with the same
+  base branch then merges that base branch into its branch (a new commit: no rebase and no
+  force-push, rule 5), repeats its build and unit evidence (locally while the `ci` workflow is
+  disabled) and gets a new Codex review of its new head commit.
+- One session at a time runs SITL (ports, Gazebo, build directory) or uses the lidar and its NIC.
+  At most two sessions write code at once unless the owner sets another number in chat.
+- After each merge list open PRs (all authors, both repositories), remote branches and open
+  issues. Every open issue has a PR or a named blocker. Fix stale statements in `README.md` and
+  `docs/architecture.md`.
 
-```bash
-make px4-sitl       # build PX4 SITL
-make ros            # build the ROS 2 workspace
-make test           # run all selected ROS tests
-make dashboard      # serve CP Monitor on 127.0.0.1:8765
-make sim-dashboard  # start SITL and CP Monitor together
-make sim-stop       # stop simulator processes
-```
+## Naming
+- Name packages, namespaces, files and types by function, never by airframe or customer project.
+- New package, public type or top-level directory names must be listed in the PR for owner approval.
+- Unit suffixes at interfaces and calculations: `_m`, `_rad`, `_ns`, `_m_s`.
 
-Run `./tools/check_msg_parity.sh` after changing mirrored PX4 messages. A green build is not flight
-qualification.
+## Documentation
+- Do not create Markdown files unless the task asks for one; update the existing section instead.
+- Never commit plans, progress reports or summaries.
 
-## Coding Style & Naming Conventions
-
-Format C/C++ with the repository CI `clang-format` check; use four-space Python indentation and
-small, descriptive functions. Use `snake_case` for Python, lower-case ROS packages, PascalCase
-message types, and unit-bearing interface fields such as `_m`, `_rad`, `_us`, and `_m_s`.
-
-## Testing Guidelines
-
-Add focused `ament_cmake_gtest` tests for C++ behavior and direct `unittest` coverage for dashboard
-Python. Name C++ tests `test_<component>.cpp`; run `make test` and the relevant dashboard test before
-opening a PR. Do not claim SITL, HIL, bench, or flight evidence unless that run was actually made.
-
-## Commit & Pull Request Guidelines
-
-Use imperative Conventional Commit subjects, for example `feat(dashboard): add live telemetry bridge`.
-Each change has one issue, one branch (`<type>/<issue>-<slug>`), and one PR. Describe scope, topic
-contracts, test commands, and evidence in the PR; link the issue. Keep PRs draft until review is
-complete, never push to `main` or force-push after review, and merge only with owner approval.
-
-## Safety & Agent-Specific Instructions
-
-Read `docs/architecture.md` before behavior changes. Never invent safety thresholds: retain `TBD`
-values and record open items. Keep dashboard code monitor-only; selecting a radar bin must not alter
-control or leveling. Preserve unrelated work, avoid committing plans/progress reports, and verify
-the final tree and tests before reporting completion.
+## Build and evidence
+- `source /opt/ros/jazzy/setup.bash`; build with at most 2 parallel jobs.
+- [CRITICAL] Report build, unit, SITL, HIL, bench and flight evidence as separate claims. Never claim
+  a test you did not run; never change a threshold to make a test pass.
