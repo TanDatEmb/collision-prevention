@@ -185,6 +185,17 @@ class SnapshotStoreTests(unittest.TestCase):
         self.assertAlmostEqual(snapshot["aircraft"]["height_m"], 4.0)
         self.assertEqual(snapshot["leveling"]["status"], "pose_only")
 
+    def test_livox_diagnostics_have_an_independent_live_source(self):
+        store = SnapshotStore(clock=lambda: 100.0)
+        store.update_livox_diagnostics(
+            {"statuses": [{"name": "livox/ARMCP550031900", "level": 0, "message": "connected"}]}
+        )
+
+        snapshot = store.snapshot()
+
+        self.assertEqual(snapshot["sources"]["livox"]["state"], "live")
+        self.assertEqual(snapshot["livox"]["statuses"][0]["message"], "connected")
+
     def test_caps_do_not_regress_when_listener_returns_an_older_sample(self):
         store = SnapshotStore(clock=lambda: 100.0)
         store.update_caps({"timestamp": 20, "caps_m_s": [2.0] * 72})

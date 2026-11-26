@@ -36,8 +36,8 @@
 #include <atomic>
 #include <cctype>
 #include <chrono>
-#include <exception>
 #include <deque>
+#include <exception>
 #include <iostream>
 #include <limits>
 #include <map>
@@ -130,6 +130,31 @@ diagnostic_msgs::msg::KeyValue livoxValue(const std::string & key, uint64_t valu
   result.key = key;
   result.value = std::to_string(value);
   return result;
+}
+
+diagnostic_msgs::msg::KeyValue livoxValue(const std::string & key, const std::string & value)
+{
+  diagnostic_msgs::msg::KeyValue result;
+  result.key = key;
+  result.value = value;
+  return result;
+}
+
+const char * livoxConfigurationName(livox_ray_source::LivoxConfigurationState state)
+{
+  switch (state) {
+    case livox_ray_source::LivoxConfigurationState::kUnknown:
+      return "unknown";
+    case livox_ray_source::LivoxConfigurationState::kConfiguring:
+      return "configuring";
+    case livox_ray_source::LivoxConfigurationState::kReady:
+      return "ready";
+    case livox_ray_source::LivoxConfigurationState::kFailed:
+      return "failed";
+    case livox_ray_source::LivoxConfigurationState::kUnsupported:
+      return "unsupported";
+  }
+  return "unknown";
 }
 
 /// Counters of the ring cloud source, written by the subscriber thread and read by the log timer.
@@ -416,7 +441,8 @@ int main(int argc, char ** argv)
           "livox packets %lu, decoded %lu, rejected %lu, not spherical %lu, unsynchronized %lu, "
           "continuity breaks %lu, rays dropped for no time %lu, metadata points %lu, "
           "imu packets %lu, imu unusable %lu, accel unusable %lu, device events %lu, "
-          "non-primary samples %lu; "
+          "non-primary samples %lu, unsupported %lu, wrong type %lu, config retries %lu, "
+          "config failures %lu; "
           "frames %lu, messages %lu, encode failures %lu",
           asUnsigned(stats.packets), asUnsigned(stats.decoded_packets),
           asUnsigned(stats.rejected_packets), asUnsigned(stats.not_spherical_packets),
@@ -424,7 +450,9 @@ int main(int argc, char ** argv)
           asUnsigned(stats.dropped_rays), asUnsigned(stats.point_metadata_samples),
           asUnsigned(stats.imu_packets), asUnsigned(stats.imu_unusable),
           asUnsigned(stats.imu_accel_unusable), asUnsigned(stats.device_events),
-          asUnsigned(stats.non_primary_samples), asUnsigned(node->stats().frames),
+          asUnsigned(stats.non_primary_samples), asUnsigned(stats.unsupported_packets),
+          asUnsigned(stats.wrong_data_type_packets), asUnsigned(stats.configuration_retries),
+          asUnsigned(stats.configuration_failures), asUnsigned(node->stats().frames),
           asUnsigned(node->stats().messages), asUnsigned(node->stats().encode_failures));
       });
       if (!livox->start()) {
@@ -432,28 +460,28 @@ int main(int argc, char ** argv)
       }
       livox_status_pub =
         node->create_publisher<diagnostic_msgs::msg::DiagnosticArray>("/livox/status", 10);
-      livox_imu_timer = node->create_wall_timer(
-        std::chrono::milliseconds(5), [livox_telemetry]() {
-          std::vector<std::pair<rclcpp::Publisher<sensor_msgs::msg::Imu>::SharedPtr,
-                                livox_ray_source::LivoxImuSample>> samples;
-          {
-            const std::lock_guard<std::mutex> lock(livox_telemetry->mutex);
-            for (auto & [token, batch] : livox_telemetry->imu_batches) {
-              const auto publisher = livox_telemetry->imu_publishers.find(token);
-              if (publisher == livox_telemetry->imu_publishers.end()) {
-                continue;
-              }
-              while (!batch.empty()) {
-                samples.emplace_back(publisher->second, std::move(batch.front()));
-                batch.pop_front();
-              }
+      livox_imu_timer = node->create_wall_timer(std::chrono::milliseconds(5), [livox_telemetry]() {
+        std::vector<std::pair<
+          rclcpp::Publisher<sensor_msgs::msg::Imu>::SharedPtr, livox_ray_source::LivoxImuSample>>
+          samples;
+        {
+          const std::lock_guard<std::mutex> lock(livox_telemetry->mutex);
+          for (auto & [token, batch] : livox_telemetry->imu_batches) {
+            const auto publisher = livox_telemetry->imu_publishers.find(token);
+            if (publisher == livox_telemetry->imu_publishers.end()) {
+              continue;
+            }
+            while (!batch.empty()) {
+              samples.emplace_back(publisher->second, std::move(batch.front()));
+              batch.pop_front();
             }
           }
-          for (const auto & [publisher, sample] : samples) {
-            publisher->publish(
-              obstacle_sector_node::livoxImuToMessage(sample, "livox_" + livoxTopicToken(sample.device)));
-          }
-        });
+        }
+        for (const auto & [publisher, sample] : samples) {
+          publisher->publish(obstacle_sector_node::livoxImuToMessage(
+            sample, "livox_" + livoxTopicToken(sample.device)));
+        }
+      });
       livox_status_timer = node->create_wall_timer(
         std::chrono::seconds(1), [node, livox_source, livox_status_pub, livox_telemetry]() {
           const auto health = livox_source->health();
@@ -469,8 +497,7 @@ int main(int argc, char ** argv)
               if (livox_telemetry->point_publishers.count(token) == 0U) {
                 livox_telemetry->point_publishers[token] =
                   node->create_publisher<sensor_msgs::msg::PointCloud2>(
-                    "/livox/" + token + "/points",
-                    rclcpp::QoS(rclcpp::KeepLast(2)).best_effort());
+                    "/livox/" + token + "/points", rclcpp::QoS(rclcpp::KeepLast(2)).best_effort());
               }
             }
           }
@@ -501,7 +528,18 @@ int main(int argc, char ** argv)
             status.hardware_id = device.device.serial;
             status.level = diagnostic_msgs::msg::DiagnosticStatus::OK;
             status.message = "connected";
-            if (livox_source->multipleLidarFault()) {
+            if (
+              device.configuration == livox_ray_source::LivoxConfigurationState::kUnsupported ||
+              device.device.device_type != 35U || device.unsupported_packets > 0U) {
+              status.level = diagnostic_msgs::msg::DiagnosticStatus::ERROR;
+              status.message = "unsupported device or packet layout";
+            }
+            else if (device.configuration == livox_ray_source::LivoxConfigurationState::kFailed) {
+              status.level = diagnostic_msgs::msg::DiagnosticStatus::ERROR;
+              status.message = device.configuration_error.empty() ? "device configuration failed"
+                                                                  : device.configuration_error;
+            }
+            else if (livox_source->multipleLidarFault()) {
               status.level = diagnostic_msgs::msg::DiagnosticStatus::ERROR;
               status.message = "multiple lidars: primary serial required";
             }
@@ -513,15 +551,23 @@ int main(int argc, char ** argv)
               status.level = diagnostic_msgs::msg::DiagnosticStatus::WARN;
               status.message = "stale acquisition";
             }
+            else if (device.configuration != livox_ray_source::LivoxConfigurationState::kReady) {
+              status.level = diagnostic_msgs::msg::DiagnosticStatus::WARN;
+              status.message = "device configuration in progress";
+            }
             else if (
               device.last_point_time_type != 1U || device.last_imu_time_type != 1U ||
               device.unsynchronized_packets > 0U || device.rejected_packets > 0U ||
               device.continuity_breaks > 0U || device.imu_unusable > 0U ||
-              device.imu_accel_unusable > 0U || imu_queue_drops > 0U) {
+              device.imu_accel_unusable > 0U || device.wrong_data_type_packets > 0U ||
+              imu_queue_drops > 0U) {
               status.level = diagnostic_msgs::msg::DiagnosticStatus::WARN;
               status.message = "data, time or telemetry warnings";
             }
             status.values.push_back(livoxValue("device_type", device.device.device_type));
+            status.values.push_back(
+              livoxValue("configuration", livoxConfigurationName(device.configuration)));
+            status.values.push_back(livoxValue("configuration_error", device.configuration_error));
             status.values.push_back(livoxValue("point_packets", device.point_packets));
             status.values.push_back(livoxValue("imu_packets", device.imu_packets));
             status.values.push_back(livoxValue("decoded_points", device.decoded_points));
@@ -532,6 +578,13 @@ int main(int argc, char ** argv)
             status.values.push_back(livoxValue("dropped_rays", device.dropped_rays));
             status.values.push_back(livoxValue("imu_unusable", device.imu_unusable));
             status.values.push_back(livoxValue("imu_accel_unusable", device.imu_accel_unusable));
+            status.values.push_back(livoxValue("unsupported_packets", device.unsupported_packets));
+            status.values.push_back(
+              livoxValue("wrong_data_type_packets", device.wrong_data_type_packets));
+            status.values.push_back(
+              livoxValue("configuration_retries", device.configuration_retries));
+            status.values.push_back(
+              livoxValue("last_point_data_type", device.last_point_data_type));
             status.values.push_back(livoxValue("imu_queue_drops", imu_queue_drops));
             status.values.push_back(
               livoxValue("last_point_time_type", device.last_point_time_type));

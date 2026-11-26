@@ -80,6 +80,7 @@ sensor_msgs::msg::PointCloud2 livoxPointsToMessage(
     field("z", 8U, sensor_msgs::msg::PointField::FLOAT32),
     field("reflectivity", 12U, sensor_msgs::msg::PointField::UINT8),
     field("tag", 13U, sensor_msgs::msg::PointField::UINT8),
+    field("line", 14U, sensor_msgs::msg::PointField::UINT8),
     field("time_offset_ns", 16U, sensor_msgs::msg::PointField::INT32)};
 
   std::vector<const livox_ray_source::LivoxPointSample *> returns;
@@ -117,6 +118,7 @@ sensor_msgs::msg::PointCloud2 livoxPointsToMessage(
     writeAt(message.data, at + 8U, z);
     writeAt(message.data, at + 12U, sample.metadata.reflectivity);
     writeAt(message.data, at + 13U, sample.metadata.tag);
+    writeAt(message.data, at + 14U, sample.metadata.line);
     const auto offset_ns = static_cast<int32_t>(clamped_offset);
     writeAt(message.data, at + 16U, offset_ns);
   }

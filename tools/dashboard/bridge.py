@@ -310,6 +310,7 @@ class SnapshotStore:
         self._caps: dict[str, Any] | None = None
         self._hook: dict[str, Any] | None = None
         self._diagnostics: dict[str, Any] | None = None
+        self._livox_diagnostics: dict[str, Any] | None = None
         self._aircraft: dict[str, Any] = {
             "mode": "—",
             "armed": None,
@@ -501,6 +502,11 @@ class SnapshotStore:
             self._diagnostics = _copy_or_none(dict(payload))
             self._update_locked("diagnostics")
 
+    def update_livox_diagnostics(self, payload: Mapping[str, Any]) -> None:
+        with self._lock:
+            self._livox_diagnostics = _copy_or_none(dict(payload))
+            self._update_locked("livox")
+
     def _recompute_leveling_view_locked(self) -> None:
         geometry = self._leveling.get("geometry")
         pitch = _number(self._leveling.get("pitch_deg"))
@@ -618,7 +624,16 @@ class SnapshotStore:
     def _snapshot_locked(self) -> dict[str, Any]:
         now = self._clock()
         sources: dict[str, Any] = {}
-        for source in ("map", "odometry", "leveling", "status", "caps", "hook", "diagnostics"):
+        for source in (
+            "map",
+            "odometry",
+            "leveling",
+            "status",
+            "caps",
+            "hook",
+            "diagnostics",
+            "livox",
+        ):
             received = self._received.get(source)
             age = None if received is None else max(0.0, now - received)
             sources[source] = {
@@ -652,6 +667,7 @@ class SnapshotStore:
             "caps": copy.deepcopy(self._caps),
             "hook": copy.deepcopy(self._hook),
             "diagnostics": copy.deepcopy(self._diagnostics),
+            "livox": copy.deepcopy(self._livox_diagnostics),
             "leveling": copy.deepcopy(self._leveling),
         }
 
@@ -808,6 +824,12 @@ class RosTelemetryThread(threading.Thread):
                 DiagnosticArray,
                 "/status",
                 lambda message: self._store.update_diagnostics(_diagnostics_payload(message)),
+                10,
+            )
+            node.create_subscription(
+                DiagnosticArray,
+                "/livox/status",
+                lambda message: self._store.update_livox_diagnostics(_diagnostics_payload(message)),
                 10,
             )
             if CpBrakeConstraints is not None:

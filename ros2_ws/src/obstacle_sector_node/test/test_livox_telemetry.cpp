@@ -13,7 +13,7 @@ namespace
 
 livox_ray_source::LivoxPointSample point(
   float range_m, obstacle_sector_map::RayReturnKind kind, uint8_t reflectivity, uint8_t tag,
-  uint64_t timestamp_ns)
+  uint64_t timestamp_ns, uint8_t line = 0U)
 {
   livox_ray_source::LivoxPointSample sample;
   sample.device.serial = "ARMCP550031900";
@@ -24,6 +24,7 @@ livox_ray_source::LivoxPointSample point(
   sample.sample.ray.return_kind = kind;
   sample.metadata.reflectivity = reflectivity;
   sample.metadata.tag = tag;
+  sample.metadata.line = line;
   return sample;
 }
 
@@ -49,7 +50,7 @@ TEST(LivoxTelemetryTest, ImuMessageConvertsAccelerationFromGAndPreservesPtpTime)
 TEST(LivoxTelemetryTest, PointCloudContainsOnlyReturnsAndRawMetadata)
 {
   const std::vector<livox_ray_source::LivoxPointSample> samples{
-    point(2.0F, obstacle_sector_map::RayReturnKind::kReturn, 17U, 3U, 1'000'000U),
+    point(2.0F, obstacle_sector_map::RayReturnKind::kReturn, 17U, 3U, 1'000'000U, 2U),
     point(
       std::numeric_limits<float>::quiet_NaN(),
       obstacle_sector_map::RayReturnKind::kQualifiedNoReturn, 0U, 9U, 1'000'100U)};
@@ -58,16 +59,20 @@ TEST(LivoxTelemetryTest, PointCloudContainsOnlyReturnsAndRawMetadata)
   EXPECT_EQ(message.height, 1U);
   ASSERT_EQ(message.width, 1U);
   ASSERT_EQ(message.point_step, 20U);
-  ASSERT_EQ(message.fields.size(), 6U);
+  ASSERT_EQ(message.fields.size(), 7U);
   EXPECT_EQ(message.header.frame_id, "livox_ARMCP550031900");
   EXPECT_EQ(message.fields[3].name, "reflectivity");
   EXPECT_EQ(message.fields[4].name, "tag");
+  EXPECT_EQ(message.fields[5].name, "line");
   uint8_t reflectivity = 0U;
   uint8_t tag = 0U;
+  uint8_t line = 0U;
   std::memcpy(&reflectivity, message.data.data() + 12U, sizeof(reflectivity));
   std::memcpy(&tag, message.data.data() + 13U, sizeof(tag));
+  std::memcpy(&line, message.data.data() + 14U, sizeof(line));
   EXPECT_EQ(reflectivity, 17U);
   EXPECT_EQ(tag, 3U);
+  EXPECT_EQ(line, 2U);
 }
 
 }  // namespace

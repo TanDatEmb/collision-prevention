@@ -68,6 +68,11 @@ class DdsContractTests(unittest.TestCase):
             self.assertIn(text, html)
         self.assertNotIn("No ray pairs", html)
 
+    def test_dashboard_bridge_subscribes_to_livox_diagnostics(self):
+        bridge = (ROOT / "tools/dashboard/bridge.py").read_text()
+        self.assertIn('"/livox/status"', bridge)
+        self.assertIn("update_livox_diagnostics", bridge)
+
 
 @contextlib.contextmanager
 def running_dashboard():
