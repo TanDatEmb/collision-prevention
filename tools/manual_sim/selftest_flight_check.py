@@ -127,6 +127,13 @@ def case_stick_episodes_respect_manual_coverage():
     assert "stick held but no motion (>= 0.8 s): 0 episodes, 0.0 s per minute" in text, text
 
 
+def case_missing_velocity_is_na_for_stick_metric():
+    topics = fake_flight_topics(include_hook=False, include_constraints=False)
+    topics[0].data["v_xy_valid"][:] = False
+    text = run_fake_check(topics)
+    assert "stick held but no motion (>= 0.8 s): N/A (no valid stick and velocity samples" in text, text
+
+
 def case_cp_off_metrics_respect_position_time_range():
     topics = fake_flight_topics(include_hook=False, include_constraints=False)
     for topic in topics:
@@ -279,7 +286,7 @@ for case in (case_hold_in_the_middle, case_ground_between_flights, case_sparse_h
              case_window_after_the_last_sample, case_missing_hook_reports_baseline, case_missing_constraints_reports_baseline,
              case_missing_cp_topics_need_only_position, case_cp_off_reports_available_px4_metrics,
              case_invalid_manual_control_is_na, case_stick_episodes_respect_manual_coverage,
-             case_cp_off_metrics_respect_position_time_range,
+             case_missing_velocity_is_na_for_stick_metric, case_cp_off_metrics_respect_position_time_range,
              case_command_without_sample_pair_is_na, case_no_valid_altitude_is_distinguished,
              case_cp_on_metrics_respect_position_time_range, case_invalid_px4_samples_are_excluded,
              case_no_airborne_interval_still_reports_altitude,

@@ -86,9 +86,13 @@ def report_px4_metrics(d, tl, airborne, speed, minutes):
             stick[in_position_range] = np.interp(tl[in_position_range], tm[run], stick_values[run])
             stick_coverage[in_position_range] = True
         if stick_coverage.any():
-            stuck = episodes(airborne & stick_coverage & (stick > 0.25) & (speed < 0.3), tl, 0.8)
-            print("  stick held but no motion (>= 0.8 s): %d episodes, %.1f s per minute" % (
-                len(stuck), sum(e[1] for e in stuck) / minutes))
+            valid_motion = airborne & stick_coverage & np.isfinite(speed)
+            if valid_motion.any():
+                stuck = episodes(valid_motion & (stick > 0.25) & (speed < 0.3), tl, 0.8)
+                print("  stick held but no motion (>= 0.8 s): %d episodes, %.1f s per minute" % (
+                    len(stuck), sum(e[1] for e in stuck) / minutes))
+            else:
+                print("  stick held but no motion (>= 0.8 s): N/A (no valid stick and velocity samples over position interval)")
         else:
             print("  stick held but no motion (>= 0.8 s): N/A (no valid samples over position interval)")
     else:
