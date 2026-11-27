@@ -218,6 +218,13 @@ def case_cp_on_without_manual_control_reports_other_metrics():
     assert "forward sectors free -> 0 in one step" in text, text
 
 
+def case_cp_on_without_velocity_reports_na():
+    topics = fake_flight_topics()
+    topics[0].data["v_xy_valid"][:] = False
+    text = run_fake_check(topics)
+    assert "stick held but no motion (>= 0.8 s): N/A (no valid velocity samples" in text, text
+
+
 def case_cp_on_without_airborne_interval_reports_baseline():
     topics = fake_flight_topics()
     topics[0].data["z"] = np.full(30, -0.8)
@@ -291,6 +298,7 @@ for case in (case_hold_in_the_middle, case_ground_between_flights, case_sparse_h
              case_cp_on_metrics_respect_position_time_range, case_invalid_px4_samples_are_excluded,
              case_no_airborne_interval_still_reports_altitude,
              case_nonfinite_speed_is_ignored, case_cp_on_without_manual_control_reports_other_metrics,
+             case_cp_on_without_velocity_reports_na,
              case_cp_on_without_airborne_interval_reports_baseline, case_cp_on_nonfinite_speed_is_ignored):
     case()
     print("PASS", case.__name__)

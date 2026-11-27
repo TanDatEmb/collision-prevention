@@ -185,12 +185,15 @@ def check(path):
     mc = d.get("manual_control_setpoint")
     manual_available = mc is not None and all(
         field in mc and len(mc[field]) > 0 for field in ("timestamp", "pitch", "roll"))
-    if manual_available:
+    stuck_unavailable_reason = "manual_control_setpoint unavailable"
+    if manual_available and np.isfinite(speed[air]).any():
         tm = mc["timestamp"] / 1e6
         stick = np.interp(tl, tm, np.hypot(mc["pitch"], mc["roll"]))
         stuck = episodes(air & (stick > 0.25) & (speed < 0.3), tl, 0.8)
     else:
         stuck = None
+        if manual_available:
+            stuck_unavailable_reason = "no valid velocity samples over position interval"
     ta = att["timestamp"] / 1e6
     tilt = tilt_deg(att, "q")
     on_att = active(ta) & np.isfinite(tilt)
@@ -230,7 +233,7 @@ def check(path):
     print("%s: %.1f min airborne with cp_brake enforcing, max altitude %s, max speed %s" % (
         path.split("/")[-1], minutes, max_altitude, formatted_max(speed[air], "m/s")))
     if stuck is None:
-        print("  stick held but no motion (>= 0.8 s): N/A (manual_control_setpoint unavailable)")
+        print("  stick held but no motion (>= 0.8 s): N/A (%s)" % stuck_unavailable_reason)
     else:
         print("  stick held but no motion (>= 0.8 s): %d episodes, %.1f s per minute" % (
             len(stuck), sum(e[1] for e in stuck) / minutes))
