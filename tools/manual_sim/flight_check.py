@@ -74,12 +74,19 @@ def report_px4_metrics(d, tl, airborne, speed, minutes):
     if has_fields(mc, ("timestamp", "pitch", "roll")):
         tm = mc["timestamp"] / 1e6
         stick_valid = np.asarray(mc.get("valid", np.ones_like(tm, dtype=bool)), dtype=bool)
-        stick = np.hypot(mc["pitch"], mc["roll"])
-        usable = (stick_valid & np.isfinite(tm) & np.isfinite(stick) &
-                  (tm >= tl[0]) & (tm <= tl[-1]))
-        if usable.sum() >= 2:
-            stick = np.interp(tl, tm[usable], stick[usable])
-            stuck = episodes(airborne & (stick > 0.25) & (speed < 0.3), tl, 0.8)
+        stick_values = np.hypot(mc["pitch"], mc["roll"])
+        source_valid = stick_valid & np.isfinite(tm) & np.isfinite(stick_values)
+        valid_indices = np.flatnonzero(source_valid)
+        stick = np.full_like(tl, np.nan, dtype=float)
+        stick_coverage = np.zeros_like(tl, dtype=bool)
+        for run in np.split(valid_indices, np.flatnonzero(np.diff(valid_indices) > 1) + 1):
+            if len(run) < 2 or tm[run[-1]] < tl[0] or tm[run[0]] > tl[-1]:
+                continue
+            in_position_range = (tl >= tm[run[0]]) & (tl <= tm[run[-1]])
+            stick[in_position_range] = np.interp(tl[in_position_range], tm[run], stick_values[run])
+            stick_coverage[in_position_range] = True
+        if stick_coverage.any():
+            stuck = episodes(airborne & stick_coverage & (stick > 0.25) & (speed < 0.3), tl, 0.8)
             print("  stick held but no motion (>= 0.8 s): %d episodes, %.1f s per minute" % (
                 len(stuck), sum(e[1] for e in stuck) / minutes))
         else:
