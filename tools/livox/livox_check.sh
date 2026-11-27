@@ -57,6 +57,10 @@ if [[ ! -f "$repo_dir/ros2_ws/install/setup.bash" ]]; then
   echo "livox-check: build ros2_ws before probing (make ros)" >&2
   exit 2
 fi
+# Colcon-generated setup files read optional variables such as COLCON_TRACE. Keep nounset for
+# this script's own inputs, but let the setup chain handle an unset environment safely.
+set +u
 source "$repo_dir/ros2_ws/install/setup.bash"
+set -u
 echo "livox-check: probing ${duration_s}s on ${iface}; sensor ${sensor_ip}"
 exec ros2 run livox_ray_source livox_source_probe "${probe_args[@]}"
