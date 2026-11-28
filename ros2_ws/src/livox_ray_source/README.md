@@ -91,6 +91,13 @@ different bench. Software-only PTP proves packet timestamp continuity, not an ab
 clock offset. `LIVOX_ALLOW_UNSYNC=1 make livox-check` is source-only debug evidence and is never a
 qualified pipeline run.
 
+The probe logs a read-only FOV query on stderr before opening the SDK. `fov_cfg_en: 0` means
+neither firmware FOV region is enabled. Bits 0 and 1 select `fov_cfg0` and `fov_cfg1` respectively;
+reported angles are in degrees in the sensor's coordinates. The output identifies the queried IP
+and the reported serial. A failed or incomplete reply, or a mismatch with `LIVOX_PRIMARY_SN`,
+reports `fov_cfg_en: null`. The readback is separate from acquisition qualification and does not
+change the device configuration or the sector map.
+
 ## Usage
 ```cpp
 livox_ray_source::ReplayRaySource source(samples, window_ns);

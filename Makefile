@@ -40,6 +40,7 @@ ros:
 	source /opt/ros/jazzy/setup.bash && cd ros2_ws && colcon build --parallel-workers 2
 
 test:
+	PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tools/livox -p 'test_*.py'
 	source /opt/ros/jazzy/setup.bash && cd ros2_ws && \
 	  colcon test --parallel-workers 2 --packages-select collision_prevention_msgs obstacle_sector_map px4_obstacle_bridge livox_ray_source obstacle_sector_node && \
 	  colcon test-result --verbose

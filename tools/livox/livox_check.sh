@@ -62,5 +62,10 @@ fi
 set +u
 source "$repo_dir/ros2_ws/install/setup.bash"
 set -u
+if ! fov_report=$(python3 "$repo_dir/tools/livox/livox_fov.py" \
+    --config "$config" --host-ip "$host_ip" --sensor-ip "$sensor_ip" --primary-sn "$primary_sn"); then
+  echo "livox-check: FOV readback unavailable" >&2
+fi
+echo "livox-check: FOV ${fov_report}" >&2
 echo "livox-check: probing ${duration_s}s on ${iface}; sensor ${sensor_ip}"
 exec ros2 run livox_ray_source livox_source_probe "${probe_args[@]}"
