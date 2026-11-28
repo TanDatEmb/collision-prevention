@@ -79,16 +79,50 @@ TEST(FrameSegmenterTest, ContinuityBreakMarksOnlyItsFrame)
   EXPECT_TRUE(clean->packet_continuity_valid);
 }
 
+TEST(FrameSegmenterTest, BreakAtWindowBoundaryInvalidatesTheFrameBeforeTheGap)
+{
+  FrameSegmenter segmenter{kWindowNs};
+  EXPECT_FALSE(segmenter.push(makeNoReturn(5'000U)).has_value());
+  EXPECT_FALSE(segmenter.push(makeNoReturn(5'900U)).has_value());
+
+  const auto broken = segmenter.push(makeNoReturn(6'000U, 0.0F, true));
+  ASSERT_TRUE(broken.has_value());
+  EXPECT_FALSE(broken->packet_continuity_valid);
+  EXPECT_EQ(broken->rays.size(), 2U);
+
+  const auto clean = segmenter.flush();
+  ASSERT_TRUE(clean.has_value());
+  EXPECT_TRUE(clean->packet_continuity_valid);
+  EXPECT_EQ(clean->rays.size(), 1U);
+}
+
 TEST(FrameSegmenterTest, BackwardTimestampBreaksContinuity)
 {
   FrameSegmenter segmenter{kWindowNs};
   EXPECT_FALSE(segmenter.push(makeNoReturn(5'500U)).has_value());
-  EXPECT_FALSE(segmenter.push(makeNoReturn(5'400U)).has_value());
+  const auto old_epoch = segmenter.push(makeNoReturn(5'400U));
+
+  ASSERT_TRUE(old_epoch.has_value());
+  EXPECT_EQ(old_epoch->rays.size(), 1U);
+  EXPECT_FALSE(old_epoch->packet_continuity_valid);
+
+  const auto new_epoch = segmenter.flush();
+  ASSERT_TRUE(new_epoch.has_value());
+  EXPECT_EQ(new_epoch->rays.size(), 1U);
+  EXPECT_TRUE(new_epoch->packet_continuity_valid);
+}
+
+TEST(FrameSegmenterTest, EqualTimestampsRemainInTheSameFrame)
+{
+  FrameSegmenter segmenter{kWindowNs};
+  EXPECT_FALSE(segmenter.push(makeNoReturn(5'000U)).has_value());
+
+  EXPECT_FALSE(segmenter.push(makeNoReturn(5'000U)).has_value());
 
   const auto frame = segmenter.flush();
   ASSERT_TRUE(frame.has_value());
+  EXPECT_TRUE(frame->packet_continuity_valid);
   EXPECT_EQ(frame->rays.size(), 2U);
-  EXPECT_FALSE(frame->packet_continuity_valid);
 }
 
 TEST(FrameSegmenterTest, ZeroTimestampDoesNotStartAWindow)

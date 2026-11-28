@@ -1,16 +1,20 @@
 #include <gtest/gtest.h>
 
+#include <array>
 #include <cmath>
 #include <cstdint>
-#include <array>
 #include <cstring>
+#include <limits>
 #include <string>
 #include <vector>
 
 #include "livox_ray_source/frame_segmenter.hpp"
 #include "livox_ray_source/spherical_packet.hpp"
 
+using livox_ray_source::decodeCartesianHighPacket;
+using livox_ray_source::decodeCartesianLowPacket;
 using livox_ray_source::DecodedPacket;
+using livox_ray_source::decodePointPacket;
 using livox_ray_source::decodeSphericalPacket;
 using livox_ray_source::DecodeStatus;
 using livox_ray_source::FrameSegmenter;
@@ -95,6 +99,61 @@ std::vector<uint8_t> makePacket(
   return bytes;
 }
 
+struct CartesianPoint
+{
+  int32_t x;
+  int32_t y;
+  int32_t z;
+  uint8_t reflectivity{0U};
+  uint8_t tag{0U};
+};
+
+std::vector<uint8_t> makeCartesianHighPacket(
+  const std::vector<CartesianPoint> & points, uint8_t data_type = 1U, uint8_t time_type = 1U,
+  uint16_t time_interval = 20U, uint16_t udp_cnt = 7U, uint64_t timestamp_ns = kPtpTimeNs)
+{
+  std::vector<uint8_t> bytes(36U + points.size() * 14U, 0U);
+  put<uint16_t>(bytes, 1U, static_cast<uint16_t>(bytes.size()));
+  put<uint16_t>(bytes, 3U, time_interval);
+  put<uint16_t>(bytes, 5U, static_cast<uint16_t>(points.size()));
+  put<uint16_t>(bytes, 7U, udp_cnt);
+  bytes[10] = data_type;
+  bytes[11] = time_type;
+  put<uint64_t>(bytes, 28U, timestamp_ns);
+  for (std::size_t index = 0U; index < points.size(); ++index) {
+    const std::size_t at = 36U + index * 14U;
+    put<int32_t>(bytes, at, points[index].x);
+    put<int32_t>(bytes, at + 4U, points[index].y);
+    put<int32_t>(bytes, at + 8U, points[index].z);
+    bytes[at + 12U] = points[index].reflectivity;
+    bytes[at + 13U] = points[index].tag;
+  }
+  return bytes;
+}
+
+std::vector<uint8_t> makeCartesianLowPacket(
+  const std::vector<CartesianPoint> & points, uint8_t time_type = 1U, uint16_t time_interval = 20U,
+  uint16_t udp_cnt = 7U, uint64_t timestamp_ns = kPtpTimeNs)
+{
+  std::vector<uint8_t> bytes(36U + points.size() * 8U, 0U);
+  put<uint16_t>(bytes, 1U, static_cast<uint16_t>(bytes.size()));
+  put<uint16_t>(bytes, 3U, time_interval);
+  put<uint16_t>(bytes, 5U, static_cast<uint16_t>(points.size()));
+  put<uint16_t>(bytes, 7U, udp_cnt);
+  bytes[10] = 2U;
+  bytes[11] = time_type;
+  put<uint64_t>(bytes, 28U, timestamp_ns);
+  for (std::size_t index = 0U; index < points.size(); ++index) {
+    const std::size_t at = 36U + index * 8U;
+    put<int16_t>(bytes, at, static_cast<int16_t>(points[index].x / 10));
+    put<int16_t>(bytes, at + 2U, static_cast<int16_t>(points[index].y / 10));
+    put<int16_t>(bytes, at + 4U, static_cast<int16_t>(points[index].z / 10));
+    bytes[at + 6U] = points[index].reflectivity;
+    bytes[at + 7U] = points[index].tag;
+  }
+  return bytes;
+}
+
 TEST(DecodeSphericalPacketTest, PointsBecomeRaysWithRangeInMetresAndTheVendorAngles)
 {
   // theta 9000 = 90 deg from +z = elevation 0; phi 0 = along +x, phi 9000 = along +y (left).
@@ -109,6 +168,64 @@ TEST(DecodeSphericalPacketTest, PointsBecomeRaysWithRangeInMetresAndTheVendorAng
   EXPECT_FLOAT_EQ(packet.rays[1].range_m, 1.0F);
   EXPECT_NEAR(packet.rays[1].azimuth_rad, kPi / 2.0F, 1e-6F);
   EXPECT_FALSE(packet.rays[0].masked);
+}
+
+TEST(DecodeCartesianPacketTest, HighResolutionPointsBecomeTimestampedReturns)
+{
+  const auto bytes = makeCartesianHighPacket({{1000, 0, 0, 7U, 3U}, {0, 1000, 0, 8U, 4U}});
+  const auto packet = decodeCartesianHighPacket(bytes.data(), bytes.size());
+  ASSERT_EQ(packet.status, DecodeStatus::kOk);
+  ASSERT_EQ(packet.rays.size(), 2U);
+  EXPECT_FLOAT_EQ(packet.rays[0].range_m, 1.0F);
+  EXPECT_NEAR(packet.rays[0].azimuth_rad, 0.0F, 1e-6F);
+  EXPECT_NEAR(packet.rays[0].elevation_rad, 0.0F, 1e-6F);
+  EXPECT_FLOAT_EQ(packet.rays[0].timestamp_ns, kPtpTimeNs);
+  EXPECT_EQ(packet.point_metadata[1].reflectivity, 8U);
+  EXPECT_EQ(packet.point_metadata[1].tag, 4U);
+}
+
+TEST(DecodeCartesianPacketTest, LowResolutionPointsUseCentimetreUnits)
+{
+  const auto bytes = makeCartesianLowPacket({{1000, 0, 0, 9U, 5U}});
+  const auto packet = decodeCartesianLowPacket(bytes.data(), bytes.size());
+  ASSERT_EQ(packet.status, DecodeStatus::kOk);
+  ASSERT_EQ(packet.rays.size(), 1U);
+  EXPECT_FLOAT_EQ(packet.rays[0].range_m, 1.0F);
+  EXPECT_EQ(packet.point_metadata[0].reflectivity, 9U);
+  EXPECT_EQ(packet.point_metadata[0].tag, 5U);
+}
+
+TEST(DecodeCartesianPacketTest, GenericDecoderDispatchesOnlySupportedMid360Formats)
+{
+  const auto high = makeCartesianHighPacket({{1000, 0, 0}});
+  const auto low = makeCartesianLowPacket({{1000, 0, 0}});
+  const auto spherical = makePacket({{1000U, 9000U, 0U}});
+  EXPECT_EQ(decodePointPacket(high.data(), high.size()).status, DecodeStatus::kOk);
+  EXPECT_EQ(decodePointPacket(low.data(), low.size()).status, DecodeStatus::kOk);
+  EXPECT_EQ(decodePointPacket(spherical.data(), spherical.size()).status, DecodeStatus::kOk);
+}
+
+TEST(DecodeCartesianPacketTest, ZeroVectorIsInvalidBecauseItHasNoDirection)
+{
+  const auto bytes = makeCartesianHighPacket({{0, 0, 0}});
+  const auto packet = decodeCartesianHighPacket(bytes.data(), bytes.size());
+  ASSERT_EQ(packet.status, DecodeStatus::kOk);
+  ASSERT_EQ(packet.rays.size(), 1U);
+  EXPECT_EQ(packet.rays[0].return_kind, RayReturnKind::kInvalid);
+  EXPECT_TRUE(std::isnan(packet.rays[0].range_m));
+}
+
+TEST(DecodeSphericalPacketTest, PointMetadataStaysAlignedWithDecodedRays)
+{
+  const auto bytes = makePacket({{2000U, 9000U, 0U, 17U, 3U}, {1000U, 9000U, 9000U, 231U, 9U}});
+  const DecodedPacket packet = decodeSphericalPacket(bytes.data(), bytes.size());
+  ASSERT_EQ(packet.status, DecodeStatus::kOk);
+  ASSERT_EQ(packet.rays.size(), 2U);
+  ASSERT_EQ(packet.point_metadata.size(), packet.rays.size());
+  EXPECT_EQ(packet.point_metadata[0].reflectivity, 17U);
+  EXPECT_EQ(packet.point_metadata[0].tag, 3U);
+  EXPECT_EQ(packet.point_metadata[1].reflectivity, 231U);
+  EXPECT_EQ(packet.point_metadata[1].tag, 9U);
 }
 
 TEST(DecodeSphericalPacketTest, ElevationIsNinetyDegreesMinusThetaAndTheEndsAreCovered)
@@ -305,6 +422,22 @@ TEST(PacketSamplerTest, RaysWithATimeAreHandedOnInOrderAndUnbroken)
   }
 }
 
+TEST(PacketSamplerTest, PreservesPointMetadataForForwardedRays)
+{
+  PacketSampler sampler;
+  std::vector<StreamSample> out;
+  std::vector<livox_ray_source::PointMetadata> metadata;
+  const auto bytes = makePacket({{1000U, 9000U, 0U, 11U, 2U}, {2000U, 9000U, 100U, 22U, 4U}});
+  const auto packet = decodeSphericalPacket(bytes.data(), bytes.size());
+  EXPECT_EQ(sampler.append(packet, false, out, &metadata), 0U);
+  ASSERT_EQ(out.size(), 2U);
+  ASSERT_EQ(metadata.size(), out.size());
+  EXPECT_EQ(metadata[0].reflectivity, 11U);
+  EXPECT_EQ(metadata[0].tag, 2U);
+  EXPECT_EQ(metadata[1].reflectivity, 22U);
+  EXPECT_EQ(metadata[1].tag, 4U);
+}
+
 TEST(PacketSamplerTest, RaysWithoutATimeAreDroppedAndCounted)
 {
   PacketSampler sampler;
@@ -322,6 +455,24 @@ TEST(PacketSamplerTest, AUdpGapMarksOnlyTheFirstRayOfThePacket)
   EXPECT_TRUE(out[0].continuity_break);
   EXPECT_FALSE(out[1].continuity_break);
   EXPECT_FALSE(out[2].continuity_break);
+}
+
+TEST(PacketSamplerTest, AReconfigurationBreakIsSpentOnTheFirstSafetyRay)
+{
+  PacketSampler sampler;
+  std::vector<StreamSample> out;
+  sampler.markBreak();
+
+  static_cast<void>(sampler.append(decodeThree(1U), false, out));
+  ASSERT_EQ(out.size(), 3U);
+  EXPECT_TRUE(out[0].continuity_break);
+  EXPECT_FALSE(out[1].continuity_break);
+  EXPECT_FALSE(out[2].continuity_break);
+
+  out.clear();
+  static_cast<void>(sampler.append(decodeThree(1U), false, out));
+  ASSERT_EQ(out.size(), 3U);
+  EXPECT_FALSE(out[0].continuity_break);
 }
 
 TEST(PacketSamplerTest, ABreakOrADropBeforeTheNextUsableRayIsNotForgotten)
@@ -364,6 +515,21 @@ TEST(PacketSamplerTest, AStreamWithoutTimeBuffersNothingInTheSegmenter)
   EXPECT_FALSE(segmenter.flush().has_value());
 }
 
+TEST(PacketSamplerTest, AWithheldPacketBreaksTheNextSafetySample)
+{
+  PacketSampler sampler;
+  std::vector<StreamSample> out;
+  const auto packet = decodeThree(1U);
+  static_cast<void>(sampler.append(packet, false, out));
+  out.clear();
+
+  sampler.markBreak();
+  static_cast<void>(sampler.append(packet, false, out));
+  ASSERT_EQ(out.size(), 3U);
+  EXPECT_TRUE(out.front().continuity_break);
+  EXPECT_FALSE(out[1].continuity_break);
+}
+
 }  // namespace
 
 namespace
@@ -401,6 +567,38 @@ TEST(DecodeImuPacketTest, GyroRatesAndThePtpTimeAreRead)
   EXPECT_DOUBLE_EQ(packet.gyro.rate_flu_rad_s[2], static_cast<double>(0.3F));
 }
 
+TEST(DecodeImuPacketTest, AccelerometerValuesAreReadInG)
+{
+  const auto bytes = makeImuPacket({0.1F, -0.2F, 0.3F, 0.0F, -0.5F, 1.0F});
+  const auto packet = livox_ray_source::decodeImuPacket(bytes.data(), bytes.size());
+  ASSERT_TRUE(packet.gyro.isValid());
+  ASSERT_TRUE(packet.accelerationIsValid());
+  EXPECT_DOUBLE_EQ(packet.acceleration_flu_g[0], 0.0);
+  EXPECT_DOUBLE_EQ(packet.acceleration_flu_g[1], static_cast<double>(-0.5F));
+  EXPECT_DOUBLE_EQ(packet.acceleration_flu_g[2], static_cast<double>(1.0F));
+}
+
+TEST(DecodeImuPacketTest, FullImuSampleContainsGyroAndAccelerometer)
+{
+  const auto bytes = makeImuPacket({0.1F, -0.2F, 0.3F, 0.0F, -0.5F, 1.0F});
+  const auto packet = livox_ray_source::decodeImuPacket(bytes.data(), bytes.size());
+  const livox_ray_source::ImuSample sample = packet.toImuSample();
+  ASSERT_TRUE(sample.isValid());
+  EXPECT_EQ(sample.gyro.timestamp_ns, kPtpTimeNs);
+  EXPECT_DOUBLE_EQ(sample.acceleration_flu_g[2], static_cast<double>(1.0F));
+}
+
+TEST(DecodeImuPacketTest, NonFiniteAccelerometerIsNotUsable)
+{
+  const auto bytes = makeImuPacket({0.1F, -0.2F, 0.3F, 0.0F, 0.0F, 0.0F});
+  auto mutable_bytes = bytes;
+  const float nan = std::numeric_limits<float>::quiet_NaN();
+  put<float>(mutable_bytes, 36U + 4U * 3U, nan);
+  const auto packet = livox_ray_source::decodeImuPacket(mutable_bytes.data(), mutable_bytes.size());
+  EXPECT_TRUE(packet.gyro.isValid());
+  EXPECT_FALSE(packet.accelerationIsValid());
+}
+
 TEST(DecodeImuPacketTest, NoPtpTimeOrAnotherLayoutGivesNoSample)
 {
   const std::array<float, 6> values{0.1F, 0.2F, 0.3F, 0.0F, 0.0F, 1.0F};
@@ -409,7 +607,8 @@ TEST(DecodeImuPacketTest, NoPtpTimeOrAnotherLayoutGivesNoSample)
   EXPECT_TRUE(packet.layout_ok);
   EXPECT_FALSE(packet.gyro.isValid());
   const auto zero_time = makeImuPacket(values, 1U, 0U);
-  EXPECT_FALSE(livox_ray_source::decodeImuPacket(zero_time.data(), zero_time.size()).gyro.isValid());
+  EXPECT_FALSE(
+    livox_ray_source::decodeImuPacket(zero_time.data(), zero_time.size()).gyro.isValid());
   const auto too_long = makeImuPacket(values, 1U, kPtpTimeNs, 4U);
   packet = livox_ray_source::decodeImuPacket(too_long.data(), too_long.size());
   EXPECT_FALSE(packet.layout_ok);

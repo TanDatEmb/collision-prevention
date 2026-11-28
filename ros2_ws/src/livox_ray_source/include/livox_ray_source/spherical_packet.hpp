@@ -1,7 +1,9 @@
 #pragma once
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <vector>
 
 #include "livox_ray_source/gyro_track.hpp"
@@ -16,9 +18,17 @@ enum class DecodeStatus : uint8_t
 {
   kOk,
   kTooShort,        ///< fewer bytes than the 36 byte header
-  kNotSpherical,    ///< `data_type` is not 3 (IMU, Cartesian 32 or 16 bit)
+  kNotSpherical,    ///< `data_type` is not 3 (kept for the spherical-only API)
   kLengthMismatch,  ///< the size is not 36 + 10 * dot_num
   kNoPoints,        ///< `dot_num` is 0
+};
+
+/// Per-point fields that are not part of the safety map contract.
+struct PointMetadata
+{
+  uint8_t reflectivity{0U};
+  uint8_t tag{0U};
+  uint8_t line{0U};
 };
 
 struct DecodedPacket
@@ -26,7 +36,21 @@ struct DecodedPacket
   DecodeStatus status{DecodeStatus::kTooShort};
   uint16_t udp_cnt{0U};
   uint8_t time_type{0U};  ///< 0 no sync (time since power on), 1 PTP, 2 GPS
+  uint8_t data_type{0U};
   std::vector<obstacle_sector_map::RaySample> rays;
+  std::vector<PointMetadata> point_metadata;
+};
+
+/// One complete Livox IMU sample. Acceleration is kept in the SDK's raw unit (g) until a ROS
+/// boundary converts it to m/s²; the collision-prevention leveler consumes only `gyro`.
+struct ImuSample
+{
+  GyroSample gyro{};
+  std::array<double, 3> acceleration_flu_g{
+    std::numeric_limits<double>::quiet_NaN(), std::numeric_limits<double>::quiet_NaN(),
+    std::numeric_limits<double>::quiet_NaN()};
+
+  [[nodiscard]] bool isValid() const;
 };
 
 /// Decodes one Livox Mid-360(S) point packet of data type 3 (single return, spherical): the 36 byte
@@ -52,12 +76,33 @@ struct DecodedPacket
 /// Input is the whole UDP payload.
 [[nodiscard]] DecodedPacket decodeSphericalPacket(const uint8_t * data, std::size_t size);
 
+/// Decodes a Mid-360(S) Cartesian high-resolution packet (x/y/z in millimetres, 32-bit signed).
+/// Cartesian packets have no direction for an all-zero point, so that point is invalid rather than
+/// a qualified no-return. The safety path therefore remains conservative when a sensor is configured
+/// away from spherical mode: returns can be used, but a Cartesian zero point cannot certify free space.
+[[nodiscard]] DecodedPacket decodeCartesianHighPacket(const uint8_t * data, std::size_t size);
+
+/// Decodes a Mid-360(S) Cartesian low-resolution packet (x/y/z in centimetres, 16-bit signed).
+[[nodiscard]] DecodedPacket decodeCartesianLowPacket(const uint8_t * data, std::size_t size);
+
+/// Dispatches a supported Mid-360(S) point packet by its `data_type` (spherical, Cartesian high or
+/// Cartesian low). IMU packets and unknown point layouts are rejected with `kNotSpherical`.
+[[nodiscard]] DecodedPacket decodePointPacket(const uint8_t * data, std::size_t size);
+
 /// One decoded Livox IMU packet (data type 0).
 struct DecodedImuPacket
 {
   bool layout_ok{false};  ///< data type 0 and exactly 36 + 24 bytes
   uint8_t time_type{0U};  ///< 0 no sync (time since power on), 1 PTP, 2 GPS
   GyroSample gyro{};      ///< valid only with layout_ok and PTP time (`time_type` 1, non-zero time)
+  std::array<double, 3> acceleration_flu_g{
+    std::numeric_limits<double>::quiet_NaN(), std::numeric_limits<double>::quiet_NaN(),
+    std::numeric_limits<double>::quiet_NaN()};
+
+  /// True only when all three raw accelerometer axes are finite and the packet has usable gyro time.
+  [[nodiscard]] bool accelerationIsValid() const;
+
+  [[nodiscard]] ImuSample toImuSample() const;
 };
 
 /// Decodes one Livox Mid-360(S) IMU packet: the 36 byte header (the same layout and time stamp as the
@@ -92,8 +137,15 @@ class PacketSampler
 {
 public:
   /// Appends the rays of `packet` that have a time to `out`; `udp_break` is true when packets were
-  /// lost just before this one. Returns the number of rays dropped.
-  std::size_t append(const DecodedPacket & packet, bool udp_break, std::vector<StreamSample> & out);
+  /// lost just before this one. When `metadata` is supplied, it receives point metadata in the same
+  /// order as the forwarded samples. Returns the number of rays dropped.
+  std::size_t append(
+    const DecodedPacket & packet, bool udp_break, std::vector<StreamSample> & out,
+    std::vector<PointMetadata> * metadata = nullptr);
+
+  /// Marks that a decoded packet was withheld from the safety stream. The next forwarded ray
+  /// carries a continuity break, even when the withheld packet had a usable timestamp.
+  void markBreak();
 
 private:
   bool _pending_break{false};
