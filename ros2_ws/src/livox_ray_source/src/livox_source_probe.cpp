@@ -127,6 +127,7 @@ int main(int argc, char ** argv)
     const auto primary = source.primaryLidar();
     bool primary_fresh = false;
     bool primary_ready = false;
+    bool primary_point_usable = false;
     if (primary.has_value()) {
       for (const auto & device : health) {
         if (
@@ -134,6 +135,7 @@ int main(int argc, char ** argv)
           device.state == livox_ray_source::LivoxHealthState::kConnected) {
           primary_fresh = true;
           primary_ready = device.configuration == livox_ray_source::LivoxConfigurationState::kReady;
+          primary_point_usable = livox_ray_source::hasUsablePointObservation(device);
           break;
         }
       }
@@ -152,7 +154,7 @@ int main(int argc, char ** argv)
       stats.rejected_packets == 0U && stats.not_spherical_packets == 0U &&
       stats.continuity_breaks == 0U && stats.dropped_rays == 0U && stats.imu_unusable == 0U &&
       stats.imu_accel_unusable == 0U && stats.unsupported_packets == 0U &&
-      stats.wrong_data_type_packets == 0U && stats.configuration_failures == 0U && primary_ready &&
+      stats.configuration_failures == 0U && primary_ready && primary_point_usable &&
       (!options.require_ptp || stats.unsynchronized_packets == 0U) &&
       !source.multipleLidarFault() && primary_fresh;
 
@@ -170,6 +172,8 @@ int main(int argc, char ** argv)
     output << ',' << jsonString("primary_fresh") << ':' << (primary_fresh ? "true" : "false");
     output << ',' << jsonString("primary_configuration_ready") << ':'
            << (primary_ready ? "true" : "false");
+    output << ',' << jsonString("primary_point_usable") << ':'
+           << (primary_point_usable ? "true" : "false");
     add(output, "packets", stats.packets, first);
     add(output, "decoded_packets", stats.decoded_packets, first);
     add(output, "rejected_packets", stats.rejected_packets, first);

@@ -11,7 +11,9 @@ that reads them through the Livox SDK2 (ADR 0016).
 
 ## Output contract
 - `RayFrame`: the rays of one coverage window plus one `packet_continuity_valid` flag.
-  The flag is false if a break was flagged or the timestamps went backwards inside the frame.
+  The flag is false if a break was flagged or a timestamp went backwards inside the frame.
+  A backward timestamp closes the old frame as invalid and starts a new time epoch. Equal timestamps
+  are retained because a packet or replay source may legitimately assign several rays one reference time.
 - A window starts at the first ray with a non-zero timestamp and lasts `window_ns`
   (`coverage_window_ms` in the ICD, no default here).
 - Rays are passed on unchanged: the direction of returns and no-returns is preserved.
@@ -50,7 +52,8 @@ that reads them through the Livox SDK2 (ADR 0016).
   Optional Mid-360S settings are written only when present; a failed command leaves the safety sink
   closed. Each detection also requests `kLivoxLidarNormal` and enables the IMU stream, matching the
   official ROS2 driver lifecycle. A configured primary serial is required when more than one lidar
-  is present; raw telemetry still identifies every device. SDK2 status push text is logged, while
+  is present; a changed serial on a reused SDK handle clears the safety selection fail-closed, while
+  raw telemetry still identifies every device. SDK2 status push text is logged, while
   temperature/FUSA fields are not promoted because the SDK exposes them as opaque text.
 - `collision_prevention.install_attitude` is an optional device setting with `roll_deg`, `pitch_deg`,
   `yaw_deg`, `x_mm`, `y_mm` and `z_mm`. It updates the Mid-360S installation record only; it does

@@ -534,7 +534,7 @@ int main(int argc, char ** argv)
               status.level = diagnostic_msgs::msg::DiagnosticStatus::ERROR;
               status.message = "unsupported device or packet layout";
             }
-            else if (device.wrong_data_type_packets > 0U) {
+            else if (device.current_point_layout_mismatch) {
               status.level = diagnostic_msgs::msg::DiagnosticStatus::ERROR;
               status.message = "configured point layout mismatch";
             }
@@ -558,6 +558,10 @@ int main(int argc, char ** argv)
             else if (device.configuration != livox_ray_source::LivoxConfigurationState::kReady) {
               status.level = diagnostic_msgs::msg::DiagnosticStatus::WARN;
               status.message = "device configuration in progress";
+            }
+            else if (!livox_ray_source::hasUsablePointObservation(device)) {
+              status.level = diagnostic_msgs::msg::DiagnosticStatus::WARN;
+              status.message = "no usable PTP point sample";
             }
             else if (
               device.last_point_time_type != 1U || device.last_imu_time_type != 1U ||

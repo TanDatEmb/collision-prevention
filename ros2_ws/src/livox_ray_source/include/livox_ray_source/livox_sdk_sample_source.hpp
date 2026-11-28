@@ -89,11 +89,17 @@ struct LivoxDeviceHealth
   uint8_t last_point_time_type{0U};
   uint8_t last_point_data_type{0U};
   uint8_t last_imu_time_type{0U};
+  bool current_point_layout_mismatch{false};
   uint64_t last_point_timestamp_ns{0U};
   uint64_t last_imu_timestamp_ns{0U};
   uint64_t last_point_age_ms{0U};
   uint64_t last_imu_age_ms{0U};
 };
+
+/// True when the latest point packet has a usable PTP timestamp and matches the configured layout.
+/// Historical mismatch counters remain available for diagnostics, but must not keep a recovered
+/// stream in an error state.
+[[nodiscard]] bool hasUsablePointObservation(const LivoxDeviceHealth & health);
 
 /// Selects one device for the safety stream without mixing devices. With no configured serial the
 /// first device is accepted only until a second device appears; then the safety stream is rejected

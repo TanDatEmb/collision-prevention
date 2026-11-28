@@ -53,6 +53,7 @@ struct DeviceState
   std::atomic<uint8_t> last_point_time_type{0U};
   std::atomic<uint8_t> last_point_data_type{0U};
   std::atomic<uint8_t> last_imu_time_type{0U};
+  std::atomic<bool> current_point_layout_mismatch{false};
   std::atomic<uint64_t> last_point_timestamp_ns{0U};
   std::atomic<uint64_t> last_imu_timestamp_ns{0U};
   std::atomic<uint64_t> last_point_host_ns{0U};
@@ -287,11 +288,11 @@ void onPointCloud(
   state->last_point_time_type = decoded.time_type;
   state->last_point_data_type = decoded.data_type;
   state->last_point_timestamp_ns = decoded.rays.empty() ? 0U : decoded.rays.front().timestamp_ns;
-  state->last_point_host_ns = steadyNowNs();
 
   const bool configured_type_matches =
     !impl->configure_point_type ||
     decoded.data_type == pointTypeValue(impl->configuration.point_data_type);
+  state->current_point_layout_mismatch = !configured_type_matches;
   if (!configured_type_matches) {
     ++impl->wrong_data_type_packets;
     ++state->wrong_data_type_packets;
@@ -317,6 +318,9 @@ void onPointCloud(
     }
     impl->dropped_rays += dropped;
     state->dropped_rays += dropped;
+  }
+  if (!samples.empty()) {
+    state->last_point_host_ns = steadyNowNs();
   }
 
   const LivoxDeviceIdentity identity = identityOf(state);
@@ -879,6 +883,21 @@ void onLidarInfoChange(const uint32_t handle, const LivoxLidarInfo * info, void 
   }
   ++impl->device_events;
   impl->say(std::string("livox: detected lidar ") + identity.serial + " at " + identity.lidar_ip);
+  {
+    const std::lock_guard<std::mutex> lock(state->mutex);
+    state->tracker = UdpContinuityTracker{};
+    state->sampler = PacketSampler{};
+    // A reused SDK handle can report a different physical sensor. Do not expose the previous
+    // sensor's timestamps or freshness as observations for the new identity.
+    state->current_point_layout_mismatch = false;
+    state->last_point_time_type = 0U;
+    state->last_point_data_type = 0U;
+    state->last_point_timestamp_ns = 0U;
+    state->last_point_host_ns = 0U;
+    state->last_imu_time_type = 0U;
+    state->last_imu_timestamp_ns = 0U;
+    state->last_imu_host_ns = 0U;
+  }
   if (!isMid360S(identity.device_type)) {
     state->configuration = LivoxConfigurationState::kUnsupported;
     state->safety_ready = false;
@@ -886,11 +905,6 @@ void onLidarInfoChange(const uint32_t handle, const LivoxLidarInfo * info, void 
     return;
   }
   impl->registry.observe(identity);
-  {
-    const std::lock_guard<std::mutex> lock(state->mutex);
-    state->tracker = UdpContinuityTracker{};
-    state->sampler = PacketSampler{};
-  }
   startConfiguration(impl, handle, state);
 }
 
@@ -1073,6 +1087,7 @@ std::vector<LivoxDeviceHealth> LivoxSdkSampleSource::health() const
     snapshot.wrong_data_type_packets = state->wrong_data_type_packets.load();
     snapshot.configuration_retries = state->configuration_retries.load();
     snapshot.last_point_data_type = state->last_point_data_type.load();
+    snapshot.current_point_layout_mismatch = state->current_point_layout_mismatch.load();
     {
       const std::lock_guard<std::mutex> lock(state->configuration_mutex);
       snapshot.configuration_error = state->configuration_error;

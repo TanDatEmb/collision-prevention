@@ -5,6 +5,11 @@
 namespace livox_ray_source
 {
 
+bool hasUsablePointObservation(const LivoxDeviceHealth & health)
+{
+  return health.last_point_timestamp_ns != 0U && !health.current_point_layout_mismatch;
+}
+
 LivoxDeviceRegistry::LivoxDeviceRegistry(std::string primary_serial)
 : _primary_serial(std::move(primary_serial))
 {
@@ -21,6 +26,13 @@ void LivoxDeviceRegistry::clear()
 void LivoxDeviceRegistry::observe(const LivoxDeviceIdentity & device)
 {
   const std::lock_guard<std::mutex> lock(_mutex);
+  const auto previous = _devices.find(device.handle);
+  const bool identity_changed =
+    previous != _devices.end() &&
+    (previous->second.serial != device.serial || previous->second.device_type != device.device_type);
+  if (identity_changed && _primary_handle.has_value() && *_primary_handle == device.handle) {
+    _primary_handle.reset();
+  }
   _devices[device.handle] = device;
 
   if (!_primary_serial.empty()) {
@@ -31,10 +43,17 @@ void LivoxDeviceRegistry::observe(const LivoxDeviceIdentity & device)
   }
 
   if (!_primary_handle.has_value()) {
-    _primary_handle = device.handle;
+    if (!_multiple_device_fault) {
+      _primary_handle = device.handle;
+    }
   }
   else if (*_primary_handle != device.handle) {
     _multiple_device_fault = true;
+    _primary_handle.reset();
+  }
+  if (identity_changed && _primary_serial.empty()) {
+    _multiple_device_fault = true;
+    _primary_handle.reset();
   }
 }
 

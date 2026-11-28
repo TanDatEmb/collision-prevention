@@ -59,6 +59,22 @@ TEST(LivoxDeviceRegistryTest, ConfiguredPrimaryMustBeObservedBeforeSafetyIsAccep
   EXPECT_FALSE(registry.accepts(1U));
 }
 
+TEST(LivoxDeviceRegistryTest, HandleIdentityReplacementCannotKeepTheOldSafetySelection)
+{
+  livox_ray_source::LivoxDeviceRegistry configured("A");
+  configured.observe(device(1U, "A"));
+  configured.observe(device(1U, "B"));
+  EXPECT_FALSE(configured.primaryDevice().has_value());
+  EXPECT_FALSE(configured.accepts(1U));
+
+  livox_ray_source::LivoxDeviceRegistry automatic;
+  automatic.observe(device(1U, "A"));
+  automatic.observe(device(1U, "B"));
+  EXPECT_TRUE(automatic.multipleDeviceFault());
+  EXPECT_FALSE(automatic.primaryDevice().has_value());
+  EXPECT_FALSE(automatic.accepts(1U));
+}
+
 TEST(LivoxDeviceRegistryTest, ClearStartsAFreshDetectionEpoch)
 {
   livox_ray_source::LivoxDeviceRegistry registry;
@@ -69,6 +85,20 @@ TEST(LivoxDeviceRegistryTest, ClearStartsAFreshDetectionEpoch)
   registry.observe(device(2U, "B"));
   EXPECT_FALSE(registry.multipleDeviceFault());
   EXPECT_TRUE(registry.accepts(2U));
+}
+
+TEST(LivoxHealthTest, AZeroTimestampOrCurrentLayoutMismatchIsNotUsable)
+{
+  livox_ray_source::LivoxDeviceHealth health;
+  health.last_point_timestamp_ns = 1'000U;
+  EXPECT_TRUE(livox_ray_source::hasUsablePointObservation(health));
+
+  health.last_point_timestamp_ns = 0U;
+  EXPECT_FALSE(livox_ray_source::hasUsablePointObservation(health));
+
+  health.last_point_timestamp_ns = 1'000U;
+  health.current_point_layout_mismatch = true;
+  EXPECT_FALSE(livox_ray_source::hasUsablePointObservation(health));
 }
 
 TEST(Mid360SConfigTest, ParsesOptionalMid360SDriverSettings)

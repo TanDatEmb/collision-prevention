@@ -10,8 +10,9 @@ namespace livox_ray_source
 
 /// Groups a stream of rays into frames by coverage window, using the ray timestamps.
 /// A window starts at the first ray with a non-zero timestamp and covers `window_ns`.
-/// A frame has packet continuity only if no break was flagged and its timestamps never went
-/// backwards.
+/// A frame has packet continuity only if no break was flagged and its timestamps never go backwards.
+/// A backward timestamp closes the old frame as invalid and starts a new epoch. Equal timestamps are
+/// retained: a packet or replay source may legitimately give several rays the same reference time.
 class FrameSegmenter
 {
 public:

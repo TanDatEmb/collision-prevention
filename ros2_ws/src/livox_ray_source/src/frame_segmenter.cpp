@@ -28,14 +28,25 @@ std::optional<RayFrame> FrameSegmenter::push(const StreamSample & sample)
   std::optional<RayFrame> finished;
   const uint64_t timestamp_ns = sample.ray.timestamp_ns;
 
-  if (
-    _frame_open && _origin_set && timestamp_ns != 0U && timestamp_ns >= _origin_ns &&
-    timestamp_ns - _origin_ns >= _window_ns) {
-    finished = std::move(_frame);
-    _frame_open = false;
+  if (!_frame_open) {
+    startFrame();
   }
 
-  if (!_frame_open) {
+  const bool timestamp_goes_back =
+    _origin_set && timestamp_ns != 0U && _latest_ns != 0U && timestamp_ns < _latest_ns;
+  const bool starts_next_window =
+    _origin_set && timestamp_ns != 0U && timestamp_ns >= _origin_ns &&
+    timestamp_ns - _origin_ns >= _window_ns;
+  const bool crosses_discontinuity = timestamp_goes_back || starts_next_window;
+
+  // A continuity flag describes the gap before this ray. If that ray also starts a new epoch or
+  // coverage window, the gap invalidates the frame that is about to be returned, not the new frame.
+  if (crosses_discontinuity) {
+    if (timestamp_goes_back || sample.continuity_break) {
+      _frame.packet_continuity_valid = false;
+    }
+    finished = std::move(_frame);
+    _frame_open = false;
     startFrame();
   }
 
@@ -44,13 +55,10 @@ std::optional<RayFrame> FrameSegmenter::push(const StreamSample & sample)
       _origin_set = true;
       _origin_ns = timestamp_ns;
     }
-    else if (timestamp_ns < _latest_ns) {
-      _frame.packet_continuity_valid = false;
-    }
     _latest_ns = timestamp_ns;
   }
 
-  if (sample.continuity_break) {
+  if (sample.continuity_break && !crosses_discontinuity) {
     _frame.packet_continuity_valid = false;
   }
 
