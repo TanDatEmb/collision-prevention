@@ -457,6 +457,24 @@ TEST(PacketSamplerTest, AUdpGapMarksOnlyTheFirstRayOfThePacket)
   EXPECT_FALSE(out[2].continuity_break);
 }
 
+TEST(PacketSamplerTest, AReconfigurationBreakIsSpentOnTheFirstSafetyRay)
+{
+  PacketSampler sampler;
+  std::vector<StreamSample> out;
+  sampler.markBreak();
+
+  static_cast<void>(sampler.append(decodeThree(1U), false, out));
+  ASSERT_EQ(out.size(), 3U);
+  EXPECT_TRUE(out[0].continuity_break);
+  EXPECT_FALSE(out[1].continuity_break);
+  EXPECT_FALSE(out[2].continuity_break);
+
+  out.clear();
+  static_cast<void>(sampler.append(decodeThree(1U), false, out));
+  ASSERT_EQ(out.size(), 3U);
+  EXPECT_FALSE(out[0].continuity_break);
+}
+
 TEST(PacketSamplerTest, ABreakOrADropBeforeTheNextUsableRayIsNotForgotten)
 {
   PacketSampler sampler;

@@ -32,6 +32,10 @@ struct DeviceState
   LivoxDeviceIdentity identity;
   UdpContinuityTracker tracker;
   PacketSampler sampler;
+  // Re-discovery may leave decoded telemetry samples flowing while the safety stream is
+  // reconfigured. Keep this discontinuity separate from PacketSampler so those withheld samples
+  // cannot consume the break before the first sample reaches the safety sink.
+  bool safety_break_pending{false};
   std::mutex configuration_mutex;
   std::atomic<LivoxConfigurationState> configuration{LivoxConfigurationState::kUnknown};
   std::atomic<bool> safety_ready{false};
@@ -327,10 +331,20 @@ void onPointCloud(
   for (std::size_t index = 0U; index < samples.size(); ++index) {
     const PointMetadata point_metadata =
       index < metadata.size() ? metadata[index] : PointMetadata{};
+    const bool primary_selected = impl->registry.accepts(handle);
+    bool safety_eligible = false;
+    {
+      const std::lock_guard<std::mutex> lock(state->mutex);
+      safety_eligible = primary_selected && state->safety_ready.load() && configured_type_matches;
+      if (safety_eligible && state->safety_break_pending) {
+        samples[index].continuity_break = true;
+        state->safety_break_pending = false;
+      }
+    }
     if (impl->point_sink) {
       impl->point_sink(LivoxPointSample{identity, samples[index], point_metadata});
     }
-    if (impl->registry.accepts(handle) && state->safety_ready.load() && configured_type_matches) {
+    if (safety_eligible) {
       impl->sink(samples[index]);
     }
     else {
@@ -885,8 +899,15 @@ void onLidarInfoChange(const uint32_t handle, const LivoxLidarInfo * info, void 
   impl->say(std::string("livox: detected lidar ") + identity.serial + " at " + identity.lidar_ip);
   {
     const std::lock_guard<std::mutex> lock(state->mutex);
+    const bool had_point_packet = state->point_packets.load() != 0U;
     state->tracker = UdpContinuityTracker{};
-    state->sampler = PacketSampler{};
+    // Re-discovery is a discontinuity for the downstream frame segmenter. Keep the sampler object
+    // alive and latch a safety break until a sample reaches the safety sink; replacing the sampler
+    // or marking it directly would let withheld reconfiguration samples consume the break.
+    if (had_point_packet) {
+      state->safety_break_pending = true;
+    }
+    state->safety_ready = false;
     // A reused SDK handle can report a different physical sensor. Do not expose the previous
     // sensor's timestamps or freshness as observations for the new identity.
     state->current_point_layout_mismatch = false;
